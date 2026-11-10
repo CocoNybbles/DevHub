@@ -23,7 +23,7 @@ Lokale Windows-Desktop-App zum Verwalten von Projekten und den darin laufenden K
   - Agents heißen standardmäßig „Agent 1“, „Agent 2“, … — Umbenennen per Rechtsklick
   - Agents, die eine Frage/Input brauchen, werden hervorgehoben, bis sie weiterarbeiten
   - Agents können über die Liste beendet werden
-- Mitte: Terminal (PowerShell) des ausgewählten Agents
+- Mitte: Terminal des ausgewählten Agents (`claude.exe` direkt per ConPTY, **ohne** Shell dazwischen – so beendet `/exit` den Agent wirklich)
   - Klick auf ein Projekt → alle Agents des Projekts im Raster
   - Beendet sich ein Agent im Terminal selbst (z. B. `/exit`), wird die Ansicht geschlossen und der Eintrag links entfernt
 - Rechts: Code-Ansicht — bei Analyse/Bugfund wird die betroffene Datei angezeigt und die Stelle hervorgehoben
