@@ -4,6 +4,7 @@ import type { VoiceCommandResult } from '../shared/types'
 import type { AgentManager } from './agents'
 import { getState } from './store'
 import { claudeEnv, resolveClaude } from './tools'
+import { isValidModelName } from '../shared/agentArgs'
 
 /**
  * Globaler Sprachbefehl: Eine headless Claude-Instanz (`claude -p`, vorhandener Account)
@@ -14,7 +15,7 @@ import { claudeEnv, resolveClaude } from './tools'
 
 type Decision =
   | { action: 'send'; agentId: string; message: string }
-  | { action: 'start'; projectId: string; task?: string }
+  | { action: 'start'; projectId: string; task?: string; model?: string }
   | { action: 'none'; reason?: string }
 
 export async function runVoiceCommand(
@@ -46,8 +47,12 @@ export async function runVoiceCommand(
     'Decide what the user wants and answer with ONLY one JSON object, no other text:',
     '{"action":"send","agentId":"<id>","message":"<instruction for the agent>"}',
     '  → the user addresses an existing agent by name. "message" is the instruction without the addressing part, in the language the user spoke.',
-    '{"action":"start","projectId":"<id>","task":"<task or empty>"}',
+    '{"action":"start","projectId":"<id>","task":"<task or empty>","model":"<model or empty>"}',
     '  → the user wants a new agent for a project (optionally with a task, in the language the user spoke).',
+    '  "model": only if the user explicitly names a Claude model for the new agent, otherwise "".',
+    '  Use the lowercase alias of the model family: "fable", "opus", "sonnet" or "haiku" (speech recognition may garble them, e.g. "Sonett" = sonnet, "Opas"/"Opus" = opus, "Haiku"/"Hai Ku" = haiku).',
+    '  Only if a specific version is named, use the full name, e.g. "Opus 5.5" = "claude-opus-5-5", "Sonnet 5.5" = "claude-sonnet-5-5".',
+    '  The model mention is NOT part of "task" (e.g. "Starte mit Opus einen Agent für DevHub, der die Tests fixt" → model "opus", task "Fixe die Tests").',
     '{"action":"none","reason":"<short reason in German>"}',
     '  → unclear, or the named agent/project does not exist.',
     'Match names fuzzily (e.g. "Agent eins" / "agent one" = "Agent 1"; similar sounding project names).'
@@ -61,19 +66,23 @@ export async function runVoiceCommand(
     if (!agent || !decision.message?.trim()) {
       return { kind: 'none', message: 'Agent oder Anweisung nicht erkannt.' }
     }
-    await agents.sendLine(agent.id, decision.message.trim())
-    return { kind: 'sent', agentName: agent.name, message: decision.message.trim() }
+    const sent = await agents.sendVoice(agent.id, decision.message.trim())
+    return { kind: 'sent', agentName: agent.name, message: decision.message.trim(), sent }
   }
 
   if (decision.action === 'start') {
     const project = projects.find((p) => p.id === decision.projectId)
     if (!project) return { kind: 'none', message: 'Projekt nicht erkannt.' }
-    const agent = await agents.start(project.id, decision.task)
+    const model = decision.model?.trim().toLowerCase() || undefined
+    if (model && !isValidModelName(model))
+      return { kind: 'none', message: `Modell „${model}“ nicht erkannt.` }
+    const agent = await agents.start(project.id, decision.task, model)
     return {
       kind: 'started',
       agentName: agent.name,
       projectName: project.name,
-      task: decision.task || undefined
+      task: decision.task || undefined,
+      model
     }
   }
 

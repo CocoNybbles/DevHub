@@ -2,7 +2,7 @@ import { useState } from 'react'
 import type { Agent, Project } from '../../../shared/types'
 import type { Selection } from '../App'
 import { formatAccelerator } from '../../../shared/hotkeys'
-import ContextMenu, { MenuState } from './ContextMenu'
+import ContextMenu, { MenuItem, MenuState } from './ContextMenu'
 import {
   ChevronIcon,
   CloseIcon,
@@ -22,11 +22,16 @@ interface Props {
   globalVoiceActive: boolean
   /** Kürzel für globale Sprachbefehle (Accelerator) */
   globalHotkey: string
-  onSelectProject: (id: string) => void
-  onSelectAgent: (id: string) => void
+  /** multi = Strg gehalten: Agents zum Raster hinzufügen/entfernen statt Auswahl ersetzen */
+  onSelectProject: (id: string, multi: boolean) => void
+  onSelectAgent: (id: string, multi: boolean) => void
   onStartAgent: (projectId: string) => void
   onStopAgent: (agent: Agent) => void
   onRenameAgent: (id: string, name: string) => void
+  /** Globale Einstellung „Sprachtext automatisch abschicken“ (Anzeige im Menü) */
+  globalVoiceAutoSend: boolean
+  /** undefined = globale Einstellung verwenden */
+  onSetVoiceAutoSend: (id: string, value: boolean | undefined) => void
   onAddProject: () => void
   onEditProject: (p: Project) => void
   onRemoveProject: (p: Project) => void
@@ -100,7 +105,7 @@ function Sidebar(props: Props): React.JSX.Element {
             <div key={p.id} className="tree-project">
               <div
                 className={`row project-row ${selection?.kind === 'project' && selection.projectId === p.id ? 'selected' : ''}`}
-                onClick={() => props.onSelectProject(p.id)}
+                onClick={(e) => props.onSelectProject(p.id, e.ctrlKey || e.metaKey)}
                 onContextMenu={(e) => {
                   e.preventDefault()
                   setMenu({
@@ -113,7 +118,7 @@ function Sidebar(props: Props): React.JSX.Element {
                     ]
                   })
                 }}
-                title={p.agentPath}
+                title={`${p.agentPath}\nStrg+Klick: alle Agents zum Raster hinzufügen/entfernen`}
               >
                 <button
                   className={`chevron ${isOpen ? 'open' : ''}`}
@@ -174,14 +179,36 @@ function Sidebar(props: Props): React.JSX.Element {
                     className={[
                       'row agent-row',
                       a.status === 'needsInput' ? 'attention' : '',
-                      selection?.kind === 'agent' && selection.agentId === a.id ? 'selected' : ''
+                      (selection?.kind === 'agent' && selection.agentId === a.id) ||
+                      (selection?.kind === 'agents' && selection.agentIds.includes(a.id))
+                        ? 'selected'
+                        : ''
                     ].join(' ')}
-                    onClick={() => props.onSelectAgent(a.id)}
+                    onClick={(e) => props.onSelectAgent(a.id, e.ctrlKey || e.metaKey)}
                     onContextMenu={(e) => {
                       e.preventDefault()
-                      setRenaming(a.id)
+                      const voice = (label: string, value: boolean | undefined): MenuItem => ({
+                        label,
+                        checked: a.voiceAutoSend === value,
+                        action: () => props.onSetVoiceAutoSend(a.id, value)
+                      })
+                      setMenu({
+                        x: e.clientX,
+                        y: e.clientY,
+                        items: [
+                          { label: 'Umbenennen', action: () => setRenaming(a.id) },
+                          { label: 'Beenden', danger: true, action: () => props.onStopAgent(a) },
+                          { label: 'Sprach-Anweisungen', heading: true, action: () => {} },
+                          voice(
+                            `Wie global (${props.globalVoiceAutoSend ? 'abschicken' : 'nur eintragen'})`,
+                            undefined
+                          ),
+                          voice('Automatisch abschicken', true),
+                          voice('Nur ins Terminal eintragen', false)
+                        ]
+                      })
                     }}
-                    title={`${STATUS_LABEL[a.status]}${a.statusMessage ? ` – ${a.statusMessage}` : ''}\nRechtsklick: umbenennen`}
+                    title={`${STATUS_LABEL[a.status]}${a.statusMessage ? ` – ${a.statusMessage}` : ''}${a.model ? `\nModell: ${a.model}` : ''}\nStrg+Klick: zum Raster hinzufügen/entfernen\nRechtsklick: umbenennen, Sprach-Einstellung`}
                   >
                     <span className={`dot ${a.status}`} />
                     {renaming === a.id ? (

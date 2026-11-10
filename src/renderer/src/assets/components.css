@@ -227,6 +227,17 @@ input.rename {
 .context-menu button.danger {
   color: var(--error);
 }
+.context-menu .menu-heading {
+  padding: 8px 10px 2px;
+  font-size: 11px;
+  color: var(--muted);
+  border-top: 1px solid var(--border);
+  margin-top: 4px;
+}
+.context-menu .menu-check {
+  display: inline-block;
+  width: 16px;
+}
 
 /* ---------- Terminal & Raster ---------- */
 .terminal-container {
@@ -259,8 +270,25 @@ input.rename {
 .grid-cell.active {
   border-color: var(--accent);
 }
+/* Agent wartet auf Eingabe: Rahmen + Kopf wie in der Liste links (hat Vorrang vor „aktiv“) */
+.grid-cell.attention {
+  border-color: var(--attention);
+  box-shadow: 0 0 0 1px var(--attention);
+}
 .grid-cell.attention .cell-header {
   background: var(--attention-bg);
+}
+.grid-cell.attention .cell-header .row-name {
+  color: var(--attention-text);
+}
+/* aktiv + wartend: Akzentlinie unter dem Kopf zeigt weiterhin die aktive Zelle */
+.grid-cell.active.attention .cell-header {
+  box-shadow: inset 0 -2px 0 var(--accent);
+}
+.cell-header .row-sub {
+  display: inline; /* einzeilig im 26-px-Kopf */
+  margin-left: 8px;
+  font-weight: normal;
 }
 .cell-header {
   display: flex;
@@ -492,13 +520,24 @@ kbd {
 }
 
 /* ---------- Sprach-Overlay & Toast ---------- */
-.voice-overlay {
+/* Stapel aus Aufnahme + Hintergrund-Aufträgen; lässt Klicks daneben durch */
+.voice-stack {
   position: fixed;
   left: 50%;
   bottom: 24px;
   transform: translateX(-50%);
   z-index: 40;
+  width: max-content;
   max-width: min(720px, calc(100vw - 48px));
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  pointer-events: none;
+}
+.voice-overlay {
+  pointer-events: auto;
+  max-width: 100%;
   display: flex;
   align-items: center;
   gap: 12px;

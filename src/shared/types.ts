@@ -38,6 +38,10 @@ export interface Agent {
   status: AgentStatus
   statusMessage?: string
   createdAt: number
+  /** Sprachtext automatisch abschicken: überschreibt `Settings.voiceAutoSend`, undefined = global */
+  voiceAutoSend?: boolean
+  /** Beim Start festgelegtes Modell (`--model`, z. B. per Sprachbefehl), hat Vorrang vor den Start-Flags */
+  model?: string
 }
 
 /** Von einem Agent über das MCP-Tool `show_code` gemeldete Code-Stelle. */
@@ -76,8 +80,9 @@ export interface DownloadProgress {
 }
 
 export type VoiceCommandResult =
-  | { kind: 'sent'; agentName: string; message: string }
-  | { kind: 'started'; agentName: string; projectName: string; task?: string }
+  /** sent = false: nur ins Terminal eingetragen (Auto-Abschicken aus) */
+  | { kind: 'sent'; agentName: string; message: string; sent: boolean }
+  | { kind: 'started'; agentName: string; projectName: string; task?: string; model?: string }
   | { kind: 'none'; message: string }
 
 export interface Settings {
@@ -90,6 +95,18 @@ export interface Settings {
   hotkeyGlobalVoice: string
   /** Zusätzliche Start-Flags für alle Agents, z. B. `--permission-mode auto` (siehe shared/agentArgs.ts) */
   agentArgs: string
+  /** Zuletzt erkannte Sprache merken und bei der nächsten Aufnahme zuerst vorgeben (schneller) */
+  voiceRememberLanguage: boolean
+  /** Gemerkte Sprache (whisper-Code, z. B. „de“), null = noch keine */
+  voiceLanguage: string | null
+}
+
+export interface TranscribeResult {
+  text: string
+  /** Erkannte bzw. verwendete Sprache (whisper-Code) */
+  language: string
+  /** true = gemerkte Sprache wurde übernommen (ohne automatische Erkennung) */
+  remembered: boolean
 }
 
 export type FileReadResult = { ok: true; content: string } | { ok: false; error: string }
@@ -112,6 +129,8 @@ export interface DevHubApi {
     openInVSCode: (id: string) => Promise<void>
     pickFolder: (defaultPath?: string) => Promise<string | null>
     pickProjectFile: (defaultPath?: string) => Promise<string | null>
+    /** Sucht im Ordner (bis 3 Ebenen tief) nach einer .sln/.slnx; null, wenn keine. */
+    findSolution: (dir: string) => Promise<string | null>
   }
   agents: {
     list: () => Promise<Agent[]>
@@ -123,6 +142,10 @@ export interface DevHubApi {
     write: (id: string, data: string) => void
     /** Text als Anweisung senden (Text + Enter). */
     sendLine: (id: string, text: string) => Promise<void>
+    /** Sprachtext je nach Einstellung (Agent, sonst global) abschicken oder nur eintragen; true = abgeschickt */
+    sendVoice: (id: string, text: string) => Promise<boolean>
+    /** undefined = globale Einstellung verwenden */
+    setVoiceAutoSend: (id: string, value: boolean | undefined) => Promise<void>
     resize: (id: string, cols: number, rows: number) => void
     /** Bisherige Terminal-Ausgabe (z. B. nach Neuladen der Oberfläche). */
     buffer: (id: string) => Promise<string>
@@ -141,7 +164,7 @@ export interface DevHubApi {
     download: (model: WhisperModelId) => Promise<void>
     deleteModel: (model: WhisperModelId) => Promise<void>
     onProgress: (cb: (p: DownloadProgress) => void) => Unsubscribe
-    transcribe: (wav: ArrayBuffer) => Promise<string>
+    transcribe: (wav: ArrayBuffer) => Promise<TranscribeResult>
     command: (text: string) => Promise<VoiceCommandResult>
     onGlobalHotkey: (cb: () => void) => Unsubscribe
   }

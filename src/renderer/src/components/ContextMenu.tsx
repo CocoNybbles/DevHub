@@ -4,6 +4,10 @@ export interface MenuItem {
   label: string
   action: () => void
   danger?: boolean
+  /** Auswahl-Häkchen (undefined = kein Auswahl-Eintrag) */
+  checked?: boolean
+  /** Nicht klickbare Zwischenüberschrift (action wird ignoriert) */
+  heading?: boolean
 }
 
 export interface MenuState {
@@ -38,23 +42,32 @@ function ContextMenu({
     <div
       className="context-menu"
       style={{
-        left: Math.min(x, window.innerWidth - 180),
-        top: Math.min(y, window.innerHeight - 120)
+        left: Math.min(x, window.innerWidth - 260),
+        top: Math.min(y, window.innerHeight - 16 - items.length * 30)
       }}
       onMouseDown={(e) => e.stopPropagation()}
     >
-      {items.map((item) => (
-        <button
-          key={item.label}
-          className={item.danger ? 'danger' : ''}
-          onClick={() => {
-            onClose()
-            item.action()
-          }}
-        >
-          {item.label}
-        </button>
-      ))}
+      {items.map((item) =>
+        item.heading ? (
+          <div key={item.label} className="menu-heading">
+            {item.label}
+          </div>
+        ) : (
+          <button
+            key={item.label}
+            className={item.danger ? 'danger' : ''}
+            onClick={() => {
+              onClose()
+              item.action()
+            }}
+          >
+            {item.checked !== undefined && (
+              <span className="menu-check">{item.checked ? '✓' : ''}</span>
+            )}
+            {item.label}
+          </button>
+        )
+      )}
     </div>
   )
 }

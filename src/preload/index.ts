@@ -25,7 +25,8 @@ const api: DevHubApi = {
     openProjectFile: (id) => invoke('projects:openProjectFile', id),
     openInVSCode: (id) => invoke('projects:openInVSCode', id),
     pickFolder: (defaultPath) => invoke('projects:pickFolder', defaultPath),
-    pickProjectFile: (defaultPath) => invoke('projects:pickProjectFile', defaultPath)
+    pickProjectFile: (defaultPath) => invoke('projects:pickProjectFile', defaultPath),
+    findSolution: (dir) => invoke('projects:findSolution', dir)
   },
   agents: {
     list: () => invoke('agents:list'),
@@ -35,6 +36,8 @@ const api: DevHubApi = {
     rename: (id, name) => invoke('agents:rename', id, name),
     write: (id, data) => ipcRenderer.send('agents:write', id, data),
     sendLine: (id, text) => invoke('agents:sendLine', id, text),
+    sendVoice: (id, text) => invoke('agents:sendVoice', id, text),
+    setVoiceAutoSend: (id, value) => invoke('agents:setVoiceAutoSend', id, value),
     resize: (id, cols, rows) => ipcRenderer.send('agents:resize', id, cols, rows),
     buffer: (id) => invoke('agents:buffer', id),
     onData: (cb) => subscribe('agents:data', cb),

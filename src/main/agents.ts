@@ -7,7 +7,7 @@ import type { Agent, AgentStatus, CodeFocus } from '../shared/types'
 import { AgentBridge, HookEvent, ShowCodeArgs } from './agentBridge'
 import { dataDir, getState, updateState } from './store'
 import { claudeEnv, resolveClaude } from './tools'
-import { mergeAgentArgs } from '../shared/agentArgs'
+import { isValidModelName, mergeAgentArgs } from '../shared/agentArgs'
 
 /** Wird jedem Agent per --append-system-prompt mitgegeben. */
 const SYSTEM_HINT =
@@ -81,9 +81,12 @@ export class AgentManager {
     this.emitChanged()
   }
 
-  async start(projectId: string, task?: string): Promise<Agent> {
+  /** model: überschreibt `--model` aus den globalen/Projekt-Flags (z. B. per Sprachbefehl genannt). */
+  async start(projectId: string, task?: string, model?: string): Promise<Agent> {
     const project = getState().projects.find((p) => p.id === projectId)
     if (!project) throw new Error('Projekt nicht gefunden')
+    const m = model?.trim() || undefined
+    if (m && !isValidModelName(m)) throw new Error(`Ungültiger Modellname: ${m}`)
 
     const agent: Agent = {
       id: randomUUID(),
@@ -91,7 +94,8 @@ export class AgentManager {
       name: this.nextName(),
       sessionId: randomUUID(),
       status: 'starting',
-      createdAt: Date.now()
+      createdAt: Date.now(),
+      model: m
     }
     // Erst speichern (reserviert den Namen), dann starten
     updateState((s) => s.agents.push(persisted(agent)))
@@ -122,6 +126,28 @@ export class AgentManager {
       if (a) a.name = trimmed
     })
     this.emitChanged()
+  }
+
+  /** Sprach-Abschicken pro Agent: true/false überschreibt die globale Einstellung, undefined = global. */
+  setVoiceAutoSend(id: string, value: boolean | undefined): void {
+    const r = this.running.get(id)
+    if (!r) return
+    r.agent.voiceAutoSend = value
+    updateState((s) => {
+      const a = s.agents.find((x) => x.id === id)
+      if (a) a.voiceAutoSend = value
+    })
+    this.emitChanged()
+  }
+
+  /** Erkannten Sprachtext an den Agent geben – abschicken oder nur eintragen. true = abgeschickt. */
+  async sendVoice(id: string, text: string): Promise<boolean> {
+    const r = this.running.get(id)
+    if (!r) throw new Error('Agent läuft nicht mehr')
+    const autoSend = r.agent.voiceAutoSend ?? getState().settings.voiceAutoSend
+    if (autoSend) await this.sendLine(id, text)
+    else r.proc.write(text.replace(/\r?\n/g, ' '))
+    return autoSend
   }
 
   write(id: string, data: string): void {
@@ -173,7 +199,11 @@ export class AgentManager {
     const { settingsFile, mcpFile } = this.writeAgentConfig(agent.id)
     // Nutzer-Flags zuerst: so beendet ein DevHub-Flag evtl. variadische Werte (z. B. --allowedTools a b),
     // und vor der Aufgabe steht immer --append-system-prompt <wert> (Aufgabe bleibt positional)
-    const args = mergeAgentArgs(getState().settings.agentArgs, project.agentArgs)
+    const args = mergeAgentArgs(
+      getState().settings.agentArgs,
+      project.agentArgs,
+      agent.model ? ['--model', agent.model] : []
+    )
     if (sessionExists(agent.sessionId)) args.push('--resume', agent.sessionId)
     else args.push('--session-id', agent.sessionId)
     args.push('--settings', settingsFile, '--mcp-config', mcpFile)
@@ -339,7 +369,9 @@ function persisted(a: Agent): Omit<Agent, 'status' | 'statusMessage'> {
     projectId: a.projectId,
     name: a.name,
     sessionId: a.sessionId,
-    createdAt: a.createdAt
+    createdAt: a.createdAt,
+    voiceAutoSend: a.voiceAutoSend,
+    model: a.model
   }
 }
 

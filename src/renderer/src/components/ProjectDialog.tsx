@@ -29,11 +29,23 @@ function ProjectDialog({ project, vscodeInstalled, onSaved, onClose }: Props): R
   const [error, setError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
 
+  /** Zuletzt automatisch eingetragene Projektmappe (darf bei Ordnerwechsel ersetzt werden). */
+  const [autoFile, setAutoFile] = useState<string | null>(null)
+
+  /** Sucht im Agent-Ordner nach einer .sln, solange keine Projektdatei von Hand gesetzt ist. */
+  const detectSolution = async (dir: string): Promise<void> => {
+    if (!dir.trim() || (projectFile && projectFile !== autoFile)) return
+    const found = await window.api.projects.findSolution(dir.trim()).catch(() => null)
+    setProjectFile(found ?? '')
+    setAutoFile(found)
+  }
+
   const pickAgentPath = async (): Promise<void> => {
     const p = await window.api.projects.pickFolder(agentPath || undefined)
     if (!p) return
     setAgentPath(p)
     if (!name.trim()) setName(folderName(p))
+    await detectSolution(p)
   }
 
   const save = async (): Promise<void> => {
@@ -94,6 +106,7 @@ function ProjectDialog({ project, vscodeInstalled, onSaved, onClose }: Props): R
             <input
               value={agentPath}
               onChange={(e) => setAgentPath(e.target.value)}
+              onBlur={() => detectSolution(agentPath)}
               placeholder="C:\Dev\MeinProjekt"
             />
             <button onClick={pickAgentPath}>Durchsuchen …</button>
@@ -103,7 +116,9 @@ function ProjectDialog({ project, vscodeInstalled, onSaved, onClose }: Props): R
         <label>
           <span>2 · Projektdatei</span>
           <small className="muted">
-            .sln oder Projektdatei, z. B. zum Öffnen in Visual Studio.
+            {autoFile && projectFile === autoFile
+              ? 'Automatisch im Agent-Ordner gefunden.'
+              : '.sln oder Projektdatei, z. B. zum Öffnen in Visual Studio.'}
           </small>
           <div className="path-input">
             <input
@@ -116,7 +131,10 @@ function ProjectDialog({ project, vscodeInstalled, onSaved, onClose }: Props): R
                 const p = await window.api.projects.pickProjectFile(
                   projectFile || agentPath || undefined
                 )
-                if (p) setProjectFile(p)
+                if (p) {
+                  setProjectFile(p)
+                  setAutoFile(null)
+                }
               }}
             >
               Durchsuchen …

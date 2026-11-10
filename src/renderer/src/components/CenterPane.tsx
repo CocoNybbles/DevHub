@@ -20,9 +20,22 @@ interface Props {
   onAgentVoice: () => void
 }
 
-/** Mitte: Terminal des ausgewählten Agents bzw. Raster aller Agents eines Projekts. */
+/**
+ * Mitte: Terminal des ausgewählten Agents, Raster aller Agents eines Projekts
+ * oder frei zusammengestelltes Raster (Strg+Klick, projektübergreifend).
+ */
 function CenterPane(props: Props): React.JSX.Element {
   const { selection, projects, agents } = props
+
+  const voiceButton = (title: string): React.JSX.Element => (
+    <button
+      className={`icon ${props.agentVoiceActive ? 'recording' : ''}`}
+      title={`${title} (${formatAccelerator(props.agentHotkey)})`}
+      onClick={props.onAgentVoice}
+    >
+      <MicIcon />
+    </button>
+  )
 
   if (selection?.kind === 'agent') {
     const agent = agents.find((a) => a.id === selection.agentId)
@@ -37,13 +50,7 @@ function CenterPane(props: Props): React.JSX.Element {
               <span className="muted"> · {project?.name}</span>
             </span>
             <div className="header-actions">
-              <button
-                className={`icon ${props.agentVoiceActive ? 'recording' : ''}`}
-                title={`Sprach-Anweisung an diesen Agent (${formatAccelerator(props.agentHotkey)})`}
-                onClick={props.onAgentVoice}
-              >
-                <MicIcon />
-              </button>
+              {voiceButton('Sprach-Anweisung an diesen Agent')}
               <button
                 className="icon"
                 title="Agent beenden"
@@ -59,26 +66,41 @@ function CenterPane(props: Props): React.JSX.Element {
     }
   }
 
+  if (selection?.kind === 'agents') {
+    const shown = selection.agentIds
+      .map((id) => agents.find((a) => a.id === id))
+      .filter((a): a is Agent => !!a)
+    const projectCount = new Set(shown.map((a) => a.projectId)).size
+    return (
+      <main className="pane center">
+        <header className="pane-header">
+          <span className="title">
+            {shown.length} Agents
+            <span className="muted">
+              {' '}
+              · {projectCount === 1 ? '1 Projekt' : `${projectCount} Projekte`} · Strg+Klick links
+              ändert die Auswahl
+            </span>
+          </span>
+          <div className="header-actions">
+            {props.activeAgentId && voiceButton('Sprach-Anweisung an den aktiven Agent')}
+          </div>
+        </header>
+        <AgentGrid {...props} shown={shown} showProject={projectCount > 1} />
+      </main>
+    )
+  }
+
   if (selection?.kind === 'project') {
     const project = projects.find((p) => p.id === selection.projectId)
     const projectAgents = agents.filter((a) => a.projectId === selection.projectId)
-    const cols = Math.ceil(Math.sqrt(projectAgents.length || 1))
-    const rows = Math.ceil((projectAgents.length || 1) / cols)
 
     return (
       <main className="pane center">
         <header className="pane-header">
           <span className="title">{project?.name}</span>
           <div className="header-actions">
-            {props.activeAgentId && (
-              <button
-                className={`icon ${props.agentVoiceActive ? 'recording' : ''}`}
-                title={`Sprach-Anweisung an den aktiven Agent (${formatAccelerator(props.agentHotkey)})`}
-                onClick={props.onAgentVoice}
-              >
-                <MicIcon />
-              </button>
-            )}
+            {props.activeAgentId && voiceButton('Sprach-Anweisung an den aktiven Agent')}
             <button
               className="icon"
               title="Neuen Agent starten"
@@ -100,46 +122,7 @@ function CenterPane(props: Props): React.JSX.Element {
             </div>
           </div>
         ) : (
-          <div
-            className="agent-grid"
-            style={{
-              gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))`,
-              gridTemplateRows: `repeat(${rows}, minmax(0, 1fr))`
-            }}
-          >
-            {projectAgents.map((a) => (
-              <section
-                key={a.id}
-                className={[
-                  'grid-cell',
-                  a.id === props.activeAgentId ? 'active' : '',
-                  a.status === 'needsInput' ? 'attention' : ''
-                ].join(' ')}
-                onMouseDown={() => {
-                  props.onActivate(a.id)
-                  focusTerminal(a.id)
-                }}
-              >
-                <header
-                  className="cell-header"
-                  title="Doppelklick: Einzelansicht"
-                  onDoubleClick={() => props.onOpenAgent(a.id)}
-                >
-                  <span className={`dot ${a.status}`} />
-                  <span className="row-name">{a.name}</span>
-                  <button
-                    className="icon"
-                    title="Agent beenden"
-                    onMouseDown={(e) => e.stopPropagation()}
-                    onClick={() => props.onStopAgent(a)}
-                  >
-                    <CloseIcon />
-                  </button>
-                </header>
-                <TerminalView agentId={a.id} />
-              </section>
-            ))}
-          </div>
+          <AgentGrid {...props} shown={projectAgents} showProject={false} />
         )}
       </main>
     )
@@ -154,8 +137,68 @@ function CenterPane(props: Props): React.JSX.Element {
         Projekt oder Agent links auswählen.
         <br />
         Projekt anklicken zeigt alle Agents im Raster.
+        <br />
+        Strg+Klick auf Agents/Projekte stellt ein eigenes Raster zusammen.
       </div>
     </main>
+  )
+}
+
+/** Raster aus Terminals; Klick aktiviert eine Zelle, Doppelklick auf den Kopf öffnet die Einzelansicht. */
+function AgentGrid(props: Props & { shown: Agent[]; showProject: boolean }): React.JSX.Element {
+  const { shown, projects } = props
+  const cols = Math.ceil(Math.sqrt(shown.length || 1))
+  const rows = Math.ceil((shown.length || 1) / cols)
+
+  return (
+    <div
+      className="agent-grid"
+      style={{
+        gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))`,
+        gridTemplateRows: `repeat(${rows}, minmax(0, 1fr))`
+      }}
+    >
+      {shown.map((a) => (
+        <section
+          key={a.id}
+          className={[
+            'grid-cell',
+            a.id === props.activeAgentId ? 'active' : '',
+            a.status === 'needsInput' ? 'attention' : ''
+          ].join(' ')}
+          onMouseDown={() => {
+            props.onActivate(a.id)
+            focusTerminal(a.id)
+          }}
+        >
+          <header
+            className="cell-header"
+            title="Doppelklick: Einzelansicht"
+            onDoubleClick={() => props.onOpenAgent(a.id)}
+          >
+            <span className={`dot ${a.status}`} />
+            <span className="row-name">
+              {a.name}
+              {props.showProject && (
+                <span className="muted"> · {projects.find((p) => p.id === a.projectId)?.name}</span>
+              )}
+              {a.status === 'needsInput' && (
+                <span className="row-sub">{a.statusMessage || 'Wartet auf Eingabe'}</span>
+              )}
+            </span>
+            <button
+              className="icon"
+              title="Agent beenden"
+              onMouseDown={(e) => e.stopPropagation()}
+              onClick={() => props.onStopAgent(a)}
+            >
+              <CloseIcon />
+            </button>
+          </header>
+          <TerminalView agentId={a.id} />
+        </section>
+      ))}
+    </div>
   )
 }
 

@@ -19,7 +19,9 @@ const DEFAULT_STATE: PersistedState = {
     voiceAutoSend: true,
     hotkeyAgentVoice: DEFAULT_HOTKEYS.agentVoice,
     hotkeyGlobalVoice: DEFAULT_HOTKEYS.globalVoice,
-    agentArgs: ''
+    agentArgs: '',
+    voiceRememberLanguage: true,
+    voiceLanguage: null
   }
 }
 

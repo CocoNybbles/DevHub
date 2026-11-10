@@ -75,10 +75,20 @@ export function validateAgentArgs(text: string | undefined): string | null {
  */
 export function mergeAgentArgs(
   globalArgs: string | undefined,
-  projectArgs: string | undefined
+  projectArgs: string | undefined,
+  /** Bereits zerlegte Flags mit höchstem Vorrang (z. B. per Sprache genanntes `--model`) */
+  agentArgs: string[] = []
 ): string[] {
-  const g = groups(tokenize(globalArgs ?? ''))
-  const p = groups(tokenize(projectArgs ?? ''))
-  const overridden = new Set(p.map((grp) => flagName(grp[0])))
-  return [...g.filter((grp) => !overridden.has(flagName(grp[0]))), ...p].flat()
+  let merged: string[][] = []
+  for (const layer of [tokenize(globalArgs ?? ''), tokenize(projectArgs ?? ''), agentArgs]) {
+    const grps = groups(layer)
+    const overridden = new Set(grps.map((grp) => flagName(grp[0])))
+    merged = [...merged.filter((grp) => !overridden.has(flagName(grp[0]))), ...grps]
+  }
+  return merged.flat()
+}
+
+/** Gültiger Wert für `--model`: Alias (fable, opus, sonnet, haiku …) oder voller Modellname. */
+export function isValidModelName(model: string): boolean {
+  return /^[A-Za-z0-9][A-Za-z0-9._:\-[\]]{0,79}$/.test(model)
 }

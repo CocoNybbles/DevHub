@@ -8,6 +8,15 @@ import HotkeyInput from './HotkeyInput'
 import Modal from './Modal'
 import VoiceModels from './VoiceModels'
 
+/** whisper-Sprachcode → „Deutsch“, „Englisch“ … (Fallback: Code) */
+function languageName(code: string): string {
+  try {
+    return new Intl.DisplayNames(['de'], { type: 'language' }).of(code) ?? code
+  } catch {
+    return code
+  }
+}
+
 interface Props {
   settings: Settings
   voiceStatus: VoiceStatus
@@ -86,6 +95,32 @@ function SettingsDialog(props: Props): React.JSX.Element {
           />
           Erkannten Text direkt abschicken (sonst nur ins Terminal eintragen)
         </label>
+        <small className="muted">
+          Pro Agent abweichend einstellbar: Rechtsklick auf den Agent in der Liste.
+        </small>
+        <label className="checkbox">
+          <input
+            type="checkbox"
+            checked={settings.voiceRememberLanguage}
+            onChange={(e) => update({ voiceRememberLanguage: e.target.checked })}
+          />
+          Zuletzt erkannte Sprache merken und zuerst verwenden (schnellere Erkennung)
+        </label>
+        {settings.voiceRememberLanguage && (
+          <small className="muted">
+            {settings.voiceLanguage ? (
+              <>
+                Gemerkt: <strong>{languageName(settings.voiceLanguage)}</strong> – wirkt das
+                Ergebnis unsicher, wird die Sprache neu erkannt.{' '}
+                <button className="link" onClick={() => update({ voiceLanguage: null })}>
+                  Vergessen
+                </button>
+              </>
+            ) : (
+              'Noch keine Sprache gemerkt – wird bei der nächsten Aufnahme erkannt.'
+            )}
+          </small>
+        )}
       </section>
 
       <section className="settings-section">

@@ -7,7 +7,7 @@ import CodePane from './components/CodePane'
 import ProjectDialog from './components/ProjectDialog'
 import SettingsDialog from './components/SettingsDialog'
 import VoiceSetupDialog from './components/VoiceSetupDialog'
-import VoiceOverlay, { VoiceUi } from './components/VoiceOverlay'
+import VoiceOverlay, { VoiceJob, VoiceRecording } from './components/VoiceOverlay'
 import { DEFAULT_HOTKEYS, matchesAccelerator } from '../../shared/hotkeys'
 import { isCapturingHotkey } from './lib/hotkeyCapture'
 import {
@@ -19,6 +19,7 @@ import {
 } from './lib/terminals'
 import { Recorder } from './lib/recorder'
 import { errorText } from './lib/errors'
+import { shownAgentIds, toggleAgent, toggleProject } from './lib/selection'
 
 type VoiceTarget = { kind: 'agent'; agentId: string } | { kind: 'global' }
 
@@ -33,7 +34,9 @@ function Workspace(): React.JSX.Element {
     voiceAutoSend: true,
     hotkeyAgentVoice: DEFAULT_HOTKEYS.agentVoice,
     hotkeyGlobalVoice: DEFAULT_HOTKEYS.globalVoice,
-    agentArgs: ''
+    agentArgs: '',
+    voiceRememberLanguage: true,
+    voiceLanguage: null
   })
   const [voiceStatus, setVoiceStatus] = useState<VoiceStatus | null>(null)
   const [toast, setToast] = useState<string | null>(null)
@@ -41,7 +44,8 @@ function Workspace(): React.JSX.Element {
   const [projectDialog, setProjectDialog] = useState<{ project: Project | null } | null>(null)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [voiceSetupOpen, setVoiceSetupOpen] = useState(false)
-  const [voiceUi, setVoiceUi] = useState<VoiceUi>({ mode: 'idle' })
+  const [recording, setRecording] = useState<VoiceRecording | null>(null)
+  const [voiceJobs, setVoiceJobs] = useState<VoiceJob[]>([])
 
   const showError = useCallback((e: unknown) => setToast(errorText(e)), [])
   const refreshVoice = useCallback(() => window.api.voice.status().then(setVoiceStatus), [])
@@ -105,6 +109,15 @@ function Workspace(): React.JSX.Element {
         return { kind: 'project', projectId: sel.projectId }
       }
     }
+    if (sel?.kind === 'agents') {
+      const ids = sel.agentIds.filter((id) => agents.some((a) => a.id === id))
+      if (ids.length === 0) return null
+      if (ids.length === 1) return { kind: 'agent', agentId: ids[0] }
+      const active =
+        sel.activeAgentId && ids.includes(sel.activeAgentId) ? sel.activeAgentId : undefined
+      if (ids.length !== sel.agentIds.length || active !== sel.activeAgentId)
+        return { kind: 'agents', agentIds: ids, activeAgentId: active }
+    }
     return sel
   }, [rawSelection, agents, projects])
 
@@ -124,16 +137,15 @@ function Workspace(): React.JSX.Element {
         null
       )
     }
+    if (selection?.kind === 'agents') return selection.activeAgentId ?? selection.agentIds[0]
     return null
   }, [selection, agents])
 
   /** Code-Ansicht: Fokus des aktiven Agents, sonst jüngster Fokus im ausgewählten Projekt. */
   const codeFocus = useMemo(() => {
     if (activeAgentId && focusByAgent[activeAgentId]) return focusByAgent[activeAgentId]
-    if (selection?.kind === 'project') {
-      const ids = new Set(
-        agents.filter((a) => a.projectId === selection.projectId).map((a) => a.id)
-      )
+    if (selection?.kind === 'project' || selection?.kind === 'agents') {
+      const ids = new Set(shownAgentIds(selection, agents))
       return (
         Object.values(focusByAgent)
           .filter((f) => ids.has(f.agentId))
@@ -184,71 +196,89 @@ function Workspace(): React.JSX.Element {
   const recorder = useRef<Recorder | null>(null)
   const voiceTarget = useRef<VoiceTarget | null>(null)
 
+  const nextJobId = useRef(1)
+
+  const updateJob = useCallback(
+    (id: number, patch: Partial<VoiceJob>) =>
+      setVoiceJobs((jobs) => jobs.map((j) => (j.id === id ? { ...j, ...patch } : j))),
+    []
+  )
+
+  /**
+   * Beendet die Aufnahme sofort und verarbeitet sie im Hintergrund weiter (Erkennung,
+   * ggf. Zuordnung per Claude). Die App bleibt bedienbar, neue Aufnahmen sind sofort möglich.
+   */
   const finishVoice = useCallback(async () => {
     const rec = recorder.current
     const target = voiceTarget.current
     recorder.current = null
+    voiceTarget.current = null
+    setRecording(null)
     if (!rec || !target) return
 
-    const wav = await rec.stop()
-    if (!wav) {
-      setVoiceUi({ mode: 'result', message: 'Aufnahme zu kurz.', error: true })
-      return
-    }
+    const id = nextJobId.current++
+    const targetName =
+      target.kind === 'agent'
+        ? (agents.find((a) => a.id === target.agentId)?.name ?? 'Agent')
+        : 'Sprachbefehl'
+    setVoiceJobs((jobs) => [
+      ...jobs,
+      { id, state: 'processing', target: targetName, message: 'Erkenne Sprache …' }
+    ])
+    const fail = (message: string, text?: string): void =>
+      updateJob(id, { state: 'error', message, text })
+
     try {
-      setVoiceUi({ mode: 'processing', label: 'Erkenne Sprache …' })
-      const text = await window.api.voice.transcribe(wav)
-      if (!text) {
-        setVoiceUi({ mode: 'result', message: 'Nichts verstanden.', error: true })
-        return
-      }
+      const wav = await rec.stop()
+      if (!wav) return fail('Aufnahme zu kurz.')
+      const { text, language } = await window.api.voice.transcribe(wav)
+      if (!text) return fail('Nichts verstanden.')
+      if (language) updateJob(id, { language })
 
       if (target.kind === 'agent') {
-        const agent = agents.find((a) => a.id === target.agentId)
-        if (!agent) throw new Error('Agent läuft nicht mehr')
-        if (settings.voiceAutoSend) await window.api.agents.sendLine(agent.id, text)
-        else window.api.agents.write(agent.id, text)
-        setVoiceUi({
-          mode: 'result',
-          text,
-          message: settings.voiceAutoSend
-            ? `→ an ${agent.name} gesendet`
-            : `→ bei ${agent.name} eingetragen`
-        })
+        const sent = await window.api.agents.sendVoice(target.agentId, text)
+        updateJob(id, { state: 'done', text, message: sent ? '→ gesendet' : '→ eingetragen' })
         return
       }
 
-      setVoiceUi({ mode: 'processing', label: 'Claude ordnet den Befehl zu …', text })
+      updateJob(id, { text, message: 'Claude ordnet den Befehl zu …' })
       const result = await window.api.voice.command(text)
       if (result.kind === 'sent') {
-        setVoiceUi({ mode: 'result', text, message: `→ an ${result.agentName} gesendet` })
+        updateJob(id, {
+          state: 'done',
+          message: `→ an ${result.agentName} ${result.sent ? 'gesendet' : 'eingetragen'}`
+        })
       } else if (result.kind === 'started') {
         const started = (await window.api.agents.list()).find((a) => a.name === result.agentName)
         if (started) setSelection({ kind: 'agent', agentId: started.id })
-        setVoiceUi({
-          mode: 'result',
-          text,
-          message: `${result.agentName} in „${result.projectName}“ gestartet${result.task ? ' mit Aufgabe' : ''}`
+        updateJob(id, {
+          state: 'done',
+          message: `${result.agentName} in „${result.projectName}“ gestartet${result.model ? ` (Modell ${result.model})` : ''}${result.task ? ' mit Aufgabe' : ''}`
         })
       } else {
-        setVoiceUi({ mode: 'result', text, message: result.message, error: true })
+        fail(result.message, text)
       }
     } catch (e) {
-      setVoiceUi({ mode: 'result', message: errorText(e), error: true })
+      fail(errorText(e))
     }
-  }, [agents, settings.voiceAutoSend])
+  }, [agents, updateJob])
 
   const cancelVoice = useCallback(() => {
     recorder.current?.cancel()
     recorder.current = null
-    setVoiceUi({ mode: 'idle' })
+    voiceTarget.current = null
+    setRecording(null)
+  }, [])
+
+  const showVoiceError = useCallback((message: string) => {
+    const id = nextJobId.current++
+    setVoiceJobs((jobs) => [...jobs, { id, state: 'error', target: 'Sprache', message }])
   }, [])
 
   /** Startet die Aufnahme bzw. beendet sie, wenn bereits aufgenommen wird. */
   const toggleVoice = useCallback(
     async (kind: 'agent' | 'global') => {
       if (recorder.current) return finishVoice()
-      if (voiceUi.mode === 'processing') return
 
       const status = await window.api.voice.status()
       setVoiceStatus(status)
@@ -277,18 +307,14 @@ function Workspace(): React.JSX.Element {
       try {
         await rec.start()
       } catch (e) {
-        setVoiceUi({
-          mode: 'result',
-          message: `Mikrofon nicht verfügbar: ${errorText(e)}`,
-          error: true
-        })
+        showVoiceError(`Mikrofon nicht verfügbar: ${errorText(e)}`)
         return
       }
       recorder.current = rec
       voiceTarget.current = target
-      setVoiceUi({ mode: 'recording', target: kind, label, startedAt: Date.now() })
+      setRecording({ target: kind, label, startedAt: Date.now() })
     },
-    [agents, activeAgentId, finishVoice, voiceUi.mode]
+    [agents, activeAgentId, finishVoice, showVoiceError]
   )
 
   // Hotkeys: Agent-Aufnahme (in der App), globaler Sprachbefehl (vom Hauptprozess), Esc
@@ -314,14 +340,19 @@ function Workspace(): React.JSX.Element {
     }
   }, [toggleVoice, cancelVoice, agentHotkey])
 
-  // Ergebnis-Anzeige nach einigen Sekunden ausblenden
+  // Abgeschlossene Aufträge nach einigen Sekunden ausblenden
+  const finishedJobIds = voiceJobs
+    .filter((j) => j.state !== 'processing')
+    .map((j) => j.id)
+    .join(',')
   useEffect(() => {
-    if (voiceUi.mode !== 'result') return
-    const t = setTimeout(() => setVoiceUi({ mode: 'idle' }), 6000)
+    if (!finishedJobIds) return
+    const ids = new Set(finishedJobIds.split(',').map(Number))
+    const t = setTimeout(() => setVoiceJobs((jobs) => jobs.filter((j) => !ids.has(j.id))), 6000)
     return () => clearTimeout(t)
-  }, [voiceUi])
+  }, [finishedJobIds])
 
-  const recordingTarget = voiceUi.mode === 'recording' ? voiceUi.target : null
+  const recordingTarget = recording?.target ?? null
 
   // ---------------------------------------------------------------- Render
   return (
@@ -334,11 +365,23 @@ function Workspace(): React.JSX.Element {
           vscodeInstalled={vscodeInstalled}
           globalVoiceActive={recordingTarget === 'global'}
           globalHotkey={settings.hotkeyGlobalVoice}
-          onSelectProject={(id) => setSelection({ kind: 'project', projectId: id })}
-          onSelectAgent={(id) => setSelection({ kind: 'agent', agentId: id })}
+          onSelectProject={(id, multi) =>
+            setSelection(
+              multi ? toggleProject(selection, id, agents) : { kind: 'project', projectId: id }
+            )
+          }
+          onSelectAgent={(id, multi) =>
+            setSelection(
+              multi ? toggleAgent(selection, id, agents) : { kind: 'agent', agentId: id }
+            )
+          }
           onStartAgent={(id) => startAgent(id)}
           onStopAgent={stopAgent}
           onRenameAgent={(id, name) => window.api.agents.rename(id, name).catch(showError)}
+          globalVoiceAutoSend={settings.voiceAutoSend}
+          onSetVoiceAutoSend={(id, value) =>
+            window.api.agents.setVoiceAutoSend(id, value).catch(showError)
+          }
           onAddProject={() => setProjectDialog({ project: null })}
           onEditProject={(p) => setProjectDialog({ project: p })}
           onRemoveProject={removeProject}
@@ -347,6 +390,8 @@ function Workspace(): React.JSX.Element {
           onGlobalVoice={() => toggleVoice('global')}
           onOpenSettings={() => {
             refreshVoice()
+            // gemerkte Sprache wird im Main aktualisiert → frisch laden
+            window.api.settings.get().then(setSettings)
             setSettingsOpen(true)
           }}
         />
@@ -358,7 +403,9 @@ function Workspace(): React.JSX.Element {
           agentVoiceActive={recordingTarget === 'agent'}
           agentHotkey={agentHotkey}
           onActivate={(id) =>
-            setSelection((s) => (s?.kind === 'project' ? { ...s, activeAgentId: id } : s))
+            setSelection((s) =>
+              s?.kind === 'project' || s?.kind === 'agents' ? { ...s, activeAgentId: id } : s
+            )
           }
           onOpenAgent={(id) => setSelection({ kind: 'agent', agentId: id })}
           onStartAgent={(id) => startAgent(id)}
@@ -375,10 +422,11 @@ function Workspace(): React.JSX.Element {
       </div>
 
       <VoiceOverlay
-        ui={voiceUi}
+        recording={recording}
+        jobs={voiceJobs}
         onStop={finishVoice}
         onCancel={cancelVoice}
-        onDismiss={() => setVoiceUi({ mode: 'idle' })}
+        onDismiss={(id) => setVoiceJobs((jobs) => jobs.filter((j) => j.id !== id))}
       />
 
       {toast && (

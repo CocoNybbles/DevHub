@@ -16,7 +16,7 @@ import type { Project, ProjectInput, Settings, WhisperModelId } from '../shared/
 import { checkClaudeAuth, startClaudeLogin } from './claudeAuth'
 import { AgentManager } from './agents'
 import { getState, updateState } from './store'
-import { isVSCodeInstalled, openInVSCode } from './tools'
+import { findSolution, isVSCodeInstalled, openInVSCode } from './tools'
 import { deleteModel, downloadVoice, transcribe, voiceStatus } from './voice'
 import { runVoiceCommand } from './voiceCommands'
 import { validateAgentArgs } from '../shared/agentArgs'
@@ -182,6 +182,9 @@ function registerIpc(): void {
     })
     return r.canceled ? null : r.filePaths[0]
   })
+  ipcMain.handle('projects:findSolution', (_, dir: string) =>
+    dir && existsSync(dir) ? findSolution(dir) : null
+  )
   ipcMain.handle('projects:pickProjectFile', async (_, defaultPath?: string) => {
     const r = await dialog.showOpenDialog(mainWindow!, {
       properties: ['openFile'],
@@ -216,6 +219,10 @@ function registerIpc(): void {
   ipcMain.handle('agents:stop', (_, id: string) => agents.stop(id))
   ipcMain.handle('agents:rename', (_, id: string, name: string) => agents.rename(id, name))
   ipcMain.handle('agents:sendLine', (_, id: string, text: string) => agents.sendLine(id, text))
+  ipcMain.handle('agents:sendVoice', (_, id: string, text: string) => agents.sendVoice(id, text))
+  ipcMain.handle('agents:setVoiceAutoSend', (_, id: string, value?: boolean) =>
+    agents.setVoiceAutoSend(id, typeof value === 'boolean' ? value : undefined)
+  )
   ipcMain.handle('agents:buffer', (_, id: string) => agents.buffer(id))
   ipcMain.on('agents:write', (_, id: string, data: string) => agents.write(id, data))
   ipcMain.on('agents:resize', (_, id: string, cols: number, rows: number) =>
@@ -259,6 +266,7 @@ function registerIpc(): void {
   ipcMain.handle('settings:update', (_, patch: Partial<Settings>) => {
     const current = getState().settings
     const next = { ...current, ...patch }
+    if (patch.voiceRememberLanguage === false) next.voiceLanguage = null // ausschalten = vergessen
     if (patch.agentArgs !== undefined) {
       const argsError = validateAgentArgs(patch.agentArgs)
       if (argsError) throw new Error(`Start-Flags: ${argsError}`)

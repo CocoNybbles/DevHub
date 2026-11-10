@@ -1,5 +1,7 @@
 import { exec } from 'child_process'
 import { existsSync } from 'fs'
+import { readdir } from 'fs/promises'
+import { basename, join } from 'path'
 
 /** Führt einen Shell-Befehl aus und liefert die erste Ausgabezeile (oder null bei Fehler). */
 function firstLine(command: string): Promise<string | null> {
@@ -85,4 +87,42 @@ export function openInVSCode(path: string, line?: number): void {
   if (!existsSync(path)) throw new Error(`Pfad nicht gefunden: ${path}`)
   const cmd = line ? `code -g ${quote(`${path}:${line}`)}` : `code ${quote(path)}`
   exec(cmd, { windowsHide: true })
+}
+
+/** Ordner, die bei der Suche nach Projektmappen übersprungen werden. */
+const SKIP_DIRS = new Set(['node_modules', 'bin', 'obj', 'out', 'dist', 'build', 'packages'])
+
+/**
+ * Sucht im Ordner (und bis zu 3 Ebenen darunter) nach einer `.sln`/`.slnx`.
+ * Bevorzugt die flachste Ebene, dort eine Datei mit dem Ordnernamen. null, wenn keine gefunden.
+ */
+export async function findSolution(root: string): Promise<string | null> {
+  const wanted = basename(root.replace(/[\\/]+$/, '')).toLowerCase()
+  let level = [root]
+  for (let depth = 0; depth <= 3 && level.length > 0; depth++) {
+    const next: string[] = []
+    const found: string[] = []
+    for (const dir of level) {
+      let entries
+      try {
+        entries = await readdir(dir, { withFileTypes: true })
+      } catch {
+        continue // kein Zugriff o. Ä.
+      }
+      for (const e of entries) {
+        if (e.isFile() && /\.slnx?$/i.test(e.name)) found.push(join(dir, e.name))
+        else if (e.isDirectory() && !e.name.startsWith('.') && !SKIP_DIRS.has(e.name.toLowerCase()))
+          next.push(join(dir, e.name))
+      }
+    }
+    if (found.length > 0) {
+      const stem = (f: string): string =>
+        basename(f)
+          .replace(/\.slnx?$/i, '')
+          .toLowerCase()
+      return found.find((f) => stem(f) === wanted) ?? found.sort()[0]
+    }
+    level = next.slice(0, 500) // Obergrenze gegen riesige Bäume
+  }
+  return null
 }

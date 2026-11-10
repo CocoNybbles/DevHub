@@ -6,6 +6,8 @@ import Workspace from './Workspace'
 export type Selection =
   | { kind: 'agent'; agentId: string }
   | { kind: 'project'; projectId: string; activeAgentId?: string }
+  /** Frei zusammengestelltes Raster (Strg+Klick), auch projektübergreifend */
+  | { kind: 'agents'; agentIds: string[]; activeAgentId?: string }
   | null
 
 /** Einstieg: erst Claude-Login prüfen, dann den Arbeitsbereich zeigen. */

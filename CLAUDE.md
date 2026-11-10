@@ -14,17 +14,18 @@ Lokale Windows-Desktop-App zum Verwalten von Projekten und den darin laufenden K
 **Projekte**
 - Projekte (Ordner) registrieren, je Projekt 3 Pfade:
   1. Agent-Pfad: Arbeitsverzeichnis, in dem Claude / andere KI-Coding-Engines gestartet werden
-  2. Projektdatei: `.sln` / Projektdatei, öffnbar z. B. mit Visual Studio
+  2. Projektdatei: `.sln` / Projektdatei, öffnbar z. B. mit Visual Studio — wird nach Wahl des Agent-Ordners automatisch gesucht (`findSolution` in `main/tools.ts`: `.sln`/`.slnx`, bis 3 Ebenen tief, flachste zuerst, Name = Ordnername bevorzugt; überschreibt nie eine von Hand gesetzte Datei)
   3. VS-Code-Ordner: nur konfigurierbar, wenn VS Code installiert ist
 
 **Layout**
 - Links: Liste aller Projekte mit ihren Agents
   - Kleiner Button neben dem Projektnamen startet einen neuen Agent
-  - Agents heißen standardmäßig „Agent 1“, „Agent 2“, … — Umbenennen per Rechtsklick
-  - Agents, die eine Frage/Input brauchen, werden hervorgehoben, bis sie weiterarbeiten
+  - Agents heißen standardmäßig „Agent 1“, „Agent 2“, … — Rechtsklick-Menü: Umbenennen, Beenden, Sprachtext abschicken/eintragen (pro Agent)
+  - Agents, die eine Frage/Input brauchen, werden hervorgehoben, bis sie weiterarbeiten — links in der Liste und im Raster (gelber Rahmen + Frage im Zellenkopf, `.grid-cell.attention`; aktiv + wartend = gelber Rahmen mit Akzentlinie unter dem Kopf)
   - Agents können über die Liste beendet werden
 - Mitte: Terminal des ausgewählten Agents (`claude.exe` direkt per ConPTY, **ohne** Shell dazwischen – so beendet `/exit` den Agent wirklich)
   - Klick auf ein Projekt → alle Agents des Projekts im Raster
+  - **Strg+Klick** (projektübergreifend): Agent zum Raster hinzufügen/entfernen; auf ein Projekt = alle seine Agents. Ausgangspunkt ist die aktuelle Ansicht (auch ein Projekt-Raster). Auswahl-Typ `{ kind: 'agents', agentIds }`, Logik in `lib/selection.ts`; 1 Agent → Einzelansicht, 0 → leer
   - Beendet sich ein Agent im Terminal selbst (z. B. `/exit`), wird die Ansicht geschlossen und der Eintrag links entfernt
 - Rechts: Code-Ansicht — bei Analyse/Bugfund wird die betroffene Datei angezeigt und die Stelle hervorgehoben
   - Spalte wird **nur eingeblendet, solange eine Datei angezeigt wird** (Fokus für den aktiven Agent / das ausgewählte Projekt), sonst nimmt das Terminal die Breite ein (`.layout.with-code`)
@@ -47,7 +48,7 @@ Lokale Windows-Desktop-App zum Verwalten von Projekten und den darin laufenden K
 - UI: React 19, reines CSS (`assets/main.css` = Variablen/Basis, `assets/components.css` = Komponenten), Dark Theme
 - Terminal: `@xterm/xterm` 6 + `@xterm/addon-fit` (Renderer), `node-pty` 1.1 (Main, ConPTY, N-API-Prebuilds)
 - Code-Ansicht: `monaco-editor` 0.57, **schlanker Import** (`monaco-editor/editor/editor.api` + `basic-languages/monaco.contribution` + nur `editor.worker`)
-- Sprache → Text: whisper.cpp lokal (Release `b5454`, `whisper-bin-x64.zip`), mehrsprachige quantisierte Modelle, Sprache automatisch (`-l auto`)
+- Sprache → Text: whisper.cpp lokal (Release `b5454`, `whisper-bin-x64.zip`), mehrsprachige quantisierte Modelle, Sprache automatisch (`-l auto`) bzw. gemerkt (s. Architektur)
   - Engine (~9 MB) **und** Modell werden **nicht** mitgeliefert, sondern beim ersten Nutzen nach `%APPDATA%\DevHub\whisper\` geladen
   - Erster Voice-Versuch ohne Modell → `VoiceSetupDialog` (Modellauswahl base ~60 MB / small ~190 MB [Standard] / large-v3-turbo ~550 MB, Download mit Fortschritt direkt im Dialog)
   - Einstellungen: dieselbe Auswahl (`VoiceModels`), Modell wechseln/löschen
@@ -57,7 +58,7 @@ Lokale Windows-Desktop-App zum Verwalten von Projekten und den darin laufenden K
 
 **Agent-Start** (`main/agents.ts`): `claude.exe` direkt per node-pty im Agent-Ordner (bei `.cmd`-Installation via `cmd.exe /c`, Sonderzeichen werden entfernt):
 `claude [Nutzer-Flags]  --session-id <uuid> | --resume <uuid>  --settings <agent>/settings.json  --mcp-config <agent>/mcp.json  --append-system-prompt <Hinweis> [Aufgabe]`
-- **Nutzer-Flags** (`shared/agentArgs.ts`): global `settings.agentArgs` + pro Projekt `project.agentArgs`, Text wie in einer Shell (Quotes, Backslashes bleiben). `mergeAgentArgs`: gleichnamiges Projekt-Flag ersetzt das globale. Stehen **vor** den DevHub-Flags (beendet variadische Werte, Aufgabe bleibt positional). `validateAgentArgs` (Dialoge live + Main beim Speichern) lehnt freien Text und reservierte Flags ab (`--session-id`, `--resume`/`-r`, `--continue`/`-c`, `--fork-session`, `--no-session-persistence`, `--settings`, `--mcp-config`, `--append-system-prompt`, `--print`/`-p`, `--help`, `--version`). Unbekannte Flags prüft erst claude selbst → Startfehler (s. u.).
+- **Nutzer-Flags** (`shared/agentArgs.ts`): global `settings.agentArgs` + pro Projekt `project.agentArgs`, Text wie in einer Shell (Quotes, Backslashes bleiben). `mergeAgentArgs(global, projekt, agent)`: gleichnamiges Flag einer höheren Ebene ersetzt das niedrigere; Ebene „agent“ = `agent.model` → `--model` (per Sprachbefehl genannt, persistiert, gilt auch bei Wiederherstellung; geprüft mit `isValidModelName`). Stehen **vor** den DevHub-Flags (beendet variadische Werte, Aufgabe bleibt positional). `validateAgentArgs` (Dialoge live + Main beim Speichern) lehnt freien Text und reservierte Flags ab (`--session-id`, `--resume`/`-r`, `--continue`/`-c`, `--fork-session`, `--no-session-persistence`, `--settings`, `--mcp-config`, `--append-system-prompt`, `--print`/`-p`, `--help`, `--version`). Unbekannte Flags prüft erst claude selbst → Startfehler (s. u.).
 - `--resume` nur, wenn `~/.claude/projects/*/<sessionId>.jsonl` existiert, sonst `--session-id` (gleiche ID)
 - Pro-Agent-Dateien in `%APPDATA%\DevHub\agents\<agentId>\` (bei jedem Start neu geschrieben, da Port/Token wechseln)
 - Env ohne Session-Marker einer übergeordneten Claude-Instanz (`claudeEnv()` in `main/tools.ts`)
@@ -75,9 +76,12 @@ Lokale Windows-Desktop-App zum Verwalten von Projekten und den darin laufenden K
 
 **Terminals im Renderer** (`lib/terminals.ts`): ein xterm pro Agent, lebt unabhängig von React und sammelt Ausgabe auch unsichtbar; `attachTerminal()` hängt das DOM-Element in Einzelansicht oder Rasterzelle. Main hält zusätzlich 200 KB Ausgabe-Puffer (`agents:buffer`) für Renderer-Reloads.
 
-**Sprachsteuerung**: Renderer nimmt WAV auf (`lib/recorder.ts`, 16 kHz mono) → `voice:transcribe` (whisper-cli) →
-- aktiver Agent (Standard `Strg+Shift+Leertaste` / Mikrofon in der Mitte): Text an Agent (`sendLine` = Text, 150 ms, Enter; oder nur eintragen, Einstellung `voiceAutoSend`)
-- global (Standard `Strg+Alt+Leertaste` per `globalShortcut` / Mikrofon links): `voice:command` → `claude -p --model haiku --output-format json --tools "" --strict-mcp-config --no-session-persistence` (Prompt via stdin) liefert JSON `send` | `start` | `none`
+**Sprachsteuerung**: Renderer nimmt WAV auf (`lib/recorder.ts`, 16 kHz mono) → `voice:transcribe` (whisper-cli, Priorität „niedriger als normal“, Threads = halbe Kerne) →
+- **Sprache merken** (`settings.voiceRememberLanguage`, Standard an; gemerkt in `settings.voiceLanguage`): zuerst `-l <gemerkt>` (≈1,5 s statt ≈3 s mit `auto`). Auswertung per `-ojf` (JSON: Sprache + Token-Wahrscheinlichkeit `p`). Leeres Ergebnis oder Ø p < 0,6 → zweiter Lauf mit `auto`, dessen Sprache gespeichert wird. Zusätzlich jede 5. Aufnahme `auto`, weil whisper bei erzwungenem `en` andere Sprachen unauffällig ins Englische übersetzt (p bleibt hoch); erzwungenes `de` bei englischer Sprache ergibt dagegen p ≈ 0,5.
+- **Hintergrund:** „Fertig“ beendet nur die Aufnahme; Erkennung/Zuordnung laufen als `VoiceJob` weiter (Karten unten in der Mitte, mehrere gleichzeitig), neue Aufnahmen sind sofort möglich. Overlay lässt Klicks durch (`.voice-stack` mit `pointer-events: none`).
+- **Abschicken oder nur eintragen:** `agents:sendVoice` entscheidet im Main: `agent.voiceAutoSend` (pro Agent, Rechtsklick-Menü, persistiert) → sonst global `settings.voiceAutoSend`. Gilt auch für globale Befehle (`send`).
+- aktiver Agent (Standard `Strg+Shift+Leertaste` / Mikrofon in der Mitte): Text an Agent (`sendLine` = Text, 150 ms, Enter)
+- global (Standard `Strg+Alt+Leertaste` per `globalShortcut` / Mikrofon links): `voice:command` → `claude -p --model haiku --output-format json --tools "" --strict-mcp-config --no-session-persistence` (Prompt via stdin) liefert JSON `send` | `start` (+ optional `model`: Alias `fable`/`opus`/`sonnet`/`haiku`, bei genannter Version voller Name wie `claude-opus-5-5`) | `none`
 - **Kürzel einstellbar** (Einstellungen → `HotkeyInput`): gespeichert als Electron-Accelerator in `settings.hotkeyAgentVoice` / `hotkeyGlobalVoice`. `shared/hotkeys.ts` übersetzt Tastendrücke (layoutunabhängig über `KeyboardEvent.code`) und formatiert die Anzeige. Main registriert das globale Kürzel neu (`registerGlobalHotkey`; belegt → altes zurück + Fehler im Dialog); während der Aufnahme wird es per `settings:suspendGlobalHotkey` freigegeben. Das Agent-Kürzel lässt das Terminal per `setAppHotkeys()` durch.
 
 **Persistenz** (`main/store.ts`): `%APPDATA%\DevHub\devhub-state.json` (Projekte, laufende Agents, Einstellungen), atomar geschrieben.
@@ -117,7 +121,7 @@ src/
   renderer/src/
     App.tsx                Auth-Gate → Workspace; Typ `Selection`
     Workspace.tsx          Zustand, Auswahl, Sprachablauf, Hotkeys, Dialoge
-    lib/                   terminals.ts, recorder.ts, errors.ts, hotkeyCapture.ts
+    lib/                   terminals.ts, recorder.ts, errors.ts, hotkeyCapture.ts, selection.ts
     components/            Sidebar, CenterPane, TerminalView, CodePane, ProjectDialog, SettingsDialog,
                            VoiceSetupDialog, VoiceModels, VoiceOverlay, HotkeyInput, AgentArgsHelp, Modal,
                            ContextMenu, AuthGate, Icons
@@ -139,6 +143,11 @@ Typ in `DevHubApi` (`shared/types.ts`). Alle drei immer zusammen anpassen. Ereig
 - [x] Sprachsteuerung inkl. Download-Dialog — Routing via `claude -p` getestet; **whisper-Download/Transkription + Mikrofon noch nicht getestet**
 - [x] Sprach-Kürzel in den Einstellungen änderbar — Build/Typcheck ok, **in der UI noch nicht getestet**
 - [x] Start-Flags global + pro Projekt — Parser getestet, claude-Verhalten per PTY geprüft (unbekanntes Flag → Exit 1, `--enable-auto-mode` ist gültig, aber undokumentiert); **in der UI noch nicht getestet**
+- [x] Freies Raster per Strg+Klick — Auswahl-Logik per Skript getestet, **in der UI noch nicht getestet**
+- [x] Modell per Sprachbefehl („Starte mit Opus einen Agent für …“) — Router-Prompt mit echtem `claude -p` getestet (de/en, „Sonett“, Version), Flag-Zusammenführung getestet; **Agent-Start in der App noch nicht getestet**
+- [x] Gemerkte Sprache für schnellere Erkennung — Ablauf mit TTS-Dateien (de/en) per Skript getestet, **in der App noch nicht getestet**
+- [x] Spracherkennung im Hintergrund + Auto-Abschicken pro Agent — Build/Lint ok, whisper mit niedriger Priorität getestet (Datei-Test); **Mikrofon/UI noch nicht getestet**
+- [x] Automatische `.sln`-Suche beim Projekt-Anlegen — Suche getestet, **in der UI noch nicht getestet**
 - [x] Paketierung (`build:unpack`) getestet: entpackt ~338 MB (App selbst ~17 MB, Rest Electron)
 - [x] Initialer Git-Commit (nach Durchsicht durch den Nutzer)
 - Verteilung an Tester: `npx electron-builder --win portable` → portable .exe + `LIESMICH.txt` als ZIP (in `dist/`, nicht versioniert)
@@ -161,6 +170,6 @@ Typ in `DevHubApi` (`shared/types.ts`). Alle drei immer zusammen anpassen. Ereig
 - Lint `react-hooks/set-state-in-effect`: kein synchrones `setState` in `useEffect` — Zustand ableiten (`useMemo`, siehe `selection` in Workspace) oder im `.then()` setzen.
 - React StrictMode führt Effekte im Dev-Modus doppelt aus → Seiteneffekte im Main idempotent halten (z. B. `restore()` nur einmal).
 - `capturePage` liefert bei verdecktem Fenster ein veraltetes Bild → Fenster vorher `show()/focus()/invalidate()`.
-- Heredocs mit `\\` im Bash-Tool werden verfälscht → JSON mit Windows-Pfaden per Write-Tool schreiben.
+- Heredocs im Bash-Tool verfälschen `\\`, `\r`/`\n` in Strings und Umlaute (Python-stdin) → Code/JSON mit Backslashes oder Umlauten per Edit/Write-Tool schreiben.
 - Zeilenenden: überall **LF** (`.gitattributes`: `* text=auto eol=lf`, Prettier erwartet LF). Python `open(..., 'w')` schreibt unter Windows CRLF → Dateien per Edit-Tool ändern (oder `newline=''`, danach `npx prettier --write`). Prüfen: `git ls-files --eol | grep w/crlf`.
 - Git: Standard-Branch ist `main`, Remote `origin` = https://github.com/CocoNybbles/DevHub (privat). `gh` ist nicht installiert.
