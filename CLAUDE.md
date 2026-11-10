@@ -56,7 +56,8 @@ Lokale Windows-Desktop-App zum Verwalten von Projekten und den darin laufenden K
 ## Architektur
 
 **Agent-Start** (`main/agents.ts`): `claude.exe` direkt per node-pty im Agent-Ordner (bei `.cmd`-Installation via `cmd.exe /c`, Sonderzeichen werden entfernt):
-`claude --session-id <uuid> | --resume <uuid>  --settings <agent>/settings.json  --mcp-config <agent>/mcp.json  --append-system-prompt <Hinweis> [Aufgabe]`
+`claude [Nutzer-Flags]  --session-id <uuid> | --resume <uuid>  --settings <agent>/settings.json  --mcp-config <agent>/mcp.json  --append-system-prompt <Hinweis> [Aufgabe]`
+- **Nutzer-Flags** (`shared/agentArgs.ts`): global `settings.agentArgs` + pro Projekt `project.agentArgs`, Text wie in einer Shell (Quotes, Backslashes bleiben). `mergeAgentArgs`: gleichnamiges Projekt-Flag ersetzt das globale. Stehen **vor** den DevHub-Flags (beendet variadische Werte, Aufgabe bleibt positional). `validateAgentArgs` (Dialoge live + Main beim Speichern) lehnt freien Text und reservierte Flags ab (`--session-id`, `--resume`/`-r`, `--continue`/`-c`, `--fork-session`, `--no-session-persistence`, `--settings`, `--mcp-config`, `--append-system-prompt`, `--print`/`-p`, `--help`, `--version`). Unbekannte Flags prüft erst claude selbst → Startfehler (s. u.).
 - `--resume` nur, wenn `~/.claude/projects/*/<sessionId>.jsonl` existiert, sonst `--session-id` (gleiche ID)
 - Pro-Agent-Dateien in `%APPDATA%\DevHub\agents\<agentId>\` (bei jedem Start neu geschrieben, da Port/Token wechseln)
 - Env ohne Session-Marker einer übergeordneten Claude-Instanz (`claudeEnv()` in `main/tools.ts`)
@@ -69,6 +70,7 @@ Lokale Windows-Desktop-App zum Verwalten von Projekten und den darin laufenden K
 **Agent-Lebenszyklus**
 - Namen: kleinste freie Nummer **global** („Agent N“) → eindeutig für Sprachbefehle
 - Prozess endet (`/exit` oder ✕ in der Liste) → Agent aus Zustand entfernt, Ansicht schließt sich
+- Startfehler: endet ein Agent < 8 s nach Start mit Exit-Code ≠ 0 (nicht per ✕), meldet Main `agents:startFailed` mit den letzten Ausgabezeilen (ohne ANSI) → Toast
 - App wird beendet (`before-quit`) → Prozesse gestoppt, Agents bleiben gespeichert → beim nächsten Start `agents:restore` (einmal pro App-Start)
 
 **Terminals im Renderer** (`lib/terminals.ts`): ein xterm pro Agent, lebt unabhängig von React und sammelt Ausgabe auch unsichtbar; `attachTerminal()` hängt das DOM-Element in Einzelansicht oder Rasterzelle. Main hält zusätzlich 200 KB Ausgabe-Puffer (`agents:buffer`) für Renderer-Reloads.
@@ -101,6 +103,7 @@ Lokale Windows-Desktop-App zum Verwalten von Projekten und den darin laufenden K
 src/
   shared/types.ts          Gemeinsame Typen + DevHubApi
   shared/hotkeys.ts        Kürzel: Standardwerte, Tastendruck → Accelerator, Anzeigeformat
+  shared/agentArgs.ts      Start-Flags: Tokenizer, Validierung, Zusammenführen global/Projekt
   main/
     index.ts               Fenster, IPC-Handler, globaler Hotkey, Mikrofon-Berechtigung
     agents.ts              AgentManager: node-pty, Start/Stop/Rename/Restore, Hook-Status, show_code
@@ -116,14 +119,14 @@ src/
     Workspace.tsx          Zustand, Auswahl, Sprachablauf, Hotkeys, Dialoge
     lib/                   terminals.ts, recorder.ts, errors.ts, hotkeyCapture.ts
     components/            Sidebar, CenterPane, TerminalView, CodePane, ProjectDialog, SettingsDialog,
-                           VoiceSetupDialog, VoiceModels, VoiceOverlay, HotkeyInput, Modal, ContextMenu,
-                           AuthGate, Icons
+                           VoiceSetupDialog, VoiceModels, VoiceOverlay, HotkeyInput, AgentArgsHelp, Modal,
+                           ContextMenu, AuthGate, Icons
 electron-builder.yml       Windows-Ziele, asarUnpack node-pty, nur Sprachen de/en-US
 ```
 
 **IPC-Muster:** Kanal `bereich:aktion` (z. B. `agents:start`) → Handler in `main/index.ts`, Methode in `preload/index.ts`,
 Typ in `DevHubApi` (`shared/types.ts`). Alle drei immer zusammen anpassen. Ereignisse Main→Renderer: `agents:data`,
-`agents:changed`, `code:focus`, `voice:progress`, `voice:globalHotkey` (Abo liefert Abmelde-Funktion).
+`agents:changed`, `agents:startFailed`, `code:focus`, `voice:progress`, `voice:globalHotkey` (Abo liefert Abmelde-Funktion).
 
 ## Stand
 
@@ -135,6 +138,7 @@ Typ in `DevHubApi` (`shared/types.ts`). Alle drei immer zusammen anpassen. Ereig
 - [x] Session-Wiederherstellung — Speichern/Neustart getestet; `--resume` mit echtem Transkript noch **nicht** getestet
 - [x] Sprachsteuerung inkl. Download-Dialog — Routing via `claude -p` getestet; **whisper-Download/Transkription + Mikrofon noch nicht getestet**
 - [x] Sprach-Kürzel in den Einstellungen änderbar — Build/Typcheck ok, **in der UI noch nicht getestet**
+- [x] Start-Flags global + pro Projekt — Parser getestet, claude-Verhalten per PTY geprüft (unbekanntes Flag → Exit 1, `--enable-auto-mode` ist gültig, aber undokumentiert); **in der UI noch nicht getestet**
 - [x] Paketierung (`build:unpack`) getestet: entpackt ~338 MB (App selbst ~17 MB, Rest Electron)
 - [x] Initialer Git-Commit (nach Durchsicht durch den Nutzer)
 - Verteilung an Tester: `npx electron-builder --win portable` → portable .exe + `LIESMICH.txt` als ZIP (in `dist/`, nicht versioniert)

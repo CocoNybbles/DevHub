@@ -1,4 +1,8 @@
+import { useState } from 'react'
 import type { Settings, VoiceStatus } from '../../../shared/types'
+import { validateAgentArgs } from '../../../shared/agentArgs'
+import { errorText } from '../lib/errors'
+import AgentArgsHelp from './AgentArgsHelp'
 import { DEFAULT_HOTKEYS } from '../../../shared/hotkeys'
 import HotkeyInput from './HotkeyInput'
 import Modal from './Modal'
@@ -18,13 +22,55 @@ function SettingsDialog(props: Props): React.JSX.Element {
   const update = async (patch: Partial<Settings>): Promise<void> =>
     props.onSettingsChanged(await window.api.settings.update(patch))
 
+  // Start-Flags: Entwurf lokal, gespeichert beim Verlassen des Feldes bzw. Schließen
+  const [argsDraft, setArgsDraft] = useState(settings.agentArgs)
+  const [argsSaveError, setArgsSaveError] = useState<string | null>(null)
+  const argsError = validateAgentArgs(argsDraft) ?? argsSaveError
+  const saveArgs = async (): Promise<boolean> => {
+    if (validateAgentArgs(argsDraft)) return false
+    if (argsDraft.trim() === settings.agentArgs) return true
+    try {
+      await update({ agentArgs: argsDraft })
+      return true
+    } catch (e) {
+      setArgsSaveError(errorText(e))
+      return false
+    }
+  }
+  // Ungültige Flags werden nicht gespeichert (Dialog schließt trotzdem, alter Wert bleibt)
+  const close = async (): Promise<void> => {
+    await saveArgs()
+    props.onClose()
+  }
+
   return (
     <Modal
       title="Einstellungen"
-      onClose={props.onClose}
+      onClose={close}
       width={600}
-      footer={<button onClick={props.onClose}>Schließen</button>}
+      footer={<button onClick={close}>Schließen</button>}
     >
+      <section className="settings-section">
+        <h3>Agent-Start</h3>
+        <div className="form">
+          <label>
+            <span>Zusätzliche Start-Flags für alle Agents</span>
+            <input
+              className="mono"
+              value={argsDraft}
+              onChange={(e) => {
+                setArgsDraft(e.target.value)
+                setArgsSaveError(null)
+              }}
+              onBlur={saveArgs}
+              placeholder="z. B. --permission-mode auto"
+              spellCheck={false}
+            />
+          </label>
+        </div>
+        {argsError ? <p className="error small">{argsError}</p> : <AgentArgsHelp scope="global" />}
+      </section>
+
       <section className="settings-section">
         <h3>Sprachmodell</h3>
         <VoiceModels status={voiceStatus} onChanged={props.onVoiceChanged} />

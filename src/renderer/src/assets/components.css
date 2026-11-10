@@ -357,6 +357,18 @@ input.rename {
 .form label.disabled > span {
   color: var(--muted);
 }
+input.mono {
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+.args-help {
+  margin: 6px 0 0;
+  line-height: 1.5;
+}
+.args-help code {
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
 .path-input {
   display: flex;
   gap: 6px;
@@ -540,4 +552,5 @@ kbd {
   border-radius: 6px;
   cursor: pointer;
   line-height: 1.4;
+  white-space: pre-wrap;
 }

@@ -15,6 +15,8 @@ export interface Project {
   projectFile?: string
   /** Pfad 3: Ordner für VS Code (nur wenn VS Code installiert ist) */
   vscodePath?: string
+  /** Zusätzliche Start-Flags für Agents dieses Projekts (ergänzen/überschreiben die globalen) */
+  agentArgs?: string
 }
 
 export type ProjectInput = Omit<Project, 'id'> & { id?: string }
@@ -86,6 +88,8 @@ export interface Settings {
   hotkeyAgentVoice: string
   /** Kürzel: globaler Sprachbefehl, systemweit per globalShortcut */
   hotkeyGlobalVoice: string
+  /** Zusätzliche Start-Flags für alle Agents, z. B. `--permission-mode auto` (siehe shared/agentArgs.ts) */
+  agentArgs: string
 }
 
 export type FileReadResult = { ok: true; content: string } | { ok: false; error: string }
@@ -124,6 +128,8 @@ export interface DevHubApi {
     buffer: (id: string) => Promise<string>
     onData: (cb: (id: string, data: string) => void) => Unsubscribe
     onChanged: (cb: (agents: Agent[]) => void) => Unsubscribe
+    /** Agent hat sich direkt nach dem Start mit Fehler beendet (z. B. ungültiges Start-Flag) */
+    onStartFailed: (cb: (agentName: string, output: string) => void) => Unsubscribe
   }
   code: {
     readFile: (path: string) => Promise<FileReadResult>

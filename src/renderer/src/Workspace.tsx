@@ -32,7 +32,8 @@ function Workspace(): React.JSX.Element {
     voiceModel: null,
     voiceAutoSend: true,
     hotkeyAgentVoice: DEFAULT_HOTKEYS.agentVoice,
-    hotkeyGlobalVoice: DEFAULT_HOTKEYS.globalVoice
+    hotkeyGlobalVoice: DEFAULT_HOTKEYS.globalVoice,
+    agentArgs: ''
   })
   const [voiceStatus, setVoiceStatus] = useState<VoiceStatus | null>(null)
   const [toast, setToast] = useState<string | null>(null)
@@ -49,6 +50,9 @@ function Workspace(): React.JSX.Element {
   useEffect(() => {
     const offData = window.api.agents.onData((id, data) => writeToTerminal(id, data))
     const offChanged = window.api.agents.onChanged(setAgents)
+    const offFailed = window.api.agents.onStartFailed((name, output) =>
+      setToast(output ? `${name} konnte nicht starten:\n${output}` : `${name} konnte nicht starten`)
+    )
     const offFocus = window.api.code.onFocus((f) =>
       setFocusByAgent((m) => ({ ...m, [f.agentId]: f }))
     )
@@ -81,6 +85,7 @@ function Workspace(): React.JSX.Element {
       offData()
       offChanged()
       offFocus()
+      offFailed()
     }
   }, [refreshVoice, showError])
 
@@ -105,7 +110,7 @@ function Workspace(): React.JSX.Element {
 
   useEffect(() => {
     if (!toast) return
-    const t = setTimeout(() => setToast(null), 6000)
+    const t = setTimeout(() => setToast(null), toast.length > 120 ? 15000 : 6000)
     return () => clearTimeout(t)
   }, [toast])
 

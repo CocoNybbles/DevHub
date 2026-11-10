@@ -7,6 +7,7 @@ import type { Agent, AgentStatus, CodeFocus } from '../shared/types'
 import { AgentBridge, HookEvent, ShowCodeArgs } from './agentBridge'
 import { dataDir, getState, updateState } from './store'
 import { claudeEnv, resolveClaude } from './tools'
+import { mergeAgentArgs } from '../shared/agentArgs'
 
 /** Wird jedem Agent per --append-system-prompt mitgegeben. */
 const SYSTEM_HINT =
@@ -16,17 +17,24 @@ const SYSTEM_HINT =
   'Call it again whenever your focus moves to another location.'
 
 const MAX_BUFFER = 200_000
+/** Endet ein Agent so schnell mit Fehler, war der Start kaputt (z. B. unbekanntes Start-Flag). */
+const EARLY_EXIT_MS = 8000
 
 interface RunningAgent {
   agent: Agent
   proc: pty.IPty
   buffer: string
+  startedAt: number
+  /** Über die Liste/App beendet (kein Startfehler) */
+  stopping: boolean
 }
 
 export interface AgentEvents {
   onData: (id: string, data: string) => void
   onChanged: (agents: Agent[]) => void
   onCodeFocus: (focus: CodeFocus) => void
+  /** Agent hat sich direkt nach dem Start mit Fehler beendet */
+  onStartFailed: (agentName: string, output: string) => void
 }
 
 export class AgentManager {
@@ -99,8 +107,9 @@ export class AgentManager {
 
   stop(id: string): void {
     const r = this.running.get(id)
-    if (r) r.proc.kill()
-    else this.forget(id)
+    if (!r) return this.forget(id)
+    r.stopping = true
+    r.proc.kill()
   }
 
   rename(id: string, name: string): void {
@@ -162,9 +171,11 @@ export class AgentManager {
     if (!claude) throw new Error('Claude Code wurde nicht gefunden')
 
     const { settingsFile, mcpFile } = this.writeAgentConfig(agent.id)
-    const args: string[] = sessionExists(agent.sessionId)
-      ? ['--resume', agent.sessionId]
-      : ['--session-id', agent.sessionId]
+    // Nutzer-Flags zuerst: so beendet ein DevHub-Flag evtl. variadische Werte (z. B. --allowedTools a b),
+    // und vor der Aufgabe steht immer --append-system-prompt <wert> (Aufgabe bleibt positional)
+    const args = mergeAgentArgs(getState().settings.agentArgs, project.agentArgs)
+    if (sessionExists(agent.sessionId)) args.push('--resume', agent.sessionId)
+    else args.push('--session-id', agent.sessionId)
     args.push('--settings', settingsFile, '--mcp-config', mcpFile)
     args.push('--append-system-prompt', SYSTEM_HINT)
     if (task) args.push(task)
@@ -184,7 +195,7 @@ export class AgentManager {
 
     if (process.env.DEVHUB_DEBUG)
       console.log('[DevHub] Agent gestartet', agent.name, file, argv.join(' '))
-    const r: RunningAgent = { agent, proc, buffer: '' }
+    const r: RunningAgent = { agent, proc, buffer: '', startedAt: Date.now(), stopping: false }
     this.running.set(agent.id, r)
 
     proc.onData((data) => {
@@ -193,9 +204,12 @@ export class AgentManager {
       this.events.onData(agent.id, data)
     })
 
-    proc.onExit(() => {
+    proc.onExit(({ exitCode }) => {
       this.running.delete(agent.id)
       if (this.quitting) return
+      if (!r.stopping && exitCode !== 0 && Date.now() - r.startedAt < EARLY_EXIT_MS) {
+        this.events.onStartFailed(agent.name, lastLines(r.buffer))
+      }
       // Agent wurde im Terminal oder über die Liste beendet → Eintrag entfernen
       this.forget(agent.id)
     })
@@ -328,6 +342,22 @@ function persisted(a: Agent): Omit<Agent, 'status' | 'statusMessage'> {
     createdAt: a.createdAt
   }
 }
+
+/** Letzte Zeilen der Ausgabe ohne Terminal-Steuersequenzen (für Fehlermeldungen). */
+function lastLines(output: string, count = 6): string {
+  return output
+    .replace(ANSI, '')
+    .split(/\r?\n|\r/)
+    .map((l) => l.trim())
+    .filter(Boolean)
+    .slice(-count)
+    .join('\n')
+}
+
+/** CSI-, OSC- und einfache ESC-Sequenzen */
+const ANSI =
+  // eslint-disable-next-line no-control-regex
+  /\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[()][A-Z0-9]|\x1b[=>]/g
 
 /** Gibt es zu der Session schon ein Transkript? Nur dann ist --resume möglich. */
 function sessionExists(sessionId: string): boolean {

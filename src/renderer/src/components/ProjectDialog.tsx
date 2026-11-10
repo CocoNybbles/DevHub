@@ -2,6 +2,8 @@ import { useState } from 'react'
 import type { Project } from '../../../shared/types'
 import Modal from './Modal'
 import { errorText } from '../lib/errors'
+import { validateAgentArgs } from '../../../shared/agentArgs'
+import AgentArgsHelp from './AgentArgsHelp'
 
 interface Props {
   project: Project | null
@@ -22,6 +24,8 @@ function ProjectDialog({ project, vscodeInstalled, onSaved, onClose }: Props): R
   const [agentPath, setAgentPath] = useState(project?.agentPath ?? '')
   const [projectFile, setProjectFile] = useState(project?.projectFile ?? '')
   const [vscodePath, setVscodePath] = useState(project?.vscodePath ?? '')
+  const [agentArgs, setAgentArgs] = useState(project?.agentArgs ?? '')
+  const argsError = validateAgentArgs(agentArgs)
   const [error, setError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
 
@@ -41,7 +45,8 @@ function ProjectDialog({ project, vscodeInstalled, onSaved, onClose }: Props): R
         name: name.trim() || folderName(agentPath),
         agentPath: agentPath.trim(),
         projectFile: projectFile.trim() || undefined,
-        vscodePath: vscodeInstalled ? vscodePath.trim() || undefined : undefined
+        vscodePath: vscodeInstalled ? vscodePath.trim() || undefined : undefined,
+        agentArgs: agentArgs.trim() || undefined
       })
       onSaved(saved)
     } catch (e) {
@@ -59,7 +64,11 @@ function ProjectDialog({ project, vscodeInstalled, onSaved, onClose }: Props): R
       footer={
         <>
           <button onClick={onClose}>Abbrechen</button>
-          <button className="primary" onClick={save} disabled={saving || !agentPath.trim()}>
+          <button
+            className="primary"
+            onClick={save}
+            disabled={saving || !agentPath.trim() || !!argsError}
+          >
             Speichern
           </button>
         </>
@@ -146,6 +155,24 @@ function ProjectDialog({ project, vscodeInstalled, onSaved, onClose }: Props): R
               Durchsuchen …
             </button>
           </div>
+        </label>
+
+        <label>
+          <span>
+            Start-Flags <em>(optional)</em>
+          </span>
+          <input
+            className="mono"
+            value={agentArgs}
+            onChange={(e) => setAgentArgs(e.target.value)}
+            placeholder="z. B. --permission-mode plan"
+            spellCheck={false}
+          />
+          {argsError ? (
+            <small className="error">{argsError}</small>
+          ) : (
+            <AgentArgsHelp scope="project" />
+          )}
         </label>
 
         {error && <p className="error">{error}</p>}

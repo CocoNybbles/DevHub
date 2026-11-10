@@ -19,6 +19,7 @@ import { getState, updateState } from './store'
 import { isVSCodeInstalled, openInVSCode } from './tools'
 import { deleteModel, downloadVoice, transcribe, voiceStatus } from './voice'
 import { runVoiceCommand } from './voiceCommands'
+import { validateAgentArgs } from '../shared/agentArgs'
 
 let mainWindow: BrowserWindow | null = null
 
@@ -30,7 +31,8 @@ function send(channel: string, ...args: unknown[]): void {
 const agents = new AgentManager({
   onData: (id, data) => send('agents:data', id, data),
   onChanged: (list) => send('agents:changed', list),
-  onCodeFocus: (focus) => send('code:focus', focus)
+  onCodeFocus: (focus) => send('code:focus', focus),
+  onStartFailed: (name, output) => send('agents:startFailed', name, output)
 })
 
 function createWindow(): void {
@@ -138,13 +140,16 @@ function registerIpc(): void {
       throw new Error('VS Code ist nicht installiert')
     if (input.vscodePath && !existsSync(input.vscodePath))
       throw new Error('VS-Code-Ordner existiert nicht')
+    const argsError = validateAgentArgs(input.agentArgs)
+    if (argsError) throw new Error(`Start-Flags: ${argsError}`)
 
     const saved = {
       id: input.id ?? randomUUID(),
       name,
       agentPath: input.agentPath,
       projectFile: input.projectFile || undefined,
-      vscodePath: input.vscodePath || undefined
+      vscodePath: input.vscodePath || undefined,
+      agentArgs: input.agentArgs?.trim() || undefined
     }
     updateState((s) => {
       const i = s.projects.findIndex((p) => p.id === saved.id)
@@ -254,6 +259,11 @@ function registerIpc(): void {
   ipcMain.handle('settings:update', (_, patch: Partial<Settings>) => {
     const current = getState().settings
     const next = { ...current, ...patch }
+    if (patch.agentArgs !== undefined) {
+      const argsError = validateAgentArgs(patch.agentArgs)
+      if (argsError) throw new Error(`Start-Flags: ${argsError}`)
+      next.agentArgs = patch.agentArgs.trim()
+    }
     if (patch.hotkeyAgentVoice !== undefined || patch.hotkeyGlobalVoice !== undefined) {
       if (!next.hotkeyAgentVoice || !next.hotkeyGlobalVoice) throw new Error('Kürzel fehlt')
       if (next.hotkeyAgentVoice.toLowerCase() === next.hotkeyGlobalVoice.toLowerCase())

@@ -38,7 +38,8 @@ const api: DevHubApi = {
     resize: (id, cols, rows) => ipcRenderer.send('agents:resize', id, cols, rows),
     buffer: (id) => invoke('agents:buffer', id),
     onData: (cb) => subscribe('agents:data', cb),
-    onChanged: (cb) => subscribe('agents:changed', cb)
+    onChanged: (cb) => subscribe('agents:changed', cb),
+    onStartFailed: (cb) => subscribe('agents:startFailed', cb)
   },
   code: {
     readFile: (path) => invoke('code:readFile', path),
