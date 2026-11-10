@@ -158,4 +158,5 @@ Typ in `DevHubApi` (`shared/types.ts`). Alle drei immer zusammen anpassen. Ereig
 - React StrictMode führt Effekte im Dev-Modus doppelt aus → Seiteneffekte im Main idempotent halten (z. B. `restore()` nur einmal).
 - `capturePage` liefert bei verdecktem Fenster ein veraltetes Bild → Fenster vorher `show()/focus()/invalidate()`.
 - Heredocs mit `\\` im Bash-Tool werden verfälscht → JSON mit Windows-Pfaden per Write-Tool schreiben.
-- Python `open(..., 'w')` schreibt unter Windows CRLF → Prettier/ESLint meckern. Dateien per Edit-Tool ändern (oder `newline=''`, danach `npx prettier --write`).
+- Zeilenenden: überall **LF** (`.gitattributes`: `* text=auto eol=lf`, Prettier erwartet LF). Python `open(..., 'w')` schreibt unter Windows CRLF → Dateien per Edit-Tool ändern (oder `newline=''`, danach `npx prettier --write`). Prüfen: `git ls-files --eol | grep w/crlf`.
+- Git: Standard-Branch ist `main`.
