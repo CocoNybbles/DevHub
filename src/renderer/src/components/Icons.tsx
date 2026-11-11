@@ -85,6 +85,26 @@ export const CopyIcon = ({ size = 13 }: P): React.JSX.Element =>
 export const CheckIcon = ({ size = 13 }: P): React.JSX.Element =>
   svg(size, <path d="M3 8.5l3.2 3L13 4.5" />)
 
+/** Ordner mit Plus: Projekte aus Ordnern importieren */
+export const FolderImportIcon = ({ size = 14 }: P): React.JSX.Element =>
+  svg(
+    size,
+    <>
+      <path d="M1.5 4.5v8a1 1 0 0 0 1 1h11a1 1 0 0 0 1-1v-6a1 1 0 0 0-1-1H8L6.5 3.5h-4a1 1 0 0 0-1 1z" />
+      <path d="M8 7.5v4M6 9.5h4" />
+    </>
+  )
+
+/** Radiergummi: Unterhaltung des Agents leeren (/clear) */
+export const ClearIcon = ({ size = 13 }: P): React.JSX.Element =>
+  svg(
+    size,
+    <>
+      <path d="M6.5 13.5h7M3.2 9.8l5.6-5.6a1.4 1.4 0 0 1 2 0l2 2a1.4 1.4 0 0 1 0 2l-5.3 5.3H5.5L3.2 11.8a1.4 1.4 0 0 1 0-2z" />
+      <path d="M6 7l4 4" />
+    </>
+  )
+
 /** Stift: Anweisung im Editor-Tab schreiben */
 export const EditIcon = ({ size = 13 }: P): React.JSX.Element =>
   svg(size, <path d="M10.5 2.5l3 3L6 13H3v-3zM9 4l3 3" />)

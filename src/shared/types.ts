@@ -25,6 +25,19 @@ export interface Project {
 
 export type ProjectInput = Omit<Project, 'id'> & { id?: string }
 
+/** Beim Import gefundener Projektordner */
+export interface ScannedProject {
+  path: string
+  /** Vorschlag: Ordnername */
+  name: string
+  /** Woran erkannt (z. B. „Git“, „.sln“, „Node“) */
+  marker: string
+  /** Automatisch gefundene .sln/.slnx (null = keine) */
+  projectFile: string | null
+  /** Ordner ist schon als Projekt registriert */
+  registered: boolean
+}
+
 /**
  * starting   – Prozess gestartet, noch keine Rückmeldung
  * working    – Agent arbeitet
@@ -222,6 +235,10 @@ export interface DevHubApi {
     remove: (id: string) => Promise<void>
     /** Neue Reihenfolge (Ids in Anzeigereihenfolge); liefert die sortierte Liste */
     reorder: (ids: string[]) => Promise<Project[]>
+    /** Ordnerauswahl mit Mehrfachauswahl (Strg+Klick) für den Import */
+    pickFolders: () => Promise<string[]>
+    /** Durchsucht Ordner nach Projekten (inkl. Unterordnern, Projektdatei-Suche) */
+    scan: (dirs: string[]) => Promise<ScannedProject[]>
     openProjectFile: (id: string) => Promise<void>
     /** Ordner (Pfad 3) öffnen: Programm Projekt → global → VS Code → Explorer */
     openFolder: (id: string) => Promise<void>

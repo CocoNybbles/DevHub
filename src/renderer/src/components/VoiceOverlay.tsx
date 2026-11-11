@@ -3,6 +3,8 @@ import { MicIcon } from './Icons'
 /** Laufende Aufnahme (höchstens eine gleichzeitig). */
 export interface VoiceRecording {
   target: 'agent' | 'global'
+  /** Bei target 'agent': für welchen Agent aufgenommen wird */
+  agentId?: string
   label: string
   startedAt: number
 }

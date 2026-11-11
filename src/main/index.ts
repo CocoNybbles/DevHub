@@ -10,7 +10,7 @@ import {
   Notification,
   clipboard
 } from 'electron'
-import { dirname, join } from 'path'
+import { basename, dirname, join } from 'path'
 import { randomUUID } from 'crypto'
 import { existsSync, readFileSync, statSync, writeFileSync } from 'fs'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
@@ -19,6 +19,7 @@ import type {
   AgentTemplateInput,
   Project,
   ProjectInput,
+  ScannedProject,
   Selection,
   Settings,
   TeamTemplate,
@@ -29,6 +30,7 @@ import { checkClaudeAuth, startClaudeLogin } from './claudeAuth'
 import { AgentManager } from './agents'
 import { applyOrder, getState, updateState } from './store'
 import {
+  findProjects,
   findSolution,
   isVSCodeInstalled,
   openInVSCode,
@@ -277,6 +279,36 @@ function registerIpc(): void {
     const parent = dirname(r.filePaths[0])
     if (parent !== last) updateState((s) => (s.lastPickDir = parent))
     return r.filePaths[0]
+  })
+  // Import: mehrere Ordner (Strg+Klick) – z. B. ein ganzer „Dev“-Ordner oder einzelne Projekte
+  ipcMain.handle('projects:pickFolders', async () => {
+    const last = getState().lastPickDir
+    const r = await dialog.showOpenDialog(mainWindow!, {
+      title: 'Ordner mit Projekten auswählen (Strg+Klick für mehrere)',
+      properties: ['openDirectory', 'multiSelections'],
+      defaultPath: last && existsSync(last) ? last : undefined
+    })
+    if (r.canceled || !r.filePaths.length) return []
+    const parent = dirname(r.filePaths[0])
+    if (parent !== last) updateState((s) => (s.lastPickDir = parent))
+    return r.filePaths
+  })
+  ipcMain.handle('projects:scan', async (_, dirs: string[]) => {
+    const roots = (Array.isArray(dirs) ? dirs : []).filter(
+      (d) => typeof d === 'string' && existsSync(d)
+    )
+    const norm = (p: string): string => p.replace(/[\\/]+$/, '').toLowerCase()
+    const registered = new Set(getState().projects.map((p) => norm(p.agentPath)))
+    const found = await findProjects(roots)
+    return Promise.all(
+      found.map(async (f): Promise<ScannedProject> => ({
+        path: f.path,
+        name: basename(f.path),
+        marker: f.marker,
+        projectFile: await findSolution(f.path),
+        registered: registered.has(norm(f.path))
+      }))
+    )
   })
   ipcMain.handle('projects:findSolution', (_, dir: string) =>
     dir && existsSync(dir) ? findSolution(dir) : null

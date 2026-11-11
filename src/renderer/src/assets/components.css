@@ -203,12 +203,24 @@ button.primary {
   padding-left: 28px;
   min-height: 26px;
 }
-.agent-row .stop-agent {
-  opacity: 0;
+/* Buttons der Agent-Zeile nur beim Überfahren (laufende Aufnahme bleibt sichtbar) */
+.agent-row .stop-agent,
+.agent-row .row-btn {
+  display: none;
 }
 .agent-row:hover .stop-agent,
-.agent-row.selected .stop-agent {
-  opacity: 1;
+.agent-row:hover .row-btn,
+.agent-row .row-btn.recording {
+  display: inline-flex;
+}
+/* Agent-Buttons (Liste, Agent-Köpfe in der Mitte): eng beieinander */
+.agent-actions {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+.agent-actions button.icon {
+  width: 20px;
 }
 .agent-row .stop-agent:hover {
   color: var(--error);
@@ -781,6 +793,63 @@ input.mono {
 }
 .dictation-status {
   min-height: 16px;
+}
+
+/* Projekte importieren */
+.import-pick {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+}
+.import-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 340px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px;
+}
+.import-all {
+  padding: 2px 4px 6px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 4px;
+}
+.import-row {
+  display: grid;
+  grid-template-columns: auto 180px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  padding: 3px 4px;
+  border-radius: 4px;
+}
+.import-row:hover {
+  background: var(--bg-hover);
+}
+.import-row.registered {
+  opacity: 0.55;
+}
+.import-name {
+  padding: 3px 6px;
+}
+.import-info {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.import-path {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: 12px;
+}
+.import-info .team-tag {
+  margin-left: 0;
+}
+.import-error {
+  white-space: pre-line;
 }
 
 /* Mitgliederliste im Team-Dialog */

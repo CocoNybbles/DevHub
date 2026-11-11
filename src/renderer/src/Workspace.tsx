@@ -18,6 +18,7 @@ import EditorTab from './components/EditorTab'
 import { CloseIcon, EditIcon, GridIcon } from './components/Icons'
 import { appendToDraft } from './lib/editorText'
 import ProjectDialog from './components/ProjectDialog'
+import ImportProjectsDialog from './components/ImportProjectsDialog'
 import SettingsDialog from './components/SettingsDialog'
 import AgentTemplateDialog from './components/AgentTemplateDialog'
 import TeamTemplateDialog from './components/TeamTemplateDialog'
@@ -83,6 +84,7 @@ function Workspace(): React.JSX.Element {
   const [toast, setToast] = useState<string | null>(null)
 
   const [projectDialog, setProjectDialog] = useState<{ project: Project | null } | null>(null)
+  const [importOpen, setImportOpen] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [templates, setTemplates] = useState<AgentTemplate[]>([])
   /** Vorlage bearbeiten (template null = neu); öffnet sich aus den Einstellungen heraus */
@@ -470,7 +472,8 @@ function Workspace(): React.JSX.Element {
 
   /** Startet die Aufnahme bzw. beendet sie, wenn bereits aufgenommen wird. */
   const toggleVoice = useCallback(
-    async (kind: 'agent' | 'global') => {
+    /** agentId: Ziel-Agent (Mikrofon am Agent); sonst der aktive Agent */
+    async (kind: 'agent' | 'global', agentId?: string) => {
       if (recorder.current) return finishVoice()
 
       const status = await window.api.voice.status()
@@ -483,7 +486,7 @@ function Workspace(): React.JSX.Element {
       let target: VoiceTarget
       let label: string
       if (kind === 'agent') {
-        const agent = agents.find((a) => a.id === activeAgentId)
+        const agent = agents.find((a) => a.id === (agentId ?? activeAgentId))
         if (!agent) {
           setToast('Kein aktiver Agent ausgewählt.')
           return
@@ -505,7 +508,12 @@ function Workspace(): React.JSX.Element {
       }
       recorder.current = rec
       voiceTarget.current = target
-      setRecording({ target: kind, label, startedAt: Date.now() })
+      setRecording({
+        target: kind,
+        agentId: target.kind === 'agent' ? target.agentId : undefined,
+        label,
+        startedAt: Date.now()
+      })
     },
     [agents, activeAgentId, finishVoice, showVoiceError]
   )
@@ -584,6 +592,12 @@ function Workspace(): React.JSX.Element {
   }, [finishedJobIds])
 
   const recordingTarget = recording?.target ?? null
+  const recordingAgentId = recording?.agentId ?? null
+
+  /** `/clear` an einen Agent: leert seine Unterhaltung (wie im Terminal getippt) */
+  const clearAgent = (id: string): void => {
+    window.api.agents.sendLine(id, '/clear').catch(showError)
+  }
 
   // ---------------------------------------------------------------- Render
   return (
@@ -625,6 +639,9 @@ function Workspace(): React.JSX.Element {
           }}
           onStopAgent={stopAgent}
           onRenameAgent={(id, name) => window.api.agents.rename(id, name).catch(showError)}
+          onAgentVoiceFor={(id) => toggleVoice('agent', id)}
+          onClearAgent={clearAgent}
+          recordingAgentId={recordingAgentId}
           onEditPrompt={openEditor}
           editorHotkey={editorHotkey}
           onReorderProjects={(ids) => {
@@ -638,6 +655,7 @@ function Workspace(): React.JSX.Element {
             window.api.agents.setVoiceAutoSend(id, value).catch(showError)
           }
           onAddProject={() => setProjectDialog({ project: null })}
+          onImportProjects={() => setImportOpen(true)}
           onEditProject={(p) => setProjectDialog({ project: p })}
           onRemoveProject={removeProject}
           onOpenProjectFile={(p) => window.api.projects.openProjectFile(p.id).catch(showError)}
@@ -710,6 +728,9 @@ function Workspace(): React.JSX.Element {
               onStartAgent={(id) => startAgent(id)}
               onStopAgent={stopAgent}
               onAgentVoice={() => toggleVoice('agent')}
+              onAgentVoiceFor={(id) => toggleVoice('agent', id)}
+              onClearAgent={clearAgent}
+              recordingAgentId={recordingAgentId}
               onOpenEditor={setEditorTab}
               onEditPrompt={openEditor}
               editorHotkey={editorHotkey}
@@ -740,6 +761,15 @@ function Workspace(): React.JSX.Element {
         </div>
       )}
 
+      {importOpen && (
+        <ImportProjectsDialog
+          onClose={() => setImportOpen(false)}
+          onImported={async (added) => {
+            setProjects(await window.api.projects.list())
+            if (added.length) setToast(`${added.length} Projekt(e) importiert.`)
+          }}
+        />
+      )}
       {projectDialog && (
         <ProjectDialog
           project={projectDialog.project}

@@ -129,6 +129,68 @@ export function openWithProgram(exe: string, file: string): Promise<void> {
   })
 }
 
+/**
+ * Woran ein Projektordner erkannt wird (Datei- bzw. Ordnernamen direkt darin).
+ * Erster Treffer wird als Kennzeichen angezeigt.
+ */
+const PROJECT_MARKERS: { label: string; test: (name: string, isDir: boolean) => boolean }[] = [
+  { label: 'Git', test: (n) => n === '.git' },
+  { label: '.sln', test: (n, d) => !d && /\.slnx?$/i.test(n) },
+  { label: '.NET', test: (n, d) => !d && /\.(cs|fs|vb|vcx)proj$/i.test(n) },
+  { label: 'Node', test: (n, d) => !d && n === 'package.json' },
+  { label: 'Python', test: (n, d) => !d && ['pyproject.toml', 'setup.py'].includes(n) },
+  { label: 'Rust', test: (n, d) => !d && n === 'Cargo.toml' },
+  { label: 'Go', test: (n, d) => !d && n === 'go.mod' },
+  { label: 'Java', test: (n, d) => !d && /^(pom\.xml|build\.gradle(\.kts)?)$/.test(n) },
+  { label: 'CMake', test: (n, d) => !d && n === 'CMakeLists.txt' },
+  { label: 'Claude', test: (n, d) => !d && n === 'CLAUDE.md' }
+]
+
+/** Wie tief unter einem gewählten Ordner nach Projekten gesucht wird */
+const PROJECT_SCAN_DEPTH = 3
+const PROJECT_SCAN_LIMIT = 300
+
+export interface FoundProject {
+  path: string
+  /** Kennzeichen, z. B. „Git“ oder „.sln“ */
+  marker: string
+}
+
+/**
+ * Sucht Projekte: Ein Ordner mit Projekt-Kennzeichen (Git, .sln, package.json …) ist ein Projekt
+ * (darunter wird nicht weiter gesucht – Monorepos bleiben ein Projekt). Sonst werden seine
+ * Unterordner durchsucht (bis PROJECT_SCAN_DEPTH Ebenen) – so liefert ein „Dev“-Ordner alle
+ * Projekte darin.
+ */
+export async function findProjects(roots: string[]): Promise<FoundProject[]> {
+  const found: FoundProject[] = []
+  const seen = new Set<string>()
+  const visit = async (dir: string, depth: number): Promise<void> => {
+    const key = dir.toLowerCase()
+    if (seen.has(key) || found.length >= PROJECT_SCAN_LIMIT) return
+    seen.add(key)
+    let entries
+    try {
+      entries = await readdir(dir, { withFileTypes: true })
+    } catch {
+      return // kein Zugriff o. Ä.
+    }
+    for (const m of PROJECT_MARKERS) {
+      if (entries.some((e) => m.test(e.name, e.isDirectory()))) {
+        found.push({ path: dir, marker: m.label })
+        return
+      }
+    }
+    if (depth >= PROJECT_SCAN_DEPTH) return
+    for (const e of entries) {
+      if (e.isDirectory() && !e.name.startsWith('.') && !SKIP_DIRS.has(e.name.toLowerCase()))
+        await visit(join(dir, e.name), depth + 1)
+    }
+  }
+  for (const root of roots) await visit(root, 0)
+  return found
+}
+
 /** Ordner, die bei der Suche nach Projektmappen übersprungen werden. */
 const SKIP_DIRS = new Set(['node_modules', 'bin', 'obj', 'out', 'dist', 'build', 'packages'])
 

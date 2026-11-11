@@ -1,7 +1,7 @@
 import type { Agent, Project } from '../../../shared/types'
 import type { Selection } from '../App'
 import TerminalView from './TerminalView'
-import { CloseIcon, EditIcon, LockIcon, MicIcon, PlayIcon } from './Icons'
+import { ClearIcon, CloseIcon, EditIcon, LockIcon, MicIcon, PlayIcon } from './Icons'
 import { focusTerminal, hasSnapshot } from '../lib/terminals'
 import { formatAccelerator } from '../../../shared/hotkeys'
 
@@ -11,13 +11,20 @@ interface Props {
   agents: Agent[]
   activeAgentId: string | null
   agentVoiceActive: boolean
+  /** Für diesen Agent läuft gerade eine Sprachaufnahme (Mikrofon am Agent rot) */
+  recordingAgentId: string | null
   /** Kürzel für die Agent-Aufnahme (Accelerator) */
   agentHotkey: string
   onActivate: (agentId: string) => void
   onOpenAgent: (agentId: string) => void
   onStartAgent: (projectId: string) => void
   onStopAgent: (agent: Agent) => void
+  /** Sprach-Anweisung an den aktiven Agent */
   onAgentVoice: () => void
+  /** Sprach-Anweisung an genau diesen Agent (Mikrofon im Agent-Kopf) */
+  onAgentVoiceFor: (agentId: string) => void
+  /** `/clear` an den Agent schicken (Unterhaltung leeren) */
+  onClearAgent: (agentId: string) => void
   /** Gesperrten Agent anklicken → zu seinem Editor-Tab wechseln */
   onOpenEditor: (agentId: string) => void
   /** Anweisung im Editor-Tab schreiben (wie das Kürzel `editorHotkey`) */
@@ -65,14 +72,7 @@ function CenterPane(props: Props): React.JSX.Element {
                   <EditIcon />
                 </button>
               )}
-              {voiceButton('Sprach-Anweisung an diesen Agent')}
-              <button
-                className="icon"
-                title="Agent beenden"
-                onClick={() => props.onStopAgent(agent)}
-              >
-                <CloseIcon />
-              </button>
+              <AgentButtons {...props} agent={agent} />
             </div>
           </header>
           {agent.editing ? (
@@ -207,14 +207,7 @@ function AgentGrid(props: Props & { shown: Agent[]; showProject: boolean }): Rea
               )}
             </span>
             {a.editing && <LockedBadge onOpen={() => props.onOpenEditor(a.id)} />}
-            <button
-              className="icon"
-              title="Agent beenden"
-              onMouseDown={(e) => e.stopPropagation()}
-              onClick={() => props.onStopAgent(a)}
-            >
-              <CloseIcon />
-            </button>
+            <AgentButtons {...props} agent={a} />
           </header>
           {a.editing ? (
             <LockedTerminal agent={a} onOpen={() => props.onOpenEditor(a.id)} />
@@ -259,6 +252,39 @@ function LockedTerminal({
         </span>
       </div>
     </div>
+  )
+}
+
+/** Rechts im Agent-Kopf: Mikrofon · /clear · Beenden (im Raster aktiviert der Klick nicht die Zelle) */
+function AgentButtons(props: Props & { agent: Agent }): React.JSX.Element {
+  const a = props.agent
+  return (
+    <span className="agent-actions">
+      <button
+        className={`icon ${props.recordingAgentId === a.id ? 'recording' : ''}`}
+        title={`Sprach-Anweisung an ${a.name}`}
+        onMouseDown={(e) => e.stopPropagation()}
+        onClick={() => props.onAgentVoiceFor(a.id)}
+      >
+        <MicIcon />
+      </button>
+      <button
+        className="icon"
+        title={`Unterhaltung von ${a.name} leeren (/clear)`}
+        onMouseDown={(e) => e.stopPropagation()}
+        onClick={() => props.onClearAgent(a.id)}
+      >
+        <ClearIcon />
+      </button>
+      <button
+        className="icon"
+        title="Agent beenden"
+        onMouseDown={(e) => e.stopPropagation()}
+        onClick={() => props.onStopAgent(a)}
+      >
+        <CloseIcon />
+      </button>
+    </span>
   )
 }
 

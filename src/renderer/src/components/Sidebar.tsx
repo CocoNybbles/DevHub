@@ -5,9 +5,11 @@ import { formatAccelerator } from '../../../shared/hotkeys'
 import ContextMenu, { MenuItem, MenuState } from './ContextMenu'
 import {
   ChevronIcon,
+  ClearIcon,
   CloseIcon,
   CodeIcon,
   EditIcon,
+  FolderImportIcon,
   GearIcon,
   MicIcon,
   PlayIcon,
@@ -62,6 +64,12 @@ interface Props {
   onStopTeam: (team: Team) => void
   onStopAgent: (agent: Agent) => void
   onRenameAgent: (id: string, name: string) => void
+  /** Sprach-Anweisung an genau diesen Agent */
+  onAgentVoiceFor: (id: string) => void
+  /** `/clear` an den Agent schicken */
+  onClearAgent: (id: string) => void
+  /** Für diesen Agent läuft gerade eine Aufnahme */
+  recordingAgentId: string | null
   /** Anweisung im Editor-Tab schreiben (bzw. zum offenen Tab wechseln) */
   onEditPrompt: (id: string) => void
   /** Kürzel dafür (Accelerator, für die Anzeige) */
@@ -75,6 +83,8 @@ interface Props {
   /** undefined = globale Einstellung verwenden */
   onSetVoiceAutoSend: (id: string, value: boolean | undefined) => void
   onAddProject: () => void
+  /** Projekte aus (mehreren) Ordnern importieren */
+  onImportProjects: () => void
   onEditProject: (p: Project) => void
   onRemoveProject: (p: Project) => void
   onOpenProjectFile: (p: Project) => void
@@ -253,16 +263,52 @@ function Sidebar(props: Props): React.JSX.Element {
             )}
           </span>
         )}
-        <button
-          className="icon stop-agent"
-          title="Agent beenden"
-          onClick={(e) => {
-            e.stopPropagation()
-            props.onStopAgent(a)
-          }}
-        >
-          <CloseIcon />
-        </button>
+        <span className="agent-actions">
+          <button
+            className="icon row-btn"
+            title={
+              a.editing
+                ? 'Zum Editor-Tab'
+                : `Anweisung in einem Tab schreiben – mit Bildern und Diktat (${formatAccelerator(props.editorHotkey)})`
+            }
+            onClick={(e) => {
+              e.stopPropagation()
+              props.onEditPrompt(a.id)
+            }}
+          >
+            <EditIcon size={12} />
+          </button>
+          <button
+            className={`icon row-btn ${props.recordingAgentId === a.id ? 'recording' : ''}`}
+            title={`Sprach-Anweisung an ${a.name}`}
+            onClick={(e) => {
+              e.stopPropagation()
+              props.onAgentVoiceFor(a.id)
+            }}
+          >
+            <MicIcon size={12} />
+          </button>
+          <button
+            className="icon row-btn"
+            title={`Unterhaltung von ${a.name} leeren (/clear)`}
+            onClick={(e) => {
+              e.stopPropagation()
+              props.onClearAgent(a.id)
+            }}
+          >
+            <ClearIcon size={12} />
+          </button>
+          <button
+            className="icon stop-agent"
+            title="Agent beenden"
+            onClick={(e) => {
+              e.stopPropagation()
+              props.onStopAgent(a)
+            }}
+          >
+            <CloseIcon />
+          </button>
+        </span>
       </div>
     )
   }
@@ -357,6 +403,13 @@ function Sidebar(props: Props): React.JSX.Element {
           </button>
           <button className="icon" title="Projekt hinzufügen" onClick={props.onAddProject}>
             <PlusIcon />
+          </button>
+          <button
+            className="icon"
+            title="Projekte importieren: Ordner durchsuchen (z. B. ganzer Dev-Ordner, mehrere per Strg+Klick)"
+            onClick={props.onImportProjects}
+          >
+            <FolderImportIcon />
           </button>
         </div>
       </header>

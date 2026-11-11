@@ -19,6 +19,7 @@ Lokale Windows-Desktop-App zum Verwalten von Projekten und den darin laufenden K
      Öffnen mit: `project.projectFileApp` → global `settings.projectFileApp` → Windows-Standardprogramm (`shell.openPath`). Icon neutral (`OpenFileIcon`), nicht VS-spezifisch.
   3. Ordner (`folderPath`, früher `vscodePath` – `getState()` übernimmt alte Stände): immer konfigurierbar. Öffnen mit: `project.folderApp` → global `settings.folderApp` → VS Code (falls installiert) → Windows-Explorer
   - Programme = absoluter Pfad zu `.exe`/`.cmd`/`.bat` (`validateProgram`/`openWithProgram` in `main/tools.ts`, losgelöst gestartet, cwd = Ordner bzw. Ordner der Datei), Eingabe per `ProgramInput`, Einstellungen-Abschnitt „Öffnen mit“
+- **Importieren** (Button rechts neben „+“, `ImportProjectsDialog`): Ordnerauswahl mit Mehrfachauswahl (`projects:pickFolders`, Strg+Klick) → `projects:scan` → `findProjects` in `main/tools.ts`: Ordner mit Kennzeichen (Git, .sln/.slnx, .csproj …, package.json, pyproject.toml, Cargo.toml, go.mod, pom.xml/build.gradle, CMakeLists.txt, CLAUDE.md) = **ein** Projekt (nicht weiter hinab, Monorepo bleibt eins), sonst Unterordner bis 3 Ebenen (max. 300 Treffer). Je Treffer `findSolution`; bereits registrierte (gleicher Agent-Pfad) werden ausgegraut. Liste mit Häkchen + editierbarem Namen, Start-Flags gelten für alle; gespeichert über `projects:save` mit Agent-Pfad = Ordner = Pfad 3. Mit `C:\Dev` getestet (6 Projekte inkl. Unterordner)
   - Ausnahme: „In VS Code öffnen“ in der Code-Ansicht (`code:openInVSCode`, springt zur Zeile) bleibt VS-Code-spezifisch
 
 **Layout**
@@ -28,6 +29,7 @@ Lokale Windows-Desktop-App zum Verwalten von Projekten und den darin laufenden K
   - Agents heißen standardmäßig „Agent 1“, „Agent 2“, … — Rechtsklick-Menü: Umbenennen, Beenden, Sprachtext abschicken/eintragen (pro Agent)
   - Agents, die eine Frage/Input brauchen, werden hervorgehoben, bis sie weiterarbeiten — links in der Liste und im Raster (gelber Rahmen + Frage im Zellenkopf, `.grid-cell.attention`; aktiv + wartend = gelber Rahmen mit Akzentlinie unter dem Kopf)
   - Agents können über die Liste beendet werden
+  - Agent-Buttons links in der Zeile **✎ · 🎤 · Radierer · ✕** (nur bei Hover, `display: none` → Name hat sonst die volle Breite; laufende Aufnahme bleibt sichtbar; eng gesetzt über Container `.agent-actions`, 20 px je Button), in jedem Agent-Kopf der Mitte **🎤 · Radierer · ✕** (✎ nur in der Einzelansicht) (Einzelansicht + Rasterzelle, `AgentButtons` in `CenterPane`): Sprach-Anweisung an genau diesen Agent (`toggleVoice('agent', id)`, `recording.agentId` → nur dessen Mikrofon rot), `/clear` per `sendLine` (mit echtem claude geprüft: Kontext ist danach weg), Beenden
   - **Sortieren:** Projekte per Drag & Drop + Button „A→Z“ im Kopf (`localeCompare` mit `numeric`); Agents per Drag & Drop nur innerhalb ihrer Gruppe (Projekt ohne Team bzw. Team), dazu Rechtsklick „… nach Name sortieren“. Reihenfolge = Reihenfolge der Arrays `state.projects`/`state.agents` (`projects:reorder`, `agents:reorder` → `applyOrder` in `store.ts`, ordnet nur die übergebenen Ids um); `AgentManager.list()` liefert in dieser Reihenfolge (gilt auch fürs Raster)
 - Mitte: Terminal des ausgewählten Agents (`claude.exe` direkt per ConPTY, **ohne** Shell dazwischen – so beendet `/exit` den Agent wirklich)
   - Klick auf ein Projekt → alle Agents des Projekts im Raster
@@ -183,7 +185,7 @@ src/
     components/            Sidebar, CenterPane, EditorTab, TerminalView, CodePane, SnippetList, ProjectDialog, SettingsDialog,
                            VoiceSetupDialog, VoiceModels, VoiceOverlay, HotkeyInput, ProgramInput, AgentArgsHelp, Modal,
                            AgentTemplateDialog, TeamTemplateDialog, DictationButton, DictationTextarea,
-                           ContextMenu, AuthGate, Icons
+                           ContextMenu, AuthGate, Icons, ImportProjectsDialog
 electron-builder.yml       Windows-Ziele, asarUnpack node-pty, nur Sprachen de/en-US
 ```
 
