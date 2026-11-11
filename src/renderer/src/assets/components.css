@@ -310,6 +310,198 @@ input.rename {
 .xterm-host .xterm {
   height: 100%;
 }
+/* ---------- Mitte: Tabs (Agents-Ansicht + Strg+G-Editor-Tabs) ---------- */
+.center-column {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  background: var(--bg-pane);
+}
+.center-column > .pane {
+  flex: 1;
+  min-height: 0;
+}
+.center-tabs {
+  display: flex;
+  gap: 1px;
+  height: 30px;
+  background: var(--border);
+  flex-shrink: 0;
+}
+.center-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 8px 0 12px;
+  font-size: 12px;
+  color: var(--muted);
+  background: var(--bg);
+  border: none;
+  border-radius: 0;
+  border-top: 2px solid transparent;
+  cursor: pointer;
+}
+.center-tab:hover {
+  color: var(--text);
+}
+.center-tab.active {
+  color: var(--text);
+  background: var(--bg-header);
+  border-top-color: var(--accent);
+}
+.center-tab .icon {
+  padding: 2px;
+}
+/* Gesperrter Agent (Editor-Tab offen) in Einzelansicht/Raster */
+.locked-terminal {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-terminal);
+  cursor: pointer;
+  position: relative;
+}
+/* Über dem Standbild: abgedunkelt, Hinweis unten an der Stelle des Eingabefelds */
+.locked-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  padding: 0 12px 14px;
+  background: rgba(10, 12, 16, 0.45);
+  pointer-events: none;
+}
+.locked-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  padding: 6px 14px;
+  font-size: 12px;
+  color: var(--attention-text);
+  /* deckend, damit der Terminaltext darunter nicht durchscheint */
+  background: color-mix(in srgb, var(--attention) 22%, var(--bg-terminal));
+  border: 1px solid var(--attention);
+  border-radius: 14px;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.5);
+}
+.locked-pill .link {
+  margin-left: 6px;
+  text-decoration: underline;
+}
+.locked-terminal .xterm {
+  cursor: pointer;
+}
+/* Hinweis im Kopf (Einzelansicht/Raster): Agent ist im Editor-Tab gesperrt */
+.locked-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 8px;
+  padding: 1px 7px;
+  font-size: 11px;
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--attention-text);
+  background: var(--attention-bg);
+  border: 1px solid var(--attention);
+  border-radius: 8px;
+  cursor: pointer;
+}
+.editor-lock-note {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 8px;
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: 0;
+}
+.agent-row.editing .row-name {
+  font-style: italic;
+}
+/* Editor-Tab: Terminal links, Textfeld rechts */
+.editor-split {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(320px, 0.8fr);
+  gap: 1px;
+  background: var(--border);
+}
+.editor-terminal,
+.editor-panel {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  background: var(--bg-pane);
+}
+.editor-panel {
+  padding: 10px;
+  gap: 6px;
+}
+.editor-panel.drag-over {
+  outline: 2px dashed var(--accent);
+  outline-offset: -6px;
+}
+.editor-field {
+  flex: 1;
+  min-height: 0;
+}
+.editor-field textarea {
+  min-height: 0;
+  height: 100%;
+  font-family: 'Cascadia Mono', Consolas, monospace;
+  font-size: 13px;
+}
+.attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  max-height: 150px;
+  overflow-y: auto;
+}
+.attachment {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 220px;
+  padding: 3px 3px 3px 4px;
+  font-size: 12px;
+  background: var(--bg-header);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+.attachment img {
+  width: 40px;
+  height: 40px;
+  object-fit: cover;
+  border-radius: 4px;
+}
+.attachment-name {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.editor-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.editor-actions .spacer {
+  flex: 1;
+}
+.editor-actions button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
 .agent-grid {
   flex: 1;
   display: grid;

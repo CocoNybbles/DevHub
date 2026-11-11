@@ -5,6 +5,7 @@ import type { AddressInfo } from 'net'
 /**
  * Lokaler HTTP-Server (nur 127.0.0.1) als Rückkanal von den Agents zur App:
  *  - POST /hook/<token>/<agentId>  → Claude-Code-Hooks (per curl, Hook-JSON im Body)
+ *  - POST /editor/<token>/<agentId> → Strg+G-Editor (Body = Pfad der Prompt-Datei, bleibt offen)
  *  - POST /mcp/<token>/<agentId>   → minimaler MCP-Server (Streamable HTTP, JSON-Antworten)
  *                                    mit `show_code` und – nur für Teammitglieder –
  *                                    `team_members` / `send_team_message`
@@ -40,6 +41,10 @@ export interface BridgeHandlers {
   tools: (agentId: string) => ToolName[]
   /** Liefert den Antworttext an den Agent; Fehler werden als Tool-Fehler gemeldet */
   onToolCall: (agentId: string, name: ToolName, args: Record<string, unknown>) => Promise<string>
+  /** Strg+G: Prompt-Datei im Editor-Tab bearbeiten; erfüllt, sobald der Tab geschlossen ist */
+  onEditor: (agentId: string, filePath: string) => Promise<void>
+  /** Editor-Anfrage abgebrochen (z. B. Agent beendet) */
+  onEditorAbort: (agentId: string) => void
 }
 
 const SHOW_CODE_TOOL = {
@@ -112,6 +117,9 @@ export class AgentBridge {
 
   async start(): Promise<void> {
     this.server = createServer((req, res) => this.handle(req, res))
+    // Editor-Anfragen bleiben beliebig lange offen
+    this.server.requestTimeout = 0
+    this.server.timeout = 0
     await new Promise<void>((resolve) => this.server!.listen(0, '127.0.0.1', resolve))
     this.port = (this.server.address() as AddressInfo).port
   }
@@ -122,6 +130,10 @@ export class AgentBridge {
 
   hookUrl(agentId: string): string {
     return `http://127.0.0.1:${this.port}/hook/${this.token}/${agentId}`
+  }
+
+  editorUrl(agentId: string): string {
+    return `http://127.0.0.1:${this.port}/editor/${this.token}/${agentId}`
   }
 
   mcpUrl(agentId: string): string {
@@ -139,6 +151,22 @@ export class AgentBridge {
         console.error('[DevHub] Hook-Ereignis ungültig:', e)
       }
       return end(res, 204)
+    }
+
+    // Strg+G im Agent: claude startet $EDITOR = curl mit dem Pfad der Prompt-Datei als Body.
+    // Die Anfrage bleibt offen, bis der Editor-Tab geschlossen wird – so lange wartet claude.
+    if (kind === 'editor' && req.method === 'POST') {
+      const filePath = (await readBody(req)).trim()
+      // Verbindung bricht ab (Agent beendet, curl abgebrochen) → Editor-Tab schließen
+      res.on('close', () => {
+        if (!res.writableEnded) this.handlers.onEditorAbort(agentId)
+      })
+      try {
+        await this.handlers.onEditor(agentId, filePath)
+      } catch (e) {
+        console.error('[DevHub] Editor-Anfrage:', e)
+      }
+      return end(res, 200)
     }
 
     if (kind === 'mcp') {

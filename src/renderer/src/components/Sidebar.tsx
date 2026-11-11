@@ -7,6 +7,7 @@ import {
   ChevronIcon,
   CloseIcon,
   CodeIcon,
+  EditIcon,
   GearIcon,
   MicIcon,
   PlayIcon,
@@ -61,6 +62,10 @@ interface Props {
   onStopTeam: (team: Team) => void
   onStopAgent: (agent: Agent) => void
   onRenameAgent: (id: string, name: string) => void
+  /** Anweisung im Editor-Tab schreiben (bzw. zum offenen Tab wechseln) */
+  onEditPrompt: (id: string) => void
+  /** Kürzel dafür (Accelerator, für die Anzeige) */
+  editorHotkey: string
   /** Neue Reihenfolge aller Projekte (Ids) */
   onReorderProjects: (ids: string[]) => void
   /** Neue Reihenfolge einer Agent-Gruppe (Projekt ohne Team bzw. Team) */
@@ -187,6 +192,7 @@ function Sidebar(props: Props): React.JSX.Element {
           group.startsWith('team:') ? 'in-team' : '',
           a.status === 'needsInput' ? 'attention' : '',
           isShown(a.id) ? 'selected' : '',
+          a.editing ? 'editing' : '',
           d.className
         ].join(' ')}
         onClick={(e) => props.onSelectAgent(a.id, e.ctrlKey || e.metaKey)}
@@ -202,6 +208,12 @@ function Sidebar(props: Props): React.JSX.Element {
             y: e.clientY,
             items: [
               { label: 'Umbenennen', action: () => setRenaming(a.id) },
+              {
+                label: a.editing
+                  ? 'Zum Editor-Tab'
+                  : `Anweisung im Tab schreiben (${formatAccelerator(props.editorHotkey)})`,
+                action: () => props.onEditPrompt(a.id)
+              },
               { label: 'Beenden', danger: true, action: () => props.onStopAgent(a) },
               { label: 'Sprach-Anweisungen', heading: true, action: () => {} },
               voice(
@@ -228,6 +240,14 @@ function Sidebar(props: Props): React.JSX.Element {
           <span className="row-name">
             {a.name}
             {lead && <span className="team-tag">Leitung</span>}
+            {a.editing && (
+              <span
+                className="team-tag"
+                title="Anweisung wird im Editor-Tab geschrieben – Klick wechselt dorthin"
+              >
+                <EditIcon size={10} /> Tab
+              </span>
+            )}
             {a.status === 'needsInput' && a.statusMessage && (
               <span className="row-sub">{a.statusMessage}</span>
             )}

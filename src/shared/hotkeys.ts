@@ -8,7 +8,9 @@ export const DEFAULT_HOTKEYS = {
   /** In der App: Sprach-Anweisung an den aktiven Agent */
   agentVoice: 'Control+Shift+Space',
   /** Systemweit: Agent per Name ansprechen / neuen Agent starten */
-  globalVoice: 'Control+Alt+Space'
+  globalVoice: 'Control+Alt+Space',
+  /** In der App: Anweisung für den aktiven Agent im Editor-Tab schreiben */
+  editor: 'Control+G'
 } as const
 
 const MODIFIERS = ['Control', 'Alt', 'Shift', 'Super'] as const

@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer, IpcRendererEvent } from 'electron'
+import { contextBridge, ipcRenderer, IpcRendererEvent, webUtils } from 'electron'
 import type { DevHubApi } from '../shared/types'
 
 /** Abonniert ein Ereignis aus dem Hauptprozess und liefert eine Abmelde-Funktion. */
@@ -56,6 +56,16 @@ const api: DevHubApi = {
   },
   clipboard: {
     writeText: (text) => invoke('clipboard:writeText', text)
+  },
+  editor: {
+    text: (id) => invoke('editor:text', id),
+    finish: (id, text, submit) => invoke('editor:finish', id, text, submit),
+    saveImage: (id, ext, data) => invoke('editor:saveImage', id, ext, data),
+    pickFiles: () => invoke('editor:pickFiles'),
+    imagePreview: (path) => invoke('editor:imagePreview', path),
+    pathForFile: (file) => webUtils.getPathForFile(file),
+    onOpened: (cb) => subscribe('editor:opened', cb),
+    onAppend: (cb) => subscribe('editor:append', cb)
   },
   voice: {
     status: () => invoke('voice:status'),

@@ -326,6 +326,19 @@ function SettingsDialog(props: Props): React.JSX.Element {
             </tr>
             <tr>
               <td>
+                <HotkeyInput
+                  value={settings.hotkeyEditor}
+                  defaultValue={DEFAULT_HOTKEYS.editor}
+                  onChange={(hotkeyEditor) => update({ hotkeyEditor })}
+                />
+              </td>
+              <td>
+                Anweisung für den aktiven Agent in einem Tab schreiben (mit Diktat und Bildern; in
+                der App)
+              </td>
+            </tr>
+            <tr>
+              <td>
                 <kbd>Esc</kbd>
               </td>
               <td>Laufende Aufnahme abbrechen</td>

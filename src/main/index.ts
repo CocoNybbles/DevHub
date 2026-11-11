@@ -41,6 +41,19 @@ import { isValidModelName, validateAgentArgs } from '../shared/agentArgs'
 
 let mainWindow: BrowserWindow | null = null
 
+// Nur eine Instanz: zwei würden dieselben Agents (Sessions) wiederherstellen und denselben
+// Datenordner beschreiben. Ein zweiter Start holt stattdessen das vorhandene Fenster nach vorn.
+if (!app.requestSingleInstanceLock()) {
+  app.exit(0)
+} else {
+  app.on('second-instance', () => {
+    if (!mainWindow || mainWindow.isDestroyed()) return
+    if (mainWindow.isMinimized()) mainWindow.restore()
+    mainWindow.show()
+    mainWindow.focus()
+  })
+}
+
 /** Sendet ein Ereignis an die Oberfläche (falls das Fenster existiert). */
 function send(channel: string, ...args: unknown[]): void {
   if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(channel, ...args)
@@ -51,8 +64,24 @@ const agents = new AgentManager({
   onChanged: (list, teams) => send('agents:changed', list, teams),
   onCodeFocus: (focus) => send('code:focus', focus),
   onSnippets: (id, snippets) => send('code:snippets', id, snippets),
-  onStartFailed: (name, output) => send('agents:startFailed', name, output)
+  onStartFailed: (name, output) => send('agents:startFailed', name, output),
+  onEditorOpened: (id, text) => {
+    send('editor:opened', id, text)
+    // Fenster nach vorn holen: Strg+G kommt aus dem Terminal, der Tab soll sofort sichtbar sein
+    if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.isFocused()) mainWindow.show()
+  },
+  onEditorAppend: (id, text) => send('editor:append', id, text)
 })
+
+/** Dateiendungen, die im Editor-Tab als Bild-Vorschau gezeigt werden */
+const IMAGE_TYPES: Record<string, string> = {
+  png: 'image/png',
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  gif: 'image/gif',
+  webp: 'image/webp',
+  bmp: 'image/bmp'
+}
 
 function createWindow(): void {
   mainWindow = new BrowserWindow({
@@ -384,6 +413,36 @@ function registerIpc(): void {
   ipcMain.handle('code:snippets', () => agents.snippets())
   ipcMain.handle('clipboard:writeText', (_, text: string) => clipboard.writeText(String(text)))
 
+  // --- Strg+G-Editor-Tab ---
+  ipcMain.handle('editor:text', (_, id: string) => agents.editorText(id))
+  ipcMain.handle('editor:finish', (_, id: string, text: string | null, submit: boolean) =>
+    agents.finishEditor(id, typeof text === 'string' ? text : null, submit === true)
+  )
+  ipcMain.handle('editor:saveImage', (_, id: string, ext: string, data: ArrayBuffer) =>
+    agents.saveEditorImage(id, ext, data)
+  )
+  ipcMain.handle('editor:pickFiles', async () => {
+    const r = await dialog.showOpenDialog(mainWindow!, {
+      title: 'Bilder oder Dateien anhängen',
+      properties: ['openFile', 'multiSelections'],
+      filters: [
+        { name: 'Bilder', extensions: Object.keys(IMAGE_TYPES) },
+        { name: 'Alle Dateien', extensions: ['*'] }
+      ]
+    })
+    return r.canceled ? [] : r.filePaths
+  })
+  // Vorschaubild als data:-URL (nur Bilddateien, begrenzte Größe)
+  ipcMain.handle('editor:imagePreview', (_, path: string) => {
+    const type = IMAGE_TYPES[String(path).split('.').pop()?.toLowerCase() ?? '']
+    try {
+      if (!type || statSync(path).size > 15_000_000) return null
+      return `data:${type};base64,${readFileSync(path).toString('base64')}`
+    } catch {
+      return null
+    }
+  })
+
   // --- Sprache ---
   ipcMain.handle('voice:status', () => voiceStatus())
   ipcMain.handle('voice:download', (_, model: WhisperModelId) =>
@@ -437,10 +496,15 @@ function registerIpc(): void {
       const programError = validateProgram(next.folderApp)
       if (programError) throw new Error(programError)
     }
-    if (patch.hotkeyAgentVoice !== undefined || patch.hotkeyGlobalVoice !== undefined) {
-      if (!next.hotkeyAgentVoice || !next.hotkeyGlobalVoice) throw new Error('Kürzel fehlt')
-      if (next.hotkeyAgentVoice.toLowerCase() === next.hotkeyGlobalVoice.toLowerCase())
-        throw new Error('Beide Sprach-Kürzel sind gleich')
+    if (
+      patch.hotkeyAgentVoice !== undefined ||
+      patch.hotkeyGlobalVoice !== undefined ||
+      patch.hotkeyEditor !== undefined
+    ) {
+      const keys = [next.hotkeyAgentVoice, next.hotkeyGlobalVoice, next.hotkeyEditor]
+      if (keys.some((k) => !k)) throw new Error('Kürzel fehlt')
+      if (new Set(keys.map((k) => k.toLowerCase())).size < keys.length)
+        throw new Error('Dieses Kürzel ist schon für eine andere Aktion vergeben')
     }
     if (next.hotkeyGlobalVoice !== current.hotkeyGlobalVoice) {
       if (!registerGlobalHotkey(next.hotkeyGlobalVoice)) {

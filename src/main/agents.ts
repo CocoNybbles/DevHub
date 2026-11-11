@@ -1,6 +1,6 @@
 import * as pty from 'node-pty'
 import { randomUUID } from 'crypto'
-import { existsSync, readdirSync, rmSync, writeFileSync } from 'fs'
+import { existsSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'fs'
 import { homedir } from 'os'
 import { isAbsolute, join, resolve as resolvePath } from 'path'
 import type { Agent, AgentStatus, CodeFocus, CodeSnippet, Team, TeamMember } from '../shared/types'
@@ -58,7 +58,24 @@ export interface AgentEvents {
   onSnippets: (agentId: string, snippets: CodeSnippet[]) => void
   /** Agent hat sich direkt nach dem Start mit Fehler beendet */
   onStartFailed: (agentName: string, output: string) => void
+  /** Strg+G: Editor-Tab öffnen, vorbelegt mit dem bisherigen Prompt */
+  onEditorOpened: (agentId: string, text: string) => void
+  /** Text (z. B. Sprachbefehl) an den offenen Editor-Tab anhängen statt ans Terminal */
+  onEditorAppend: (agentId: string, text: string) => void
 }
+
+/** Offene Strg+G-Bearbeitung: claude wartet, bis `done` aufgerufen wird */
+interface EditorSession {
+  filePath: string
+  text: string
+  done: () => void
+}
+
+/** Name des Strg+G-„Editors“ (Wrapper-Skript); muss „notepad“ enthalten, s. writeAgentConfig */
+const EDITOR_NAME = 'devhub-notepad'
+
+/** Wartezeit nach dem Schließen des Editors, bis claude den Prompt neu geladen hat */
+const EDITOR_RELOAD_MS = 500
 
 export class AgentManager {
   private running = new Map<string, RunningAgent>()
@@ -66,6 +83,7 @@ export class AgentManager {
   private quitting = false
   /** Wiederherstellung nur einmal pro App-Start */
   private restored = false
+  private editors = new Map<string, EditorSession>()
 
   constructor(private events: AgentEvents) {
     this.bridge = new AgentBridge({
@@ -74,8 +92,73 @@ export class AgentManager {
         this.running.get(id)?.agent.teamId
           ? ['show_code', 'team_members', 'send_team_message']
           : ['show_code'],
-      onToolCall: (id, name, args) => this.handleToolCall(id, name, args)
+      onToolCall: (id, name, args) => this.handleToolCall(id, name, args),
+      onEditor: (id, filePath) => this.openEditor(id, filePath),
+      onEditorAbort: (id) => this.closeEditor(id)
     })
+  }
+
+  // ------------------------------------------------------------ Strg+G-Editor-Tab
+
+  /** claude hat für die Prompt-Datei den „Editor“ gestartet → Tab öffnen, warten bis er schließt. */
+  private openEditor(agentId: string, filePath: string): Promise<void> {
+    const r = this.running.get(agentId)
+    if (!r || !filePath || !existsSync(filePath)) return Promise.resolve()
+    this.editors.get(agentId)?.done() // Vorherige (hängende) Sitzung freigeben
+    const text = readFileSync(filePath, 'utf8')
+    return new Promise((done) => {
+      this.editors.set(agentId, { filePath, text, done })
+      r.agent.editing = true
+      this.events.onEditorOpened(agentId, text)
+      this.emitChanged()
+    })
+  }
+
+  /** Anfangstext eines offenen Editor-Tabs (z. B. nach Neuladen der Oberfläche) */
+  editorText(agentId: string): string | null {
+    return this.editors.get(agentId)?.text ?? null
+  }
+
+  /**
+   * Editor-Tab schließen. `text`: neuer Prompt (null = unverändert lassen);
+   * `submit`: danach abschicken. Erst dann ist der Agent wieder bedienbar.
+   */
+  finishEditor(agentId: string, text: string | null, submit: boolean): void {
+    const s = this.editors.get(agentId)
+    if (!s) return
+    if (text !== null) writeFileSync(s.filePath, text.replace(/\r\n/g, '\n'), 'utf8')
+    this.closeEditor(agentId)
+    const r = this.running.get(agentId)
+    if (!r) return
+    setTimeout(() => {
+      if (submit && this.running.get(agentId) === r) r.proc.write('\r')
+      // Währenddessen angekommene Team-Nachrichten nachreichen
+      setTimeout(() => this.flushPending(agentId), submit ? 1000 : 0)
+    }, EDITOR_RELOAD_MS)
+  }
+
+  /** Editor-Sitzung beenden (claude bekommt die Antwort, liest die Datei neu ein). */
+  private closeEditor(agentId: string): void {
+    const s = this.editors.get(agentId)
+    if (!s) return
+    this.editors.delete(agentId)
+    s.done()
+    const r = this.running.get(agentId)
+    if (r) r.agent.editing = false
+    this.emitChanged()
+  }
+
+  /** Bild aus der Zwischenablage für den Prompt speichern; liefert den Pfad */
+  saveEditorImage(agentId: string, ext: string, data: ArrayBuffer): string {
+    if (!this.running.has(agentId)) throw new Error('Agent läuft nicht mehr')
+    const safeExt = /^[a-z0-9]{1,5}$/i.test(ext) ? ext.toLowerCase() : 'png'
+    const stamp = new Date().toISOString().replace(/[-:T]/g, '').slice(0, 14)
+    const file = join(
+      dataDir('agents', agentId, 'images'),
+      `bild-${stamp}-${randomUUID().slice(0, 4)}.${safeExt}`
+    )
+    writeFileSync(file, Buffer.from(data))
+    return file
   }
 
   init(): Promise<void> {
@@ -278,6 +361,11 @@ export class AgentManager {
   async sendVoice(id: string, text: string): Promise<boolean> {
     const r = this.running.get(id)
     if (!r) throw new Error('Agent läuft nicht mehr')
+    // Editor-Tab offen: Text dort einfügen (Agent selbst ist gesperrt)
+    if (r.agent.editing) {
+      this.events.onEditorAppend(id, text)
+      return false
+    }
     const autoSend = r.agent.voiceAutoSend ?? getState().settings.voiceAutoSend
     if (autoSend) await this.sendLine(id, text)
     else r.proc.write(text.replace(/\r?\n/g, ' '))
@@ -285,13 +373,15 @@ export class AgentManager {
   }
 
   write(id: string, data: string): void {
-    this.running.get(id)?.proc.write(data)
+    const r = this.running.get(id)
+    if (r && !r.agent.editing) r.proc.write(data) // Editor-Tab offen → gesperrt
   }
 
   /** Schreibt Text und schickt ihn ab. Enter separat, damit die TUI ihn nicht als Teil eines Paste behandelt. */
   async sendLine(id: string, text: string): Promise<void> {
     const r = this.running.get(id)
     if (!r) throw new Error('Agent läuft nicht')
+    if (r.agent.editing) throw new Error(`${r.agent.name} wird gerade im Editor-Tab bearbeitet`)
     r.proc.write(text.replace(/\r?\n/g, ' '))
     await new Promise((res) => setTimeout(res, 150))
     r.proc.write('\r')
@@ -330,7 +420,7 @@ export class AgentManager {
     const claude = await resolveClaude()
     if (!claude) throw new Error('Claude Code wurde nicht gefunden')
 
-    const { settingsFile, mcpFile } = this.writeAgentConfig(agent.id)
+    const { settingsFile, mcpFile, binDir } = this.writeAgentConfig(agent.id)
     // Vorlage bei jedem Start frisch lesen → Änderungen wirken auch bei Wiederherstellung
     const template = agent.templateId
       ? getState().templates.find((t) => t.id === agent.templateId)
@@ -365,12 +455,18 @@ export class AgentManager {
           ...args.map((a) => a.replace(/["%^&|<>]/g, ' ').replace(/\s*\r?\n\s*/g, ' '))
         ]
 
+    // Strg+G („im Editor bearbeiten“): claude ruft `$EDITOR "<prompt-datei>"` per cmd auf und
+    // wartet. EDITOR ist der Wrapper aus writeAgentConfig, gefunden über PATH (Pfad ohne
+    // Leerzeichen-Probleme: claude trennt EDITOR an Leerzeichen).
+    const env = claudeEnv({ FORCE_COLOR: '1', EDITOR: EDITOR_NAME, VISUAL: EDITOR_NAME })
+    const pathKey = Object.keys(env).find((k) => k.toUpperCase() === 'PATH') ?? 'PATH'
+    env[pathKey] = `${binDir};${env[pathKey] ?? ''}`
     const proc = pty.spawn(file, argv, {
       name: 'xterm-256color',
       cols: 120,
       rows: 30,
       cwd: project.agentPath,
-      env: claudeEnv({ FORCE_COLOR: '1' })
+      env
     })
 
     if (process.env.DEVHUB_DEBUG)
@@ -394,6 +490,8 @@ export class AgentManager {
 
     proc.onExit(({ exitCode }) => {
       this.running.delete(agent.id)
+      // Offener Editor-Tab: Anfrage beantworten, damit ein verwaister curl-Prozess endet
+      this.closeEditor(agent.id)
       if (this.quitting) return
       if (!r.stopping && exitCode !== 0 && Date.now() - r.startedAt < EARLY_EXIT_MS) {
         this.events.onStartFailed(agent.name, lastLines(r.buffer))
@@ -404,7 +502,11 @@ export class AgentManager {
   }
 
   /** Pro Agent: Hooks (Status an die App melden) + MCP-Konfiguration (show_code). */
-  private writeAgentConfig(agentId: string): { settingsFile: string; mcpFile: string } {
+  private writeAgentConfig(agentId: string): {
+    settingsFile: string
+    mcpFile: string
+    binDir: string
+  } {
     const dir = dataDir('agents', agentId)
     // curl.exe ist ab Windows 10 enthalten; ".exe" explizit, da "curl" in PowerShell 5.1 ein Alias ist
     const hook = [
@@ -436,7 +538,17 @@ export class AgentManager {
     const mcpFile = join(dir, 'mcp.json')
     writeFileSync(settingsFile, JSON.stringify(settings, null, 2))
     writeFileSync(mcpFile, JSON.stringify(mcp, null, 2))
-    return { settingsFile, mcpFile }
+
+    // Strg+G-„Editor“: schickt den Pfad der Prompt-Datei an DevHub und blockiert, bis der
+    // Editor-Tab geschlossen ist. Der Name enthält „notepad“, damit claude ihn als GUI-Editor
+    // behandelt: Oberfläche bleibt stehen, Eingabefeld zeigt „Save and close editor to continue…“
+    // (bei unbekannten Namen hält claude ihn für einen Terminal-Editor und leert den Bildschirm).
+    const binDir = dataDir('agents', agentId, 'bin')
+    writeFileSync(
+      join(binDir, `${EDITOR_NAME}.cmd`),
+      `@curl.exe -s -o NUL -X POST ${this.bridge.editorUrl(agentId)} --data-binary "%~1"\r\n`
+    )
+    return { settingsFile, mcpFile, binDir }
   }
 
   private handleHook(agentId: string, ev: HookEvent): void {
@@ -577,7 +689,8 @@ export class AgentManager {
         skipped.push(r.agent.name)
         continue
       }
-      if (r.agent.status === 'starting') r.pending.push(text)
+      // Noch nicht bereit oder im Editor-Tab gesperrt → später zustellen
+      if (r.agent.status === 'starting' || r.agent.editing) r.pending.push(text)
       else await this.sendLine(r.agent.id, text)
       delivered.push(r.agent.name)
     }
@@ -648,14 +761,18 @@ export class AgentManager {
     if (saved && saved.needsInput !== needsInput) {
       updateState(() => (saved.needsInput = needsInput))
     }
-    // TUI ist bereit → zurückgehaltene Team-Nachrichten zustellen
-    if (status !== 'starting' && r.pending.length) {
-      const queued = r.pending.splice(0)
-      void (async () => {
-        for (const text of queued) await this.sendLine(id, text).catch(() => {})
-      })()
-    }
+    this.flushPending(id)
     this.emitChanged()
+  }
+
+  /** Zurückgehaltene Team-Nachrichten zustellen, sobald die TUI bereit und kein Editor-Tab offen ist */
+  private flushPending(id: string): void {
+    const r = this.running.get(id)
+    if (!r || r.agent.status === 'starting' || r.agent.editing || !r.pending.length) return
+    const queued = r.pending.splice(0)
+    void (async () => {
+      for (const text of queued) await this.sendLine(id, text).catch(() => {})
+    })()
   }
 
   private forget(id: string): void {

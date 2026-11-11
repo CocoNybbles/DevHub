@@ -1,8 +1,8 @@
 import type { Agent, Project } from '../../../shared/types'
 import type { Selection } from '../App'
 import TerminalView from './TerminalView'
-import { CloseIcon, MicIcon, PlayIcon } from './Icons'
-import { focusTerminal } from '../lib/terminals'
+import { CloseIcon, EditIcon, LockIcon, MicIcon, PlayIcon } from './Icons'
+import { focusTerminal, hasSnapshot } from '../lib/terminals'
 import { formatAccelerator } from '../../../shared/hotkeys'
 
 interface Props {
@@ -18,6 +18,11 @@ interface Props {
   onStartAgent: (projectId: string) => void
   onStopAgent: (agent: Agent) => void
   onAgentVoice: () => void
+  /** Gesperrten Agent anklicken → zu seinem Editor-Tab wechseln */
+  onOpenEditor: (agentId: string) => void
+  /** Anweisung im Editor-Tab schreiben (wie das Kürzel `editorHotkey`) */
+  onEditPrompt: (agentId: string) => void
+  editorHotkey: string
 }
 
 /**
@@ -48,8 +53,18 @@ function CenterPane(props: Props): React.JSX.Element {
               <span className={`dot ${agent.status}`} />
               {agent.name}
               <span className="muted"> · {project?.name}</span>
+              {agent.editing && <LockedBadge onOpen={() => props.onOpenEditor(agent.id)} />}
             </span>
             <div className="header-actions">
+              {!agent.editing && (
+                <button
+                  className="icon"
+                  title={`Anweisung in einem Tab schreiben – mit Bildern und Diktat (${formatAccelerator(props.editorHotkey)})`}
+                  onClick={() => props.onEditPrompt(agent.id)}
+                >
+                  <EditIcon />
+                </button>
+              )}
               {voiceButton('Sprach-Anweisung an diesen Agent')}
               <button
                 className="icon"
@@ -60,7 +75,11 @@ function CenterPane(props: Props): React.JSX.Element {
               </button>
             </div>
           </header>
-          <TerminalView agentId={agent.id} autoFocus />
+          {agent.editing ? (
+            <LockedTerminal agent={agent} onOpen={() => props.onOpenEditor(agent.id)} />
+          ) : (
+            <TerminalView agentId={agent.id} autoFocus />
+          )}
         </main>
       )
     }
@@ -167,6 +186,7 @@ function AgentGrid(props: Props & { shown: Agent[]; showProject: boolean }): Rea
             a.status === 'needsInput' ? 'attention' : ''
           ].join(' ')}
           onMouseDown={() => {
+            if (a.editing) return props.onOpenEditor(a.id)
             props.onActivate(a.id)
             focusTerminal(a.id)
           }}
@@ -186,6 +206,7 @@ function AgentGrid(props: Props & { shown: Agent[]; showProject: boolean }): Rea
                 <span className="row-sub">{a.statusMessage || 'Wartet auf Eingabe'}</span>
               )}
             </span>
+            {a.editing && <LockedBadge onOpen={() => props.onOpenEditor(a.id)} />}
             <button
               className="icon"
               title="Agent beenden"
@@ -195,10 +216,63 @@ function AgentGrid(props: Props & { shown: Agent[]; showProject: boolean }): Rea
               <CloseIcon />
             </button>
           </header>
-          <TerminalView agentId={a.id} />
+          {a.editing ? (
+            <LockedTerminal agent={a} onOpen={() => props.onOpenEditor(a.id)} />
+          ) : (
+            <TerminalView agentId={a.id} />
+          )}
         </section>
       ))}
     </div>
+  )
+}
+
+/**
+ * Agent, dessen Anweisung gerade in einem Editor-Tab geschrieben wird: Terminal unverändert
+ * sichtbar (Eingaben gesperrt, Hinweis steht im Kopf); ein Klick darauf wechselt zum Tab.
+ */
+function LockedTerminal({
+  agent,
+  onOpen
+}: {
+  agent: Agent
+  onOpen: () => void
+}): React.JSX.Element {
+  return (
+    <div
+      className="locked-terminal"
+      title={`${agent.name} ist gesperrt – Klick wechselt zum Editor-Tab`}
+      // Capture: das Terminal selbst soll den Klick nicht bekommen (keine Auswahl, kein Fokus)
+      onMouseDownCapture={(e) => {
+        e.preventDefault()
+        e.stopPropagation()
+        onOpen()
+      }}
+    >
+      {/* Standbild in voller Breite; das live-Terminal hängt im (schmaleren) Editor-Tab */}
+      <TerminalView agentId={agent.id} snapshot={hasSnapshot(agent.id)} />
+      {/* Darübergelegt (verkleinert das Terminal nicht): abgedunkelt + Hinweis statt Eingabefeld */}
+      <div className="locked-overlay">
+        <span className="locked-pill">
+          <LockIcon size={12} /> Eingabe gesperrt – die Anweisung wird im Tab geschrieben
+          <span className="link">Zum Tab</span>
+        </span>
+      </div>
+    </div>
+  )
+}
+
+/** Hinweis im Kopf: Anweisung wird im Editor-Tab geschrieben (Klick → Tab) */
+function LockedBadge({ onOpen }: { onOpen: () => void }): React.JSX.Element {
+  return (
+    <button
+      className="locked-badge"
+      title="Gesperrt, bis der Editor-Tab geschlossen wird – Klick wechselt dorthin"
+      onMouseDown={(e) => e.stopPropagation()}
+      onClick={onOpen}
+    >
+      <LockIcon size={11} /> im Tab
+    </button>
   )
 }
 

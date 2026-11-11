@@ -85,6 +85,29 @@ export const CopyIcon = ({ size = 13 }: P): React.JSX.Element =>
 export const CheckIcon = ({ size = 13 }: P): React.JSX.Element =>
   svg(size, <path d="M3 8.5l3.2 3L13 4.5" />)
 
+/** Stift: Anweisung im Editor-Tab schreiben */
+export const EditIcon = ({ size = 13 }: P): React.JSX.Element =>
+  svg(size, <path d="M10.5 2.5l3 3L6 13H3v-3zM9 4l3 3" />)
+
+export const LockIcon = ({ size = 13 }: P): React.JSX.Element =>
+  svg(
+    size,
+    <>
+      <rect x="3.5" y="7" width="9" height="6.5" rx="1.2" />
+      <path d="M5.5 7V5a2.5 2.5 0 0 1 5 0v2" />
+    </>
+  )
+
+/** Büroklammer: Bild/Datei anhängen */
+export const AttachIcon = ({ size = 13 }: P): React.JSX.Element =>
+  svg(
+    size,
+    <path d="M13 7.5l-5.3 5.3a3 3 0 0 1-4.2-4.2L9 3.1a2 2 0 0 1 2.8 2.8L6.5 11.2a1 1 0 0 1-1.4-1.4L10 4.9" />
+  )
+
+export const SendIcon = ({ size = 13 }: P): React.JSX.Element =>
+  svg(size, <path d="M2.5 8h9M8 4l4 4-4 4" />)
+
 export const TeamIcon = ({ size = 13 }: P): React.JSX.Element =>
   svg(
     size,

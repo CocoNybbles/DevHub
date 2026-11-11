@@ -14,6 +14,9 @@ import type { Selection } from './App'
 import Sidebar from './components/Sidebar'
 import CenterPane from './components/CenterPane'
 import CodePane from './components/CodePane'
+import EditorTab from './components/EditorTab'
+import { CloseIcon, EditIcon, GridIcon } from './components/Icons'
+import { appendToDraft } from './lib/editorText'
 import ProjectDialog from './components/ProjectDialog'
 import SettingsDialog from './components/SettingsDialog'
 import AgentTemplateDialog from './components/AgentTemplateDialog'
@@ -25,7 +28,11 @@ import { isCapturingHotkey } from './lib/hotkeyCapture'
 import {
   disposeTerminal,
   hasTerminal,
+  dropSnapshot,
+  sendEditorKey,
+  snapshotTerminal,
   setAppHotkeys,
+  setTerminalLocked,
   terminalIds,
   writeToTerminal
 } from './lib/terminals'
@@ -36,6 +43,11 @@ import { canRememberLanguage } from '../../shared/voiceLanguage'
 
 type VoiceTarget = { kind: 'agent'; agentId: string } | { kind: 'global' }
 
+/** Zeit für claude, sich nach dem Umhängen in den Editor-Tab in neuer Größe zu zeichnen */
+const EDITOR_REDRAW_MS = 400
+/** Öffnet claude danach so lange keinen Editor, wird der Tab wieder geschlossen */
+const EDITOR_OPEN_TIMEOUT_MS = 4000
+
 function Workspace(): React.JSX.Element {
   const [projects, setProjects] = useState<Project[]>([])
   const [agents, setAgents] = useState<Agent[]>([])
@@ -45,12 +57,21 @@ function Workspace(): React.JSX.Element {
   const [focusByAgent, setFocusByAgent] = useState<Record<string, CodeFocus>>({})
   /** Code-Blöcke aus den Antworten je Agent (neueste zuerst) */
   const [snippetsByAgent, setSnippetsByAgent] = useState<Record<string, CodeSnippet[]>>({})
+  /** Strg+G-Editor-Tabs: gewählter Tab in der Mitte (Agent-Id, null = Agents-Ansicht) + Entwürfe */
+  const [editorTab, setEditorTab] = useState<string | null>(null)
+  /** Tab wird geöffnet, claude hat den Editor aber noch nicht gestartet (s. openEditor) */
+  const [preparing, setPreparing] = useState<string | null>(null)
+  const prepareTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({})
+  /** Aktuelle Agents für Timer-Rückrufe */
+  const agentsRef = useRef<Agent[]>([])
+  const [drafts, setDrafts] = useState<Record<string, string>>({})
   const [vscodeInstalled, setVscodeInstalled] = useState(false)
   const [settings, setSettings] = useState<Settings>({
     voiceModel: null,
     voiceAutoSend: true,
     hotkeyAgentVoice: DEFAULT_HOTKEYS.agentVoice,
     hotkeyGlobalVoice: DEFAULT_HOTKEYS.globalVoice,
+    hotkeyEditor: DEFAULT_HOTKEYS.editor,
     agentArgs: '',
     projectFileApp: '',
     folderApp: '',
@@ -95,6 +116,18 @@ function Workspace(): React.JSX.Element {
     const offSnippets = window.api.code.onSnippets((id, list) =>
       setSnippetsByAgent((m) => ({ ...m, [id]: list }))
     )
+    // Strg+G im Agent → Editor-Tab öffnen und dorthin wechseln
+    const offEditorOpened = window.api.editor.onOpened((id, text) => {
+      // Sofort sperren, bevor der Tab das Terminal in einen anderen Container hängt
+      // (sonst ändert sich die Größe, und claude kann gerade nicht neu zeichnen)
+      setTerminalLocked(id, true)
+      setDrafts((d) => ({ ...d, [id]: text }))
+      setEditorTab(id)
+    })
+    // Sprachtext für einen gesperrten Agent landet im Entwurf
+    const offEditorAppend = window.api.editor.onAppend((id, text) =>
+      setDrafts((d) => ({ ...d, [id]: appendToDraft(d[id] ?? '', text) }))
+    )
     // Nach Neuladen der Oberfläche: bisher gesammelte Snippets der laufenden Agents
     window.api.code.snippets().then((all) => setSnippetsByAgent((m) => ({ ...all, ...m })))
 
@@ -112,6 +145,11 @@ function Workspace(): React.JSX.Element {
         // Oberfläche wurde neu geladen, Agents laufen noch → bisherige Ausgabe nachladen
         for (const a of running) {
           if (!hasTerminal(a.id)) writeToTerminal(a.id, await window.api.agents.buffer(a.id))
+          // Offene Editor-Tabs wieder anzeigen
+          if (a.editing) {
+            const text = await window.api.editor.text(a.id)
+            if (text !== null) setDrafts((d) => ({ ...d, [a.id]: d[a.id] ?? text }))
+          }
         }
         setAgents(running)
       } else {
@@ -137,6 +175,8 @@ function Workspace(): React.JSX.Element {
       offChanged()
       offFocus()
       offSnippets()
+      offEditorOpened()
+      offEditorAppend()
       offFailed()
     }
   }, [refreshVoice, showError])
@@ -181,7 +221,18 @@ function Workspace(): React.JSX.Element {
   }, [toast])
 
   // ---------------------------------------------------------------- Abgeleitete Werte
+  /** Agents, deren Anweisung gerade in einem Editor-Tab geschrieben wird (gesperrt) */
+  /** Tabs: gesperrte Agents + ggf. ein Tab, der sich gerade öffnet (`preparing`) */
+  const tabAgents = useMemo(
+    () => agents.filter((a) => a.editing || a.id === preparing),
+    [agents, preparing]
+  )
+  /** Sichtbarer Editor-Tab (null = Agents-Ansicht); geschlossene Tabs fallen weg */
+  const activeEditor = tabAgents.find((a) => a.id === editorTab) ?? null
+
   const activeAgentId = useMemo(() => {
+    // Im Editor-Tab: Sprach-Kürzel diktiert in diesen Entwurf
+    if (activeEditor) return activeEditor.id
     if (selection?.kind === 'agent') return selection.agentId
     if (selection?.kind === 'project') {
       return (
@@ -192,7 +243,33 @@ function Workspace(): React.JSX.Element {
     }
     if (selection?.kind === 'agents') return selection.activeAgentId ?? selection.agentIds[0]
     return null
-  }, [selection, agents])
+  }, [selection, agents, activeEditor])
+
+  // Terminals gesperrter Agents nehmen keine Eingaben an
+  useEffect(() => {
+    agentsRef.current = agents
+    for (const a of agents) setTerminalLocked(a.id, !!a.editing)
+  }, [agents])
+
+  /** Editor-Tab schließen und den Text an claude zurückgeben */
+  const finishEditor = useCallback(
+    (agentId: string, text: string | null, submit: boolean) => {
+      // Tab war noch im Aufbau (Editor nicht offen) → nur abbrechen
+      clearTimeout(prepareTimers.current[agentId])
+      setPreparing((p) => (p === agentId ? null : p))
+      dropSnapshot(agentId) // Agents-Ansicht zeigt wieder das live-Terminal
+      if (agents.find((a) => a.id === agentId)?.editing) {
+        window.api.editor.finish(agentId, text, submit).catch(showError)
+      }
+      setDrafts((d) => {
+        const rest = { ...d }
+        delete rest[agentId]
+        return rest
+      })
+      setEditorTab(null)
+    },
+    [agents, showError]
+  )
 
   /** Code-Ansicht: Fokus des aktiven Agents, sonst jüngster Fokus im ausgewählten Projekt. */
   const codeFocus = useMemo(() => {
@@ -433,9 +510,42 @@ function Workspace(): React.JSX.Element {
     [agents, activeAgentId, finishVoice, showVoiceError]
   )
 
-  // Hotkeys: Agent-Aufnahme (in der App), globaler Sprachbefehl (vom Hauptprozess), Esc
+  /**
+   * Editor-Tab für einen Agent: offen → hinwechseln. Sonst zuerst den Tab zeigen, damit claude
+   * sich in der (schmaleren) Terminal-Spalte neu zeichnet, und erst dann Strg+G schicken –
+   * während der Editor offen ist, kann claude nicht mehr neu zeichnen (s. terminals.ts).
+   */
+  const openEditor = useCallback(
+    (agentId: string) => {
+      const agent = agents.find((a) => a.id === agentId)
+      if (!agent) return
+      if (agent.editing) return setEditorTab(agentId)
+      clearTimeout(prepareTimers.current[agentId])
+      // Ansicht in voller Breite festhalten → Agents-Ansicht zeigt sie, solange der Tab offen ist
+      snapshotTerminal(agentId)
+      setPreparing(agentId)
+      setEditorTab(agentId)
+      prepareTimers.current[agentId] = setTimeout(() => {
+        sendEditorKey(agentId)
+        // Kein Editor? (z. B. offene Rückfrage/Dialog im Agent) → Tab wieder schließen
+        prepareTimers.current[agentId] = setTimeout(() => {
+          if (agentsRef.current.find((a) => a.id === agentId)?.editing) return
+          dropSnapshot(agentId)
+          setPreparing((p) => (p === agentId ? null : p))
+          setToast(
+            `${agent.name} hat den Editor nicht geöffnet – evtl. ist im Terminal gerade eine Auswahl offen.`
+          )
+        }, EDITOR_OPEN_TIMEOUT_MS)
+      }, EDITOR_REDRAW_MS)
+    },
+    [agents]
+  )
+
+  // Hotkeys: Agent-Aufnahme + Editor-Tab (in der App), globaler Sprachbefehl (vom Hauptprozess), Esc
   const agentHotkey = settings.hotkeyAgentVoice
-  useEffect(() => setAppHotkeys([agentHotkey]), [agentHotkey])
+  const editorHotkey = settings.hotkeyEditor
+  // Terminal soll diese Kürzel nicht verschlucken
+  useEffect(() => setAppHotkeys([agentHotkey, editorHotkey]), [agentHotkey, editorHotkey])
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
       if (isCapturingHotkey()) return // Kürzel wird gerade in den Einstellungen neu belegt
@@ -443,6 +553,11 @@ function Workspace(): React.JSX.Element {
         e.preventDefault()
         e.stopPropagation()
         toggleVoice('agent')
+      } else if (matchesAccelerator(e, editorHotkey)) {
+        e.preventDefault()
+        e.stopPropagation()
+        // Im Editor-Tab selbst ohne Wirkung; sonst für den aktiven Agent
+        if (!activeEditor && activeAgentId) openEditor(activeAgentId)
       } else if (e.key === 'Escape' && recorder.current) {
         e.preventDefault()
         cancelVoice()
@@ -454,7 +569,7 @@ function Workspace(): React.JSX.Element {
       window.removeEventListener('keydown', onKey, true)
       off()
     }
-  }, [toggleVoice, cancelVoice, agentHotkey])
+  }, [toggleVoice, cancelVoice, agentHotkey, editorHotkey, activeEditor, activeAgentId, openEditor])
 
   // Abgeschlossene Aufträge nach einigen Sekunden ausblenden
   const finishedJobIds = voiceJobs
@@ -481,16 +596,20 @@ function Workspace(): React.JSX.Element {
           vscodeInstalled={vscodeInstalled}
           globalVoiceActive={recordingTarget === 'global'}
           globalHotkey={settings.hotkeyGlobalVoice}
-          onSelectProject={(id, multi) =>
+          onSelectProject={(id, multi) => {
+            setEditorTab(null)
             setSelection(
               multi ? toggleProject(selection, id, agents) : { kind: 'project', projectId: id }
             )
-          }
-          onSelectAgent={(id, multi) =>
+          }}
+          onSelectAgent={(id, multi) => {
+            // Gesperrter Agent → zurück in seinen Editor-Tab
+            if (!multi && agents.find((a) => a.id === id)?.editing) return setEditorTab(id)
+            setEditorTab(null)
             setSelection(
               multi ? toggleAgent(selection, id, agents) : { kind: 'agent', agentId: id }
             )
-          }
+          }}
           templates={templates}
           teamTemplates={teamTemplates}
           teams={teams}
@@ -498,6 +617,7 @@ function Workspace(): React.JSX.Element {
           onStartTeam={startTeam}
           onStopTeam={stopTeam}
           onSelectTeam={(team, multi) => {
+            setEditorTab(null)
             const ids = agents.filter((a) => a.teamId === team.id).map((a) => a.id)
             setSelection(
               multi ? toggleAgents(selection, ids, agents) : { kind: 'agents', agentIds: ids }
@@ -505,6 +625,8 @@ function Workspace(): React.JSX.Element {
           }}
           onStopAgent={stopAgent}
           onRenameAgent={(id, name) => window.api.agents.rename(id, name).catch(showError)}
+          onEditPrompt={openEditor}
+          editorHotkey={editorHotkey}
           onReorderProjects={(ids) => {
             // sofort anzeigen, dann gespeicherte Liste übernehmen
             setProjects((list) => ids.map((id) => list.find((p) => p.id === id)!).filter(Boolean))
@@ -530,23 +652,70 @@ function Workspace(): React.JSX.Element {
             setSettingsOpen(true)
           }}
         />
-        <CenterPane
-          selection={selection}
-          projects={projects}
-          agents={agents}
-          activeAgentId={activeAgentId}
-          agentVoiceActive={recordingTarget === 'agent'}
-          agentHotkey={agentHotkey}
-          onActivate={(id) =>
-            setSelection((s) =>
-              s?.kind === 'project' || s?.kind === 'agents' ? { ...s, activeAgentId: id } : s
-            )
-          }
-          onOpenAgent={(id) => setSelection({ kind: 'agent', agentId: id })}
-          onStartAgent={(id) => startAgent(id)}
-          onStopAgent={stopAgent}
-          onAgentVoice={() => toggleVoice('agent')}
-        />
+        <div className="center-column">
+          {tabAgents.length > 0 && (
+            <nav className="center-tabs">
+              <button
+                className={`center-tab ${activeEditor ? '' : 'active'}`}
+                onClick={() => setEditorTab(null)}
+              >
+                <GridIcon size={12} /> Agents
+              </button>
+              {tabAgents.map((a) => (
+                <div
+                  key={a.id}
+                  className={`center-tab ${activeEditor?.id === a.id ? 'active' : ''}`}
+                  onClick={() => setEditorTab(a.id)}
+                  title={`Anweisung für ${a.name} – der Agent ist gesperrt, bis der Tab geschlossen wird`}
+                >
+                  <EditIcon size={12} /> {a.name}
+                  <button
+                    className="icon"
+                    title="Schließen – Text in den Prompt übernehmen, ohne abzuschicken"
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      finishEditor(a.id, drafts[a.id] ?? null, false)
+                    }}
+                  >
+                    <CloseIcon size={10} />
+                  </button>
+                </div>
+              ))}
+            </nav>
+          )}
+          {activeEditor ? (
+            <EditorTab
+              key={activeEditor.id}
+              agent={activeEditor}
+              projectName={projects.find((p) => p.id === activeEditor.projectId)?.name}
+              draft={drafts[activeEditor.id] ?? ''}
+              onDraftChange={(text) => setDrafts((d) => ({ ...d, [activeEditor.id]: text }))}
+              onFinish={(text, submit) => finishEditor(activeEditor.id, text, submit)}
+              onError={showError}
+            />
+          ) : (
+            <CenterPane
+              selection={selection}
+              projects={projects}
+              agents={agents}
+              activeAgentId={activeAgentId}
+              agentVoiceActive={recordingTarget === 'agent'}
+              agentHotkey={agentHotkey}
+              onActivate={(id) =>
+                setSelection((s) =>
+                  s?.kind === 'project' || s?.kind === 'agents' ? { ...s, activeAgentId: id } : s
+                )
+              }
+              onOpenAgent={(id) => setSelection({ kind: 'agent', agentId: id })}
+              onStartAgent={(id) => startAgent(id)}
+              onStopAgent={stopAgent}
+              onAgentVoice={() => toggleVoice('agent')}
+              onOpenEditor={setEditorTab}
+              onEditPrompt={openEditor}
+              editorHotkey={editorHotkey}
+            />
+          )}
+        </div>
         {showCodePane && (
           <CodePane
             focus={codeFocus}

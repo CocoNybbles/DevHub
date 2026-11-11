@@ -33,6 +33,7 @@ Lokale Windows-Desktop-App zum Verwalten von Projekten und den darin laufenden K
   - Klick auf ein Projekt → alle Agents des Projekts im Raster
   - **Strg+Klick** (projektübergreifend): Agent zum Raster hinzufügen/entfernen; auf ein Projekt = alle seine Agents. Ausgangspunkt ist die aktuelle Ansicht (auch ein Projekt-Raster). Auswahl-Typ `{ kind: 'agents', agentIds }`, Logik in `lib/selection.ts`; 1 Agent → Einzelansicht, 0 → leer
   - Beendet sich ein Agent im Terminal selbst (z. B. `/exit`), wird die Ansicht geschlossen und der Eintrag links entfernt
+  - **Strg+G** im Agent öffnet statt eines externen Editors einen weiteren Tab in der Mitte (Terminal + Textfeld mit Diktat und Bildern); der Agent ist bis zum Schließen überall sonst gesperrt (s. Architektur)
 - Rechts: Code-Ansicht (`CodePane`) mit zwei Reitern
   - „Datei“: bei Analyse/Bugfund wird die betroffene Datei angezeigt und die Stelle hervorgehoben (Fokus des aktiven Agents / jüngster im ausgewählten Projekt)
   - „Snippets“: alle Code-Blöcke (` ``` `/`~~~`) aus den Antworten des **aktiven** Agents, neueste zuerst, je mit Button „Kopieren“ (`SnippetList`, Hervorhebung per `monaco.editor.colorize`, Kopieren über Main `clipboard:writeText`)
@@ -97,6 +98,17 @@ Lokale Windows-Desktop-App zum Verwalten von Projekten und den darin laufenden K
   Status: `SessionStart`→idle · `UserPromptSubmit`/`PreToolUse`/`PostToolUse`→working · `PreToolUse(AskUserQuestion)`/`Notification`/`Stop`→**needsInput** (links hervorgehoben)
 - `POST /mcp/<token>/<agentId>`: minimaler MCP-Server (Streamable HTTP, nur JSON-Antworten) mit Tool `show_code(file_path, start_line, end_line?, note?)` → Event `code:focus` → Monaco rechts; für Teammitglieder zusätzlich `team_members`/`send_team_message` (s. Teams). Tools sind per `permissions.allow` freigegeben.
 
+**Strg+G-Editor-Tab** (statt externem Editor): Agents starten mit `EDITOR`/`VISUAL` = `devhub-notepad` und `<data>\agents\<id>\bin` vorne im `PATH`; dort liegt `devhub-notepad.cmd` = `curl.exe -s -o NUL -X POST <bridge>/editor/<token>/<agentId> --data-binary "%~1"`. claude ruft bei Strg+G per cmd `$EDITOR "<temp-prompt.md>"` auf und wartet auf das Prozessende; Bridge hält die Anfrage offen (`requestTimeout = 0`), bis `AgentManager.finishEditor` die Datei schreibt und antwortet → claude lädt den Text als Prompt. `submit` → nach 500 ms `\r`.
+
+- Während der Tab offen ist: `agent.editing = true` (nicht persistiert). Main ignoriert `write`, `sendLine` wirft, `sendVoice` → `editor:append` (Text landet im Entwurf), Team-Nachrichten → `pending` (`flushPending` nach dem Schließen). Renderer: `disableStdin` (`setTerminalLocked`), Einzelansicht/Raster zeigen `LockedTerminal` = Terminal/Standbild + darübergelegte, abgedunkelte Ebene `.locked-overlay` mit Hinweis unten (wo das Eingabefeld ist – sonst wirkt das Standbild bedienbar; absolut positioniert, verkleinert das Terminal nicht) + Badge „🔒 im Tab“ im Kopf (Klick irgendwo → Tab, per `onMouseDownCapture`; geht, weil Agents-Ansicht und Editor-Tab nie gleichzeitig gerendert werden – ein xterm hängt immer nur an einer Stelle), Klick links auf den Agent → Tab.
+- **Größe einfrieren:** claude wartet blockierend (`spawnSync`) auf den Editor und zeichnet bei Größenänderung nicht neu → xterm würde den Inhalt abschneiden. Deshalb **erst Tab, dann Strg+G** (`openEditor` in `Workspace`): Tab öffnet sich sofort (`preparing`, Textfeld noch gesperrt), Terminal hängt in der Tab-Spalte → fit → claude zeichnet sich in dieser Größe neu; nach 400 ms `sendEditorKey`. Öffnet claude binnen 4 s keinen Editor (z. B. Auswahl offen), schließt der Tab mit Hinweis. `setTerminalLocked` (schon im `editor:opened`-Handler) merkt sich die Pixelgröße (`lockedSize`) und fittet nicht mehr; in kleineren Containern wird per CSS `transform` skaliert (nur Rückfall, z. B. Strg+G direkt im Terminal bei anders belegtem DevHub-Kürzel). Nichts über/neben das Terminal legen, was dessen Container verkleinert (Hinweise in den Kopf).
+- **Standbild für die Agents-Ansicht:** `openEditor` ruft vorher `snapshotTerminal` (DOM-Kopie des `.xterm`-Wurzelelements; xterm zeichnet per DOM, Farben/Maße hängen an der Owner-Klasse daran). Solange der Tab offen ist, zeigt `LockedTerminal` per `TerminalView snapshot` dieses Standbild in voller Breite, das live-Terminal hängt im schmaleren Tab. `dropSnapshot` beim Schließen/Abbruch/`disposeTerminal`.
+- Mitte: Tab-Leiste (`.center-tabs`) nur bei offenen Editor-Tabs: „Agents“ + je Agent ein Tab; ✕ = Text übernehmen ohne Abschicken. `EditorTab`: Terminal links (gesperrt), rechts Textfeld mit Diktat, Anhängen, Verwerfen / In Prompt übernehmen / Abschicken (Strg+Enter). Im Tab ist der Agent der aktive → Sprach-Kürzel diktiert in den Entwurf.
+- Bilder/Dateien als `@"pfad"` (claude hängt sie beim Abschicken an, Bilder als Bild): Strg+V speichert nach `<data>\agents\<id>\images\`, Drag & Drop nutzt den Originalpfad (`webUtils.getPathForFile`), Button „Anhängen“ = Dateiauswahl. Chips mit Vorschau (`editor:imagePreview` → data:-URL).
+- Agent endet bei offenem Tab → `closeEditor` beantwortet die Anfrage (sonst bliebe ein verwaister curl).
+- Auslösen: **DevHub-Kürzel** `settings.hotkeyEditor` (Standard `Strg+G`, Einstellungen → Tastenkürzel) für den aktiven Agent, Stift-Button im Einzelansicht-Kopf, Rechtsklick „Anweisung im Tab schreiben“. Alle über `openEditor` in `Workspace`: Tab offen → hinwechseln, sonst `sendEditorKey` (`lib/terminals.ts`, schickt `\x07` = claudes Strg+G). Strg+G direkt im Terminal funktioniert unabhängig davon weiter (claudes eigene Belegung `chat:externalEditor`).
+- **Warum „notepad“ im Namen:** claude (2.1, aus dem Binary gelesen) stuft `EDITOR` als GUI-Editor ein, wenn der Programmname (erstes Wort ohne `start`/`cmd`/Schalter, Basisname) `code`, `cursor`, `windsurf`, `codium`, `subl`, `atom`, `gedit`, `notepad++` oder `notepad` enthält. GUI → Oberfläche bleibt stehen, Eingabefeld zeigt „Save and close editor to continue...“ (wie nativ). Sonst (z. B. `curl.exe`) = Terminal-Editor → claude wechselt in den Alternate Screen und leert ihn → Terminal wäre leer. Nicht `code` verwenden: dann hängt claude ggf. `-g datei:zeile` an. EDITOR darf keinen Pfad mit Leerzeichen enthalten (claude trennt an Leerzeichen) → Aufruf über `PATH`. Mit echtem claude geprüft (Leerzeichen im bin-Pfad ok).
+
 **Snippets** (`main/snippets.ts`): Jedes Hook-Ereignis enthält `transcript_path` → `TranscriptReader` pro Agent liest das JSONL-Transkript inkrementell (Byte-Offset, nur vollständige Zeilen; erstes Lesen = ganze Datei, nach Wiederherstellung sind alte Snippets also wieder da). Gelesen bei `SessionStart`, `Stop` (+ erneut nach 1,5 s), `Notification`, `PreToolUse(AskUserQuestion)`. Nur `type: "assistant"`, nicht `isSidechain` (Subagents), Text-Blöcke → Code-Zäune. Pro Agent max. 30, gleicher Code nur einmal. Event `code:snippets` (volle Liste), `code:snippets`-Abfrage nach Renderer-Reload. Kein Mitwirken des Agents nötig (kein MCP-Tool).
 
 **Agent-Lebenszyklus**
@@ -117,7 +129,7 @@ Lokale Windows-Desktop-App zum Verwalten von Projekten und den darin laufenden K
 - **Abschicken oder nur eintragen:** `agents:sendVoice` entscheidet im Main: `agent.voiceAutoSend` (pro Agent, Rechtsklick-Menü, persistiert) → sonst global `settings.voiceAutoSend`. Gilt auch für globale Befehle (`send`).
 - aktiver Agent (Standard `Strg+Shift+Leertaste` / Mikrofon in der Mitte): Text an Agent (`sendLine` = Text, 150 ms, Enter)
 - global (Standard `Strg+Alt+Leertaste` per `globalShortcut` / Mikrofon links): `voice:command` → `claude -p --model haiku --output-format json --tools "" --strict-mcp-config --no-session-persistence` (Prompt via stdin) liefert JSON `send` | `start` (+ optional `model`: Alias `fable`/`opus`/`sonnet`/`haiku`, bei genannter Version voller Name wie `claude-opus-5-5`) | `none`
-- **Kürzel einstellbar** (Einstellungen → `HotkeyInput`): gespeichert als Electron-Accelerator in `settings.hotkeyAgentVoice` / `hotkeyGlobalVoice`. `shared/hotkeys.ts` übersetzt Tastendrücke (layoutunabhängig über `KeyboardEvent.code`) und formatiert die Anzeige. Main registriert das globale Kürzel neu (`registerGlobalHotkey`; belegt → altes zurück + Fehler im Dialog); während der Aufnahme wird es per `settings:suspendGlobalHotkey` freigegeben. Das Agent-Kürzel lässt das Terminal per `setAppHotkeys()` durch.
+- **Kürzel einstellbar** (Einstellungen → `HotkeyInput`): gespeichert als Electron-Accelerator in `settings.hotkeyAgentVoice` / `hotkeyGlobalVoice` / `hotkeyEditor` (alle drei müssen verschieden sein, prüft Main). `shared/hotkeys.ts` übersetzt Tastendrücke (layoutunabhängig über `KeyboardEvent.code`) und formatiert die Anzeige. Main registriert das globale Kürzel neu (`registerGlobalHotkey`; belegt → altes zurück + Fehler im Dialog); während der Aufnahme wird es per `settings:suspendGlobalHotkey` freigegeben. Agent- und Editor-Kürzel lässt das Terminal per `setAppHotkeys()` durch.
 
 **Datenordner** (`main/dataPath.ts`, erster Import in `index.ts`): **alle Daten neben der .exe** in `<exe-Ordner>\data\` (`app.setPath('userData')` vor `ready`, also auch Chromium-Cache). Portable: `PORTABLE_EXECUTABLE_DIR` (nicht der Entpack-Ordner in `%TEMP%`); Entwicklung: `<Projekt>\data\` (gitignored). Nicht beschreibbar → Fehlermeldung + Beenden. Einmalige Übernahme von `devhub-state.json` + `whisper\` aus dem alten `%APPDATA%\DevHub`. Im Folgenden `<data>`.
 
@@ -166,8 +178,9 @@ src/
     App.tsx                Auth-Gate → Workspace; Typ `Selection`
     Workspace.tsx          Zustand, Auswahl, Sprachablauf, Hotkeys, Dialoge
     lib/                   terminals.ts, recorder.ts, errors.ts, hotkeyCapture.ts, selection.ts,
-                           monaco.ts (schlanker Monaco-Import, Theme, Sprache für Datei/Code-Zaun)
-    components/            Sidebar, CenterPane, TerminalView, CodePane, SnippetList, ProjectDialog, SettingsDialog,
+                           monaco.ts (schlanker Monaco-Import, Theme, Sprache für Datei/Code-Zaun),
+                           editorText.ts (Anhänge `@"pfad"` im Editor-Tab)
+    components/            Sidebar, CenterPane, EditorTab, TerminalView, CodePane, SnippetList, ProjectDialog, SettingsDialog,
                            VoiceSetupDialog, VoiceModels, VoiceOverlay, HotkeyInput, ProgramInput, AgentArgsHelp, Modal,
                            AgentTemplateDialog, TeamTemplateDialog, DictationButton, DictationTextarea,
                            ContextMenu, AuthGate, Icons
@@ -176,7 +189,7 @@ electron-builder.yml       Windows-Ziele, asarUnpack node-pty, nur Sprachen de/e
 
 **IPC-Muster:** Kanal `bereich:aktion` (z. B. `agents:start`) → Handler in `main/index.ts`, Methode in `preload/index.ts`,
 Typ in `DevHubApi` (`shared/types.ts`). Alle drei immer zusammen anpassen. Ereignisse Main→Renderer: `agents:data`,
-`agents:changed` (Agents + laufende Teams), `agents:startFailed`, `code:focus`, `code:snippets`, `voice:progress`, `voice:globalHotkey` (Abo liefert Abmelde-Funktion).
+`agents:changed` (Agents + laufende Teams), `agents:startFailed`, `code:focus`, `code:snippets`, `editor:opened`, `editor:append`, `voice:progress`, `voice:globalHotkey` (Abo liefert Abmelde-Funktion).
 
 ## Stand
 
@@ -186,6 +199,7 @@ Typ in `DevHubApi` (`shared/types.ts`). Alle drei immer zusammen anpassen. Ereig
 - [x] Input-Erkennung via Hooks, Hervorhebung links — **getestet**
 - [x] Code-Ansicht + MCP `show_code` — **Ende-zu-Ende getestet**
 - [x] Snippets mit Kopier-Button — Auswertung an echten Transkripten getestet, `transcript_path` im Stop-Hook per `claude -p` geprüft, Build ok; **Anzeige/Kopieren in der App noch nicht getestet**
+- [x] Strg+G-Editor-Tab — echter `AgentBridge` + echter claude per node-pty getestet (Anfangstext kommt an, neuer Text wird übernommen, Abschicken → Antwort), `@"pfad mit leerzeichen"` hängt Bilder an (`claude -p`); **Tab/Sperre/Bilder in der App-UI noch nicht getestet**
 - [x] Session-Wiederherstellung — Speichern/Neustart getestet; `--resume` mit echtem Transkript noch **nicht** getestet
 - [x] Sprachsteuerung inkl. Download-Dialog — Routing via `claude -p` getestet; **whisper-Download/Transkription + Mikrofon noch nicht getestet**
 - [x] Sprach-Kürzel in den Einstellungen änderbar — Build/Typcheck ok, **in der UI noch nicht getestet**
@@ -209,6 +223,8 @@ Typ in `DevHubApi` (`shared/types.ts`). Alle drei immer zusammen anpassen. Ereig
 - Code-Kommentare und UI-Texte auf Deutsch; Prompts/Tool-Beschreibungen für Claude auf Englisch
 
 ## Bekannte Stolpersteine
+
+- **Nur eine Instanz** (`requestSingleInstanceLock` in `main/index.ts`): zwei Instanzen würden dieselben Agents/Sessions wiederherstellen. `npm run dev` beendet sich daher sofort, wenn DevHub schon läuft → vorher das offene Fenster schließen. `electron-vite dev` lädt Main-Änderungen **nicht** neu (kein `-w`) → nach Änderungen in `src/main` App neu starten.
 
 - Pakete in `dist/` werden nicht automatisch neu gebaut → vor dem Testen neuer Funktionen mit der .exe `npm run build:unpack` ausführen (sonst läuft ein alter Stand).
 - **Kein Native-Rebuild:** `postinstall` ist nur `install-electron`. `electron-builder install-app-deps` würde node-pty aus dem Quellcode bauen und scheitert ohne C++-Buildtools; die N-API-Prebuilds funktionieren direkt in Electron. Nach fehlgeschlagenem Rebuild: `rm -rf node_modules/node-pty && npm install`.

@@ -42,6 +42,7 @@ const DEFAULT_STATE: PersistedState = {
     voiceAutoSend: true,
     hotkeyAgentVoice: DEFAULT_HOTKEYS.agentVoice,
     hotkeyGlobalVoice: DEFAULT_HOTKEYS.globalVoice,
+    hotkeyEditor: DEFAULT_HOTKEYS.editor,
     agentArgs: '',
     projectFileApp: '',
     folderApp: '',

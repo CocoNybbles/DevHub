@@ -84,7 +84,12 @@ export class TranscriptReader {
   }
 
   private async readNew(): Promise<CodeSnippet[]> {
-    const file = await open(this.path, 'r')
+    // Bei SessionStart eines neuen Agents gibt es das Transkript noch nicht
+    const file = await open(this.path, 'r').catch((e: NodeJS.ErrnoException) => {
+      if (e.code === 'ENOENT') return null
+      throw e
+    })
+    if (!file) return []
     try {
       const { size } = await file.stat()
       if (size < this.offset) this.offset = 0 // Datei neu geschrieben

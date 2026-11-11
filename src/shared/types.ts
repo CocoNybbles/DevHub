@@ -50,6 +50,8 @@ export interface Agent {
   templateId?: string
   /** Laufendes Team, zu dem der Agent gehört (Mitglieder dürfen sich Nachrichten schicken) */
   teamId?: string
+  /** Strg+G: Anweisung wird gerade im Editor-Tab geschrieben → Agent sonst gesperrt (nicht gespeichert) */
+  editing?: boolean
 }
 
 /** Mitglied einer Team-Vorlage: vordefinierter Agent oder (ohne templateId) normaler Agent. */
@@ -170,6 +172,8 @@ export interface Settings {
   hotkeyAgentVoice: string
   /** Kürzel: globaler Sprachbefehl, systemweit per globalShortcut */
   hotkeyGlobalVoice: string
+  /** Kürzel (in der App): Anweisung für den aktiven Agent im Editor-Tab schreiben */
+  hotkeyEditor: string
   /** Zusätzliche Start-Flags für alle Agents, z. B. `--permission-mode auto` (siehe shared/agentArgs.ts) */
   agentArgs: string
   /** Programm (Pfad zur .exe) für Projektdateien; leer = Windows-Standardprogramm der Dateiendung */
@@ -265,6 +269,22 @@ export interface DevHubApi {
   }
   clipboard: {
     writeText: (text: string) => Promise<void>
+  }
+  /** Strg+G im Agent → Editor-Tab in der Mitte statt externem Editor */
+  editor: {
+    /** Anfangstext eines offenen Editor-Tabs (null = keiner offen) */
+    text: (agentId: string) => Promise<string | null>
+    /** Tab schließen: text = neuer Prompt (null = unverändert), submit = danach abschicken */
+    finish: (agentId: string, text: string | null, submit: boolean) => Promise<void>
+    /** Bild (z. B. aus der Zwischenablage) speichern → Dateipfad */
+    saveImage: (agentId: string, ext: string, data: ArrayBuffer) => Promise<string>
+    pickFiles: () => Promise<string[]>
+    /** data:-URL für die Vorschau oder null (kein Bild / zu groß) */
+    imagePreview: (path: string) => Promise<string | null>
+    /** Pfad einer per Drag & Drop abgelegten Datei */
+    pathForFile: (file: File) => string
+    onOpened: (cb: (agentId: string, text: string) => void) => Unsubscribe
+    onAppend: (cb: (agentId: string, text: string) => void) => Unsubscribe
   }
   voice: {
     status: () => Promise<VoiceStatus>
