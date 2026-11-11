@@ -74,7 +74,7 @@ Lokale Windows-Desktop-App zum Verwalten von Projekten und den darin laufenden K
 ## Tech-Stack
 
 - **Electron + TypeScript** (entschieden 2026-11-10: am stabilsten, einfach zu verteilen)
-- Build: electron-vite (Vite 8), Electron 44, electron-builder 26 — nur Windows, **nur portable .exe — bewusst kein Installer** (Deinstallieren = Ordner löschen, Daten liegen in `data\` daneben)
+- Build: electron-vite (Vite 8), Electron 44, electron-builder 26 — nur Windows, **Programmordner als ZIP (Ziel `zip`) — bewusst kein Installer und kein `portable`-Ziel** (Deinstallieren = Ordner löschen, Daten liegen in `data\` daneben; `portable` entpackt bei jedem Start ~100 MB nach `%TEMP%` → langsamer Start). `build/LIESMICH.txt` liegt per `extraFiles` neben der .exe
 - UI: React 19, reines CSS (`assets/main.css` = Variablen/Basis, `assets/components.css` = Komponenten), Dark Theme
 - Terminal: `@xterm/xterm` 6 + `@xterm/addon-fit` (Renderer), `node-pty` 1.1 (Main, ConPTY, N-API-Prebuilds)
 - Code-Ansicht: `monaco-editor` 0.57, **schlanker Import** (`monaco-editor/editor/editor.api` + `basic-languages/monaco.contribution` + nur `editor.worker`)
@@ -133,7 +133,7 @@ Lokale Windows-Desktop-App zum Verwalten von Projekten und den darin laufenden K
 - global (Standard `Strg+Alt+Leertaste` per `globalShortcut` / Mikrofon links): `voice:command` → `claude -p --model haiku --output-format json --tools "" --strict-mcp-config --no-session-persistence` (Prompt via stdin) liefert JSON `send` | `start` (+ optional `model`: Alias `fable`/`opus`/`sonnet`/`haiku`, bei genannter Version voller Name wie `claude-opus-5-5`) | `none`
 - **Kürzel einstellbar** (Einstellungen → `HotkeyInput`): gespeichert als Electron-Accelerator in `settings.hotkeyAgentVoice` / `hotkeyGlobalVoice` / `hotkeyEditor` (alle drei müssen verschieden sein, prüft Main). `shared/hotkeys.ts` übersetzt Tastendrücke (layoutunabhängig über `KeyboardEvent.code`) und formatiert die Anzeige. Main registriert das globale Kürzel neu (`registerGlobalHotkey`; belegt → altes zurück + Fehler im Dialog); während der Aufnahme wird es per `settings:suspendGlobalHotkey` freigegeben. Agent- und Editor-Kürzel lässt das Terminal per `setAppHotkeys()` durch.
 
-**Datenordner** (`main/dataPath.ts`, erster Import in `index.ts`): **alle Daten neben der .exe** in `<exe-Ordner>\data\` (`app.setPath('userData')` vor `ready`, also auch Chromium-Cache). Portable: `PORTABLE_EXECUTABLE_DIR` (nicht der Entpack-Ordner in `%TEMP%`); Entwicklung: `<Projekt>\data\` (gitignored). Nicht beschreibbar → Fehlermeldung + Beenden. Einmalige Übernahme von `devhub-state.json` + `whisper\` aus dem alten `%APPDATA%\DevHub`. Im Folgenden `<data>`.
+**Datenordner** (`main/dataPath.ts`, erster Import in `index.ts`): **alle Daten neben der .exe** in `<exe-Ordner>\data\` (`app.setPath('userData')` vor `ready`, also auch Chromium-Cache). Ordner der .exe (`PORTABLE_EXECUTABLE_DIR` nur, falls je wieder ein `portable`-Build läuft); Entwicklung: `<Projekt>\data\` (gitignored). Nicht beschreibbar → Fehlermeldung + Beenden. Einmalige Übernahme von `devhub-state.json` + `whisper\` aus dem alten `%APPDATA%\DevHub`. Im Folgenden `<data>`.
 
 **Persistenz** (`main/store.ts`): `<data>\devhub-state.json` (Projekte, laufende Agents, Einstellungen, `view` = zuletzt gezeigte Ansicht), atomar geschrieben.
 
@@ -141,14 +141,14 @@ Lokale Windows-Desktop-App zum Verwalten von Projekten und den darin laufenden K
 
 ## Befehle
 
-| Zweck                                                        | Befehl                            |
-| ------------------------------------------------------------ | --------------------------------- |
-| Entwicklung (Hot Reload)                                     | `npm run dev`                     |
-| Typprüfung                                                   | `npm run typecheck`               |
-| Lint / Format                                                | `npm run lint` / `npm run format` |
-| Build (Typcheck + Bundle nach `out/`)                        | `npm run build`                   |
-| Entpacktes Paket zum Testen (`dist/win-unpacked/DevHub.exe`) | `npm run build:unpack`            |
-| Portable .exe nach `dist/`                                   | `npm run build:win`               |
+| Zweck                                                         | Befehl                            |
+| ------------------------------------------------------------- | --------------------------------- |
+| Entwicklung (Hot Reload)                                      | `npm run dev`                     |
+| Typprüfung                                                    | `npm run typecheck`               |
+| Lint / Format                                                 | `npm run lint` / `npm run format` |
+| Build (Typcheck + Bundle nach `out/`)                         | `npm run build`                   |
+| Entpacktes Paket zum Testen (`dist/win-unpacked/DevHub.exe`)  | `npm run build:unpack`            |
+| ZIP des Programmordners nach `dist/` (`DevHub-<ver>-win.zip`) | `npm run build:win`               |
 
 **Debug-Umgebungsvariablen**
 
@@ -214,9 +214,9 @@ Typ in `DevHubApi` (`shared/types.ts`). Alle drei immer zusammen anpassen. Ereig
 - [x] Gemerkte Sprache für schnellere Erkennung — Ablauf mit TTS-Dateien (de/en) per Skript getestet, **in der App noch nicht getestet**
 - [x] Spracherkennung im Hintergrund + Auto-Abschicken pro Agent — Build/Lint ok, whisper mit niedriger Priorität getestet (Datei-Test); **Mikrofon/UI noch nicht getestet**
 - [x] Automatische `.sln`-Suche beim Projekt-Anlegen — Suche getestet, **in der UI noch nicht getestet**
-- [x] Paketierung (`build:unpack`) getestet: entpackt ~338 MB (App selbst ~17 MB, Rest Electron)
+- [x] Paketierung (`build:unpack`) getestet: `app.asar` ~8 MB, ZIP ~147 MB (Rest Electron), Start aus dem entpackten Ordner ≈1,3 s
 - [x] Initialer Git-Commit (nach Durchsicht durch den Nutzer)
-- Verteilung an Tester: `npm run build:win` → portable .exe + `LIESMICH.txt` als ZIP (in `dist/`, nicht versioniert)
+- Verteilung an Tester: `npm run build:win` → `dist/DevHub-<ver>-win.zip` (enthält `LIESMICH.txt`) weitergeben
 
 ## Konventionen
 
@@ -232,6 +232,7 @@ Typ in `DevHubApi` (`shared/types.ts`). Alle drei immer zusammen anpassen. Ereig
 - **Kein Native-Rebuild:** `postinstall` ist nur `install-electron`. `electron-builder install-app-deps` würde node-pty aus dem Quellcode bauen und scheitert ohne C++-Buildtools; die N-API-Prebuilds funktionieren direkt in Electron. Nach fehlgeschlagenem Rebuild: `rm -rf node_modules/node-pty && npm install`.
 - Keinen Installer (NSIS o. ä.) wieder einführen: Er würde beim Deinstallieren/Aktualisieren `data\` mitlöschen, und unter „Programme“ fehlen Schreibrechte.
 - node-pty muss in `asarUnpack` stehen (DLLs/OpenConsole.exe nicht aus asar ladbar).
+- `data\` im Projektordner (Entwicklungs-Datenordner) muss in `electron-builder.yml` unter `files` ausgeschlossen bleiben (`!data{,/**}`): sonst landen Chromium-Caches, whisper-Modell und der eigene Zustand in `app.asar` (war 270 MB statt ~8 MB → deutlich langsamerer Start).
 - Wird DevHub aus einem Claude-Terminal gestartet, erben Agents sonst `CLAUDE_CODE_CHILD_SESSION` usw. → „Transcript saving is off“ → keine Wiederherstellung. Immer `claudeEnv()` für Claude-Prozesse nutzen.
 - Hooks: `curl.exe` mit `.exe` (in PowerShell 5.1 ist `curl` ein Alias). Kein `|| exit 0` (Syntaxfehler in PS 5.1); Fehlercodes ≠ 2 blockieren nicht.
 - Monaco 0.57 hat eine Export-Map: Pfade ohne `esm/vs/` (z. B. `monaco-editor/editor/editor.worker?worker`). Voller `monaco-editor`-Import bündelt ~15 MB Sprach-Worker.

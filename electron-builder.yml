@@ -9,16 +9,23 @@ files:
   - '!{.eslintcache,eslint.config.mjs,.prettierignore,.prettierrc.yaml,dev-app-update.yml,CHANGELOG.md,README.md,CLAUDE.md}'
   - '!{.env,.env.*,.npmrc,pnpm-lock.yaml}'
   - '!{tsconfig.json,tsconfig.node.json,tsconfig.web.json}'
+  # Entwicklungs-Datenordner (Caches, whisper-Modell, eigener Zustand) nie mitpacken
+  - '!data{,/**}'
+  - '!{dist,build,.claude}{,/**}'
 asarUnpack:
   - resources/**
   - node_modules/node-pty/**
 electronLanguages:
   - de
   - en-US
+# Programmordner als ZIP (auspacken, DevHub.exe starten): startet sofort, weil nichts
+# bei jedem Start nach %TEMP% entpackt wird (anders als das portable-Ziel)
 win:
   executableName: DevHub
   target:
-    - portable
-portable:
-  artifactName: ${productName}-${version}-portable.${ext}
+    - zip
+  artifactName: ${productName}-${version}-win.${ext}
+extraFiles:
+  - from: build/LIESMICH.txt
+    to: LIESMICH.txt
 npmRebuild: false

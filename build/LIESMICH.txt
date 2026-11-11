@@ -1,0 +1,41 @@
+DevHub – Testversion
+====================
+
+Voraussetzungen
+---------------
+- Windows 10/11 (64 Bit)
+- Claude Code installiert und angemeldet
+  (https://claude.com/claude-code – nach der Installation einmal "claude" im Terminal starten und anmelden)
+- Optional: Visual Studio / VS Code zum Öffnen der Projekte
+- Optional: Mikrofon für die Sprachsteuerung
+
+Start
+-----
+ZIP in einen beschreibbaren Ordner entpacken (z. B. C:\Tools\DevHub, nicht unter "Programme")
+und DevHub.exe starten – keine Installation nötig.
+Windows zeigt beim ersten Start evtl. "Der Computer wurde durch Windows geschützt"
+(die Datei ist nicht signiert): "Weitere Informationen" -> "Trotzdem ausführen".
+
+Erste Schritte
+--------------
+1. Links oben "+" -> Projekt anlegen, oder daneben "Importieren" für mehrere Projekte auf einmal
+2. Play-Button neben dem Projekt -> neuer Agent startet im Terminal
+3. Rechtsklick auf einen Agent -> umbenennen; X -> beenden
+4. Klick auf das Projekt -> alle Agents im Raster
+5. Findet ein Agent eine relevante Code-Stelle, erscheint sie rechts hervorgehoben
+6. Sprachsteuerung (Mikrofon-Buttons / Strg+Shift+Leertaste bzw. Strg+Alt+Leertaste):
+   beim ersten Mal wird ein Sprachmodell heruntergeladen (Auswahl im Dialog)
+   Kürzel lassen sich unter Einstellungen (Zahnrad) ändern
+
+Gut zu wissen
+-------------
+- Beim Schließen laufende Agents werden beim nächsten Start wiederhergestellt
+- Daten/Einstellungen liegen im Ordner "data" neben DevHub.exe
+  (zum Zurücksetzen "data" löschen, zum Deinstallieren den ganzen Ordner)
+- Update: neue Version über den alten Ordner entpacken, "data" bleibt erhalten
+
+Bitte besonders testen
+----------------------
+- Sprachsteuerung: Modell-Download, Aufnahme, Erkennung (Deutsch/Englisch)
+- Wiederherstellung: App mit laufendem Agent (der schon etwas gemacht hat) schließen und neu starten
+- Systemweites Kürzel Strg+Alt+Leertaste, während DevHub im Hintergrund ist
