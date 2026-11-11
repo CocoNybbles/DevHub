@@ -12,12 +12,17 @@ Lokale Windows-Desktop-App zum Verwalten von Projekten und den darin laufenden K
 ### Anforderungen
 
 **Projekte**
+
 - Projekte (Ordner) registrieren, je Projekt 3 Pfade:
   1. Agent-Pfad: Arbeitsverzeichnis, in dem Claude / andere KI-Coding-Engines gestartet werden
   2. Projektdatei: `.sln` / Projektdatei, öffnbar z. B. mit Visual Studio — wird nach Wahl des Agent-Ordners automatisch gesucht (`findSolution` in `main/tools.ts`: `.sln`/`.slnx`, bis 3 Ebenen tief, flachste zuerst, Name = Ordnername bevorzugt; überschreibt nie eine von Hand gesetzte Datei)
-  3. VS-Code-Ordner: nur konfigurierbar, wenn VS Code installiert ist
+     Öffnen mit: `project.projectFileApp` → global `settings.projectFileApp` → Windows-Standardprogramm (`shell.openPath`). Icon neutral (`OpenFileIcon`), nicht VS-spezifisch.
+  3. Ordner (`folderPath`, früher `vscodePath` – `getState()` übernimmt alte Stände): immer konfigurierbar. Öffnen mit: `project.folderApp` → global `settings.folderApp` → VS Code (falls installiert) → Windows-Explorer
+  - Programme = absoluter Pfad zu `.exe`/`.cmd`/`.bat` (`validateProgram`/`openWithProgram` in `main/tools.ts`, losgelöst gestartet, cwd = Ordner bzw. Ordner der Datei), Eingabe per `ProgramInput`, Einstellungen-Abschnitt „Öffnen mit“
+  - Ausnahme: „In VS Code öffnen“ in der Code-Ansicht (`code:openInVSCode`, springt zur Zeile) bleibt VS-Code-spezifisch
 
 **Layout**
+
 - Links: Liste aller Projekte mit ihren Agents
   - Kleiner Button neben dem Projektnamen startet einen neuen Agent
   - Agents heißen standardmäßig „Agent 1“, „Agent 2“, … — Rechtsklick-Menü: Umbenennen, Beenden, Sprachtext abschicken/eintragen (pro Agent)
@@ -31,14 +36,32 @@ Lokale Windows-Desktop-App zum Verwalten von Projekten und den darin laufenden K
   - Spalte wird **nur eingeblendet, solange eine Datei angezeigt wird** (Fokus für den aktiven Agent / das ausgewählte Projekt), sonst nimmt das Terminal die Breite ein (`.layout.with-code`)
 
 **Sitzungen**
+
 - Beim Beenden der App laufende Agents werden beim nächsten Start mit ihrer Session wiederhergestellt
 
 **Sprachsteuerung**
+
 - Button + Hotkey: Sprach-Anweisung an den aktiven Agent
 - Globaler Button + Hotkey: Agent per Name ansprechen; ebenso per Sprache einen neuen Agent für ein Projekt mit Aufgabe starten
 - Interpretation der Sprachbefehle über eine eigene Claude-Instanz mit dem lokal vorhandenen Account
 
+**Vordefinierte Agents (Vorlagen)**
+
+- Einstellungen → „Vordefinierte Agents“: Name (eindeutig, nicht „Agent N“, endet nicht auf Zahl), Modell (optional), Rolle/Richtlinien (Textfeld mit Diktat-Button `DictationButton`)
+- Start: ▶ am Projekt bzw. Rechtsklick (Auswahl normal/Vorlage) oder per Sprache („Starte einen Entwickler für DevHub …“); Agent heißt wie die Vorlage („Entwickler“, „Entwickler 2“ …) → per Name ansprechbar
+- Modell: per Sprache genannt > Vorlage > Start-Flags. Richtlinien werden an `--append-system-prompt` angehängt (`systemPrompt()` in `agents.ts`). Agent speichert nur `templateId`; Vorlage wird bei jedem Start frisch gelesen (gelöschte Vorlage → Start ohne Richtlinien). Vorlage, die in einem Team steckt, kann nicht gelöscht werden
+
+**Teams**
+
+- Team-Vorlagen (`TeamTemplate`, Einstellungen → „Teams“, `TeamTemplateDialog`): Name (nicht „Team N“), 2–8 Mitglieder (vordefinierte oder normale Agents, Reihenfolge änderbar), gemeinsame Richtlinien (`DictationTextarea`)
+- Laufendes Team (`Team`, `state.teams`): aus Vorlage oder **temporär** per Sprache („Starte einen Entwickler und einen Reviewer als Team für …“, Name sonst „Team N“). Agents tragen `teamId`; Team verschwindet mit dem letzten Mitglied (`removeEmptyTeams`)
+- `AgentManager.startTeam`: erst alle Agents speichern (Namen + Teamkollegen fest, `createdAt` fortlaufend → Reihenfolge eindeutig), dann starten. **Erstes Mitglied leitet** und bekommt die Aufgabe; System-Prompt (`teamContext`) erklärt Rolle, Kollegen, Team-Richtlinien
+- Kommunikation: MCP-Tools `team_members` + `send_team_message(to|"all", message)` nur für Teammitglieder (Bridge fragt `tools(agentId)`), nur innerhalb des Teams. Zustellung = `sendLine` ins Terminal des Empfängers mit Präfix `[Team message from X]`; vor erster Ausgabe gepuffert (`pending`), nicht bei offener `AskUserQuestion`
+- Links: Teamkopf (Icon, „temporär“, Anzahl, ✕ = Team beenden) mit eingerückten Mitgliedern; Klick = Raster (`kind: 'agents'`), Strg+Klick = hinzufügen/entfernen (`toggleAgents`)
+- Sprache: `start_team` (Vorlage oder `members`-Liste) · laufendes Team per Name ansprechen → geht an die Leitung
+
 **Start-Prüfung**
+
 - Beim App-Start prüfen, ob Claude Code installiert und eingeloggt ist; ist die Anmeldung abgelaufen, muss der Nutzer sich zuerst neu anmelden
 
 ## Tech-Stack
@@ -58,46 +81,54 @@ Lokale Windows-Desktop-App zum Verwalten von Projekten und den darin laufenden K
 
 **Agent-Start** (`main/agents.ts`): `claude.exe` direkt per node-pty im Agent-Ordner (bei `.cmd`-Installation via `cmd.exe /c`, Sonderzeichen werden entfernt):
 `claude [Nutzer-Flags]  --session-id <uuid> | --resume <uuid>  --settings <agent>/settings.json  --mcp-config <agent>/mcp.json  --append-system-prompt <Hinweis> [Aufgabe]`
-- **Nutzer-Flags** (`shared/agentArgs.ts`): global `settings.agentArgs` + pro Projekt `project.agentArgs`, Text wie in einer Shell (Quotes, Backslashes bleiben). `mergeAgentArgs(global, projekt, agent)`: gleichnamiges Flag einer höheren Ebene ersetzt das niedrigere; Ebene „agent“ = `agent.model` → `--model` (per Sprachbefehl genannt, persistiert, gilt auch bei Wiederherstellung; geprüft mit `isValidModelName`). Stehen **vor** den DevHub-Flags (beendet variadische Werte, Aufgabe bleibt positional). `validateAgentArgs` (Dialoge live + Main beim Speichern) lehnt freien Text und reservierte Flags ab (`--session-id`, `--resume`/`-r`, `--continue`/`-c`, `--fork-session`, `--no-session-persistence`, `--settings`, `--mcp-config`, `--append-system-prompt`, `--print`/`-p`, `--help`, `--version`). Unbekannte Flags prüft erst claude selbst → Startfehler (s. u.).
+
+- **Nutzer-Flags** (`shared/agentArgs.ts`): global `settings.agentArgs` + pro Projekt `project.agentArgs`, Text wie in einer Shell (Quotes, Backslashes bleiben). `mergeAgentArgs(global, projekt, agent)`: gleichnamiges Flag einer höheren Ebene ersetzt das niedrigere; Ebene „agent“ = `agent.model` (per Sprachbefehl genannt, persistiert) oder sonst Modell der Vorlage → `--model` (gilt auch bei Wiederherstellung; geprüft mit `isValidModelName`). Stehen **vor** den DevHub-Flags (beendet variadische Werte, Aufgabe bleibt positional). `validateAgentArgs` (Dialoge live + Main beim Speichern) lehnt freien Text und reservierte Flags ab (`--session-id`, `--resume`/`-r`, `--continue`/`-c`, `--fork-session`, `--no-session-persistence`, `--settings`, `--mcp-config`, `--append-system-prompt`, `--print`/`-p`, `--help`, `--version`). Unbekannte Flags prüft erst claude selbst → Startfehler (s. u.).
 - `--resume` nur, wenn `~/.claude/projects/*/<sessionId>.jsonl` existiert, sonst `--session-id` (gleiche ID)
 - Pro-Agent-Dateien in `%APPDATA%\DevHub\agents\<agentId>\` (bei jedem Start neu geschrieben, da Port/Token wechseln)
 - Env ohne Session-Marker einer übergeordneten Claude-Instanz (`claudeEnv()` in `main/tools.ts`)
 
 **Rückkanal Agent → App** (`main/agentBridge.ts`): HTTP-Server auf `127.0.0.1:<zufälliger Port>` mit Zufalls-Token
+
 - `POST /hook/<token>/<agentId>`: Hooks posten ihr JSON per `curl.exe … --data-binary @-`
   Status: `SessionStart`→idle · `UserPromptSubmit`/`PreToolUse`/`PostToolUse`→working · `PreToolUse(AskUserQuestion)`/`Notification`/`Stop`→**needsInput** (links hervorgehoben)
-- `POST /mcp/<token>/<agentId>`: minimaler MCP-Server (Streamable HTTP, nur JSON-Antworten) mit Tool `show_code(file_path, start_line, end_line?, note?)` → Event `code:focus` → Monaco rechts. Tool ist per `permissions.allow` freigegeben.
+- `POST /mcp/<token>/<agentId>`: minimaler MCP-Server (Streamable HTTP, nur JSON-Antworten) mit Tool `show_code(file_path, start_line, end_line?, note?)` → Event `code:focus` → Monaco rechts; für Teammitglieder zusätzlich `team_members`/`send_team_message` (s. Teams). Tools sind per `permissions.allow` freigegeben.
 
 **Agent-Lebenszyklus**
+
 - Namen: kleinste freie Nummer **global** („Agent N“) → eindeutig für Sprachbefehle
 - Prozess endet (`/exit` oder ✕ in der Liste) → Agent aus Zustand entfernt, Ansicht schließt sich
 - Startfehler: endet ein Agent < 8 s nach Start mit Exit-Code ≠ 0 (nicht per ✕), meldet Main `agents:startFailed` mit den letzten Ausgabezeilen (ohne ANSI) → Toast
 - App wird beendet (`before-quit`) → Prozesse gestoppt, Agents bleiben gespeichert → beim nächsten Start `agents:restore` (einmal pro App-Start)
+- Wartezustand überlebt Neustarts: `setStatus` speichert `needsInput` (Hinweistext) am gespeicherten Agent; Wiederherstellung startet mit diesem Status, `SessionStart` mit `source: "resume"` setzt ihn nicht auf idle zurück (erst `UserPromptSubmit`/Tool-Hooks)
 
 **Terminals im Renderer** (`lib/terminals.ts`): ein xterm pro Agent, lebt unabhängig von React und sammelt Ausgabe auch unsichtbar; `attachTerminal()` hängt das DOM-Element in Einzelansicht oder Rasterzelle. Main hält zusätzlich 200 KB Ausgabe-Puffer (`agents:buffer`) für Renderer-Reloads.
 
 **Sprachsteuerung**: Renderer nimmt WAV auf (`lib/recorder.ts`, 16 kHz mono) → `voice:transcribe` (whisper-cli, Priorität „niedriger als normal“, Threads = halbe Kerne) →
-- **Sprache merken** (`settings.voiceRememberLanguage`, Standard an; gemerkt in `settings.voiceLanguage`): zuerst `-l <gemerkt>` (≈1,5 s statt ≈3 s mit `auto`). Auswertung per `-ojf` (JSON: Sprache + Token-Wahrscheinlichkeit `p`). Leeres Ergebnis oder Ø p < 0,6 → zweiter Lauf mit `auto`, dessen Sprache gespeichert wird. Zusätzlich jede 5. Aufnahme `auto`, weil whisper bei erzwungenem `en` andere Sprachen unauffällig ins Englische übersetzt (p bleibt hoch); erzwungenes `de` bei englischer Sprache ergibt dagegen p ≈ 0,5.
+
+- **Sprache merken** (`settings.voiceRememberLanguage`, Standard an; gemerkt in `settings.voiceLanguage`): zuerst `-l <gemerkt>` (≈1,5 s statt ≈3 s mit `auto`). Auswertung per `-ojf` (JSON: Sprache + Token-Wahrscheinlichkeit `p`). Leeres Ergebnis oder Ø p < 0,6 → zweiter Lauf mit `auto`, dessen Sprache gespeichert wird. Zusätzlich jede 5. Aufnahme `auto`, weil whisper bei erzwungenem `en` andere Sprachen unauffällig ins Englische übersetzt (p bleibt hoch); erzwungenes `de` bei englischer Sprache ergibt dagegen p ≈ 0,5. Die Job-Karte zeigt die gemerkte Sprache vorab (`[DE] Wandle in Text um …`), ohne gemerkte Sprache „Erkenne Sprache und Text …“; nach einem `auto`-Lauf lädt der Renderer die Einstellungen neu.
 - **Hintergrund:** „Fertig“ beendet nur die Aufnahme; Erkennung/Zuordnung laufen als `VoiceJob` weiter (Karten unten in der Mitte, mehrere gleichzeitig), neue Aufnahmen sind sofort möglich. Overlay lässt Klicks durch (`.voice-stack` mit `pointer-events: none`).
 - **Abschicken oder nur eintragen:** `agents:sendVoice` entscheidet im Main: `agent.voiceAutoSend` (pro Agent, Rechtsklick-Menü, persistiert) → sonst global `settings.voiceAutoSend`. Gilt auch für globale Befehle (`send`).
 - aktiver Agent (Standard `Strg+Shift+Leertaste` / Mikrofon in der Mitte): Text an Agent (`sendLine` = Text, 150 ms, Enter)
 - global (Standard `Strg+Alt+Leertaste` per `globalShortcut` / Mikrofon links): `voice:command` → `claude -p --model haiku --output-format json --tools "" --strict-mcp-config --no-session-persistence` (Prompt via stdin) liefert JSON `send` | `start` (+ optional `model`: Alias `fable`/`opus`/`sonnet`/`haiku`, bei genannter Version voller Name wie `claude-opus-5-5`) | `none`
 - **Kürzel einstellbar** (Einstellungen → `HotkeyInput`): gespeichert als Electron-Accelerator in `settings.hotkeyAgentVoice` / `hotkeyGlobalVoice`. `shared/hotkeys.ts` übersetzt Tastendrücke (layoutunabhängig über `KeyboardEvent.code`) und formatiert die Anzeige. Main registriert das globale Kürzel neu (`registerGlobalHotkey`; belegt → altes zurück + Fehler im Dialog); während der Aufnahme wird es per `settings:suspendGlobalHotkey` freigegeben. Das Agent-Kürzel lässt das Terminal per `setAppHotkeys()` durch.
 
-**Persistenz** (`main/store.ts`): `%APPDATA%\DevHub\devhub-state.json` (Projekte, laufende Agents, Einstellungen), atomar geschrieben.
+**Persistenz** (`main/store.ts`): `%APPDATA%\DevHub\devhub-state.json` (Projekte, laufende Agents, Einstellungen, `view` = zuletzt gezeigte Ansicht), atomar geschrieben.
+
+- Ansicht (`Selection` in `shared/types.ts`): Renderer speichert jede Änderung per `view:set` (erst nachdem `view:get` beim Start geladen wurde, Ref `viewLoaded`); beim Start `savedView` → sonst erstes Projekt mit Agents. Nicht mehr laufende Agents filtert `selection` (useMemo) heraus → `agents` vor der Auswahl setzen.
 
 ## Befehle
 
-| Zweck | Befehl |
-|-------|--------|
-| Entwicklung (Hot Reload) | `npm run dev` |
-| Typprüfung | `npm run typecheck` |
-| Lint / Format | `npm run lint` / `npm run format` |
-| Build (Typcheck + Bundle nach `out/`) | `npm run build` |
-| Entpacktes Paket zum Testen (`dist/win-unpacked/DevHub.exe`) | `npm run build:unpack` |
-| Installer + portable .exe nach `dist/` | `npm run build:win` |
+| Zweck                                                        | Befehl                            |
+| ------------------------------------------------------------ | --------------------------------- |
+| Entwicklung (Hot Reload)                                     | `npm run dev`                     |
+| Typprüfung                                                   | `npm run typecheck`               |
+| Lint / Format                                                | `npm run lint` / `npm run format` |
+| Build (Typcheck + Bundle nach `out/`)                        | `npm run build`                   |
+| Entpacktes Paket zum Testen (`dist/win-unpacked/DevHub.exe`) | `npm run build:unpack`            |
+| Installer + portable .exe nach `dist/`                       | `npm run build:win`               |
 
 **Debug-Umgebungsvariablen**
+
 - `DEVHUB_DEBUG=1`: loggt Agent-Starts, Hook-Ereignisse und MCP-Aufrufe in die Konsole
 - `DEVHUB_SCREENSHOT=<pfad.png>` (+ `DEVHUB_SCREENSHOT_DELAY=<ms>`, Standard 8000): speichert ein Fensterbild und loggt den DOM-Zustand (Agent-Zeilen, Code-Notiz)
 
@@ -113,29 +144,31 @@ src/
     agents.ts              AgentManager: node-pty, Start/Stop/Rename/Restore, Hook-Status, show_code
     agentBridge.ts         Lokaler HTTP-Server: Hooks + MCP (show_code)
     store.ts               JSON-Persistenz, dataDir()
-    tools.ts               claude/VS-Code-Erkennung, claudeEnv(), openInVSCode()
+    tools.ts               claude/VS-Code-Erkennung, claudeEnv(), openInVSCode(), openWithProgram()
     claudeAuth.ts          `claude auth status --json`, Login-Konsole
     voice.ts               whisper.cpp-Download/Transkription, Modellverwaltung
     voiceCommands.ts       Globale Sprachbefehle via `claude -p`
+    voicePrompt.ts         Router-Prompt (rein, per esbuild-Skript mit echtem claude testbar)
   preload/index.ts         window.api (contextBridge)
   renderer/src/
     App.tsx                Auth-Gate → Workspace; Typ `Selection`
     Workspace.tsx          Zustand, Auswahl, Sprachablauf, Hotkeys, Dialoge
     lib/                   terminals.ts, recorder.ts, errors.ts, hotkeyCapture.ts, selection.ts
     components/            Sidebar, CenterPane, TerminalView, CodePane, ProjectDialog, SettingsDialog,
-                           VoiceSetupDialog, VoiceModels, VoiceOverlay, HotkeyInput, AgentArgsHelp, Modal,
+                           VoiceSetupDialog, VoiceModels, VoiceOverlay, HotkeyInput, ProgramInput, AgentArgsHelp, Modal,
+                           AgentTemplateDialog, TeamTemplateDialog, DictationButton, DictationTextarea,
                            ContextMenu, AuthGate, Icons
 electron-builder.yml       Windows-Ziele, asarUnpack node-pty, nur Sprachen de/en-US
 ```
 
 **IPC-Muster:** Kanal `bereich:aktion` (z. B. `agents:start`) → Handler in `main/index.ts`, Methode in `preload/index.ts`,
 Typ in `DevHubApi` (`shared/types.ts`). Alle drei immer zusammen anpassen. Ereignisse Main→Renderer: `agents:data`,
-`agents:changed`, `agents:startFailed`, `code:focus`, `voice:progress`, `voice:globalHotkey` (Abo liefert Abmelde-Funktion).
+`agents:changed` (Agents + laufende Teams), `agents:startFailed`, `code:focus`, `voice:progress`, `voice:globalHotkey` (Abo liefert Abmelde-Funktion).
 
 ## Stand
 
 - [x] Login-Prüfung beim Start (blockiert App bis eingeloggt)
-- [x] Projekte anlegen/bearbeiten/entfernen (3 Pfade, VS-Code-Pfad nur wenn VS Code installiert), Projektdatei / VS Code öffnen
+- [x] Projekte anlegen/bearbeiten/entfernen (3 Pfade), Projektdatei / Ordner öffnen mit wählbarem Programm (global + pro Projekt; Start mit Leerzeichen-Pfaden getestet, **Dialoge in der UI noch nicht getestet**)
 - [x] Agents starten/umbenennen (Rechtsklick)/beenden, Terminal, Raster-Ansicht, Selbstbeendigung schließt Ansicht
 - [x] Input-Erkennung via Hooks, Hervorhebung links — **getestet**
 - [x] Code-Ansicht + MCP `show_code` — **Ende-zu-Ende getestet**
@@ -144,6 +177,8 @@ Typ in `DevHubApi` (`shared/types.ts`). Alle drei immer zusammen anpassen. Ereig
 - [x] Sprach-Kürzel in den Einstellungen änderbar — Build/Typcheck ok, **in der UI noch nicht getestet**
 - [x] Start-Flags global + pro Projekt — Parser getestet, claude-Verhalten per PTY geprüft (unbekanntes Flag → Exit 1, `--enable-auto-mode` ist gültig, aber undokumentiert); **in der UI noch nicht getestet**
 - [x] Freies Raster per Strg+Klick — Auswahl-Logik per Skript getestet, **in der UI noch nicht getestet**
+- [x] Teams (fest + temporär per Sprache, Kommunikation per MCP) — Router mit echtem `claude -p` getestet (6 Fälle: Team-Vorlage, Ad-hoc-Team mit Aufgabe/Name/„zwei Entwickler“/normale Agents, Einzelstart bleibt `start`, Team ansprechen → Leitung); Team-Tools über den echten Bridge von `claude -p` aufgerufen; **Zustellung zwischen laufenden Agents und UI in der App noch nicht getestet**
+- [x] Vordefinierte Agents (Vorlagen) — Router mit echtem `claude -p` getestet (7 Fälle: Vorlage de/en, verhörter Name, Modell aus Sprache, laufender Agent wird angesprochen statt neu gestartet), mehrzeilige Richtlinien per node-pty an claude getestet; **UI/Diktat in der App noch nicht getestet**
 - [x] Modell per Sprachbefehl („Starte mit Opus einen Agent für …“) — Router-Prompt mit echtem `claude -p` getestet (de/en, „Sonett“, Version), Flag-Zusammenführung getestet; **Agent-Start in der App noch nicht getestet**
 - [x] Gemerkte Sprache für schnellere Erkennung — Ablauf mit TTS-Dateien (de/en) per Skript getestet, **in der App noch nicht getestet**
 - [x] Spracherkennung im Hintergrund + Auto-Abschicken pro Agent — Build/Lint ok, whisper mit niedriger Priorität getestet (Datei-Test); **Mikrofon/UI noch nicht getestet**
@@ -160,11 +195,13 @@ Typ in `DevHubApi` (`shared/types.ts`). Alle drei immer zusammen anpassen. Ereig
 
 ## Bekannte Stolpersteine
 
+- Pakete in `dist/` werden nicht automatisch neu gebaut → vor dem Testen neuer Funktionen mit der .exe `npm run build:unpack` ausführen (sonst läuft ein alter Stand).
 - **Kein Native-Rebuild:** `postinstall` ist nur `install-electron`. `electron-builder install-app-deps` würde node-pty aus dem Quellcode bauen und scheitert ohne C++-Buildtools; die N-API-Prebuilds funktionieren direkt in Electron. Nach fehlgeschlagenem Rebuild: `rm -rf node_modules/node-pty && npm install`.
 - node-pty muss in `asarUnpack` stehen (DLLs/OpenConsole.exe nicht aus asar ladbar).
 - Wird DevHub aus einem Claude-Terminal gestartet, erben Agents sonst `CLAUDE_CODE_CHILD_SESSION` usw. → „Transcript saving is off“ → keine Wiederherstellung. Immer `claudeEnv()` für Claude-Prozesse nutzen.
 - Hooks: `curl.exe` mit `.exe` (in PowerShell 5.1 ist `curl` ein Alias). Kein `|| exit 0` (Syntaxfehler in PS 5.1); Fehlercodes ≠ 2 blockieren nicht.
 - Monaco 0.57 hat eine Export-Map: Pfade ohne `esm/vs/` (z. B. `monaco-editor/editor/editor.worker?worker`). Voller `monaco-editor`-Import bündelt ~15 MB Sprach-Worker.
+- `.cmd`/`.bat` mit Leerzeichen im Pfad: `cmd.exe /d /s /c ""prog" "arg""` + `windowsVerbatimArguments: true` (Node-Standard-Quoting bricht bei `cmd /c`).
 - `claude` mit `exec` + Kommando-String aufrufen (nicht `execFile` + `shell: true` → DEP0190). Nur feste Argumente.
 - Lint `react-refresh/only-export-components`: Komponenten-Dateien exportieren nur Komponenten → geteilten Zustand/Funktionen nach `lib/` auslagern (z. B. `hotkeyCapture.ts`).
 - Lint `react-hooks/set-state-in-effect`: kein synchrones `setState` in `useEffect` — Zustand ableiten (`useMemo`, siehe `selection` in Workspace) oder im `.then()` setzen.

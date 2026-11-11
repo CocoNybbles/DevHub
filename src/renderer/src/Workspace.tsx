@@ -1,11 +1,22 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { Agent, CodeFocus, Project, Settings, VoiceStatus } from '../../shared/types'
+import type {
+  Agent,
+  AgentTemplate,
+  CodeFocus,
+  Project,
+  Settings,
+  Team,
+  TeamTemplate,
+  VoiceStatus
+} from '../../shared/types'
 import type { Selection } from './App'
 import Sidebar from './components/Sidebar'
 import CenterPane from './components/CenterPane'
 import CodePane from './components/CodePane'
 import ProjectDialog from './components/ProjectDialog'
 import SettingsDialog from './components/SettingsDialog'
+import AgentTemplateDialog from './components/AgentTemplateDialog'
+import TeamTemplateDialog from './components/TeamTemplateDialog'
 import VoiceSetupDialog from './components/VoiceSetupDialog'
 import VoiceOverlay, { VoiceJob, VoiceRecording } from './components/VoiceOverlay'
 import { DEFAULT_HOTKEYS, matchesAccelerator } from '../../shared/hotkeys'
@@ -19,7 +30,7 @@ import {
 } from './lib/terminals'
 import { Recorder } from './lib/recorder'
 import { errorText } from './lib/errors'
-import { shownAgentIds, toggleAgent, toggleProject } from './lib/selection'
+import { shownAgentIds, toggleAgent, toggleAgents, toggleProject } from './lib/selection'
 
 type VoiceTarget = { kind: 'agent'; agentId: string } | { kind: 'global' }
 
@@ -27,6 +38,8 @@ function Workspace(): React.JSX.Element {
   const [projects, setProjects] = useState<Project[]>([])
   const [agents, setAgents] = useState<Agent[]>([])
   const [rawSelection, setSelection] = useState<Selection>(null)
+  /** Gespeicherte Ansicht ist geladen → Änderungen dürfen gespeichert werden */
+  const viewLoaded = useRef(false)
   const [focusByAgent, setFocusByAgent] = useState<Record<string, CodeFocus>>({})
   const [vscodeInstalled, setVscodeInstalled] = useState(false)
   const [settings, setSettings] = useState<Settings>({
@@ -35,6 +48,8 @@ function Workspace(): React.JSX.Element {
     hotkeyAgentVoice: DEFAULT_HOTKEYS.agentVoice,
     hotkeyGlobalVoice: DEFAULT_HOTKEYS.globalVoice,
     agentArgs: '',
+    projectFileApp: '',
+    folderApp: '',
     voiceRememberLanguage: true,
     voiceLanguage: null
   })
@@ -43,6 +58,15 @@ function Workspace(): React.JSX.Element {
 
   const [projectDialog, setProjectDialog] = useState<{ project: Project | null } | null>(null)
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [templates, setTemplates] = useState<AgentTemplate[]>([])
+  /** Vorlage bearbeiten (template null = neu); öffnet sich aus den Einstellungen heraus */
+  const [templateDialog, setTemplateDialog] = useState<{ template: AgentTemplate | null } | null>(
+    null
+  )
+  const [teamTemplates, setTeamTemplates] = useState<TeamTemplate[]>([])
+  const [teamDialog, setTeamDialog] = useState<{ team: TeamTemplate | null } | null>(null)
+  /** Laufende Teams */
+  const [teams, setTeams] = useState<Team[]>([])
   const [voiceSetupOpen, setVoiceSetupOpen] = useState(false)
   const [recording, setRecording] = useState<VoiceRecording | null>(null)
   const [voiceJobs, setVoiceJobs] = useState<VoiceJob[]>([])
@@ -53,7 +77,10 @@ function Workspace(): React.JSX.Element {
   // ---------------------------------------------------------------- Laden & Ereignisse
   useEffect(() => {
     const offData = window.api.agents.onData((id, data) => writeToTerminal(id, data))
-    const offChanged = window.api.agents.onChanged(setAgents)
+    const offChanged = window.api.agents.onChanged((list, teamList) => {
+      setAgents(list)
+      setTeams(teamList)
+    })
     const offFailed = window.api.agents.onStartFailed((name, output) =>
       setToast(output ? `${name} konnte nicht starten:\n${output}` : `${name} konnte nicht starten`)
     )
@@ -65,6 +92,9 @@ function Workspace(): React.JSX.Element {
       setProjects(await window.api.projects.list())
       window.api.tools.vscodeInstalled().then(setVscodeInstalled)
       window.api.settings.get().then(setSettings)
+      window.api.templates.list().then(setTemplates)
+      window.api.teamTemplates.list().then(setTeamTemplates)
+      window.api.teams.list().then(setTeams)
       refreshVoice()
 
       const running = await window.api.agents.list()
@@ -79,10 +109,17 @@ function Workspace(): React.JSX.Element {
         await window.api.agents.restore().catch(showError)
       }
 
-      // Erstes Projekt mit Agents anzeigen (Raster), sofern noch nichts gewählt ist
-      const agentsNow = await window.api.agents.list()
+      // Zuletzt gezeigte Ansicht wiederherstellen (nicht mehr laufende Agents fallen über
+      // `selection` weg), sonst das erste Projekt mit Agents (Raster)
+      const [agentsNow, savedView] = await Promise.all([
+        window.api.agents.list(),
+        window.api.view.get().catch(() => null)
+      ])
+      // Agents im selben Render-Durchlauf setzen, sonst verwirft `selection` die Ansicht
+      setAgents(agentsNow)
       const first = agentsNow[0]?.projectId
-      if (first) setSelection((s) => s ?? { kind: 'project', projectId: first })
+      setSelection((s) => s ?? savedView ?? (first ? { kind: 'project', projectId: first } : null))
+      viewLoaded.current = true
     })()
 
     return () => {
@@ -121,6 +158,11 @@ function Workspace(): React.JSX.Element {
     return sel
   }, [rawSelection, agents, projects])
 
+  // Ansicht speichern – erst nachdem die gespeicherte geladen wurde (sonst überschreibt der Startwert sie)
+  useEffect(() => {
+    if (viewLoaded.current) window.api.view.set(selection).catch(() => {})
+  }, [selection])
+
   useEffect(() => {
     if (!toast) return
     const t = setTimeout(() => setToast(null), toast.length > 120 ? 15000 : 6000)
@@ -157,9 +199,9 @@ function Workspace(): React.JSX.Element {
 
   // ---------------------------------------------------------------- Aktionen
   const startAgent = useCallback(
-    async (projectId: string, task?: string) => {
+    async (projectId: string, task?: string, templateId?: string) => {
       try {
-        const agent = await window.api.agents.start(projectId, task)
+        const agent = await window.api.agents.start(projectId, task, templateId)
         setSelection({ kind: 'agent', agentId: agent.id })
         return agent
       } catch (e) {
@@ -168,6 +210,31 @@ function Workspace(): React.JSX.Element {
       }
     },
     [showError]
+  )
+
+  /** Team aus einer Team-Vorlage starten und alle Mitglieder im Raster zeigen. */
+  const startTeam = useCallback(
+    async (projectId: string, teamTemplateId: string) => {
+      try {
+        const team = await window.api.teams.start(projectId, teamTemplateId)
+        const ids = (await window.api.agents.list())
+          .filter((a) => a.teamId === team.id)
+          .map((a) => a.id)
+        if (ids.length) setSelection({ kind: 'agents', agentIds: ids })
+      } catch (e) {
+        showError(e)
+      }
+    },
+    [showError]
+  )
+
+  const stopTeam = useCallback(
+    (team: Team) => {
+      const count = agents.filter((a) => a.teamId === team.id).length
+      if (!confirm(`Team „${team.name}“ mit ${count} Agent(s) beenden?`)) return
+      window.api.teams.stop(team.id).catch(showError)
+    },
+    [agents, showError]
   )
 
   const stopAgent = useCallback(
@@ -221,9 +288,17 @@ function Workspace(): React.JSX.Element {
       target.kind === 'agent'
         ? (agents.find((a) => a.id === target.agentId)?.name ?? 'Agent')
         : 'Sprachbefehl'
+    // Gemerkte Sprache anzeigen, damit sichtbar ist, dass die automatische Erkennung entfällt
+    const knownLanguage = settings.voiceRememberLanguage ? settings.voiceLanguage : null
     setVoiceJobs((jobs) => [
       ...jobs,
-      { id, state: 'processing', target: targetName, message: 'Erkenne Sprache …' }
+      {
+        id,
+        state: 'processing',
+        target: targetName,
+        language: knownLanguage ?? undefined,
+        message: knownLanguage ? 'Wandle in Text um …' : 'Erkenne Sprache und Text …'
+      }
     ])
     const fail = (message: string, text?: string): void =>
       updateJob(id, { state: 'error', message, text })
@@ -231,7 +306,9 @@ function Workspace(): React.JSX.Element {
     try {
       const wav = await rec.stop()
       if (!wav) return fail('Aufnahme zu kurz.')
-      const { text, language } = await window.api.voice.transcribe(wav)
+      const { text, language, remembered } = await window.api.voice.transcribe(wav)
+      // Automatisch erkannt → Main hat ggf. eine neue Sprache gemerkt; Anzeige aktualisieren
+      if (!remembered) window.api.settings.get().then(setSettings)
       if (!text) return fail('Nichts verstanden.')
       if (language) updateJob(id, { language })
 
@@ -248,6 +325,17 @@ function Workspace(): React.JSX.Element {
           state: 'done',
           message: `→ an ${result.agentName} ${result.sent ? 'gesendet' : 'eingetragen'}`
         })
+      } else if (result.kind === 'teamStarted') {
+        // Raster mit allen Teammitgliedern zeigen
+        const names = new Set(result.agentNames)
+        const ids = (await window.api.agents.list())
+          .filter((a) => names.has(a.name))
+          .map((a) => a.id)
+        if (ids.length) setSelection({ kind: 'agents', agentIds: ids })
+        updateJob(id, {
+          state: 'done',
+          message: `${result.temporary ? 'Temporäres Team' : 'Team'} „${result.teamName}“ in „${result.projectName}“ gestartet: ${result.agentNames.join(', ')}${result.task ? ' (mit Aufgabe)' : ''}`
+        })
       } else if (result.kind === 'started') {
         const started = (await window.api.agents.list()).find((a) => a.name === result.agentName)
         if (started) setSelection({ kind: 'agent', agentId: started.id })
@@ -261,7 +349,7 @@ function Workspace(): React.JSX.Element {
     } catch (e) {
       fail(errorText(e))
     }
-  }, [agents, updateJob])
+  }, [agents, updateJob, settings.voiceRememberLanguage, settings.voiceLanguage])
 
   const cancelVoice = useCallback(() => {
     recorder.current?.cancel()
@@ -375,7 +463,18 @@ function Workspace(): React.JSX.Element {
               multi ? toggleAgent(selection, id, agents) : { kind: 'agent', agentId: id }
             )
           }
-          onStartAgent={(id) => startAgent(id)}
+          templates={templates}
+          teamTemplates={teamTemplates}
+          teams={teams}
+          onStartAgent={(id, templateId) => startAgent(id, undefined, templateId)}
+          onStartTeam={startTeam}
+          onStopTeam={stopTeam}
+          onSelectTeam={(team, multi) => {
+            const ids = agents.filter((a) => a.teamId === team.id).map((a) => a.id)
+            setSelection(
+              multi ? toggleAgents(selection, ids, agents) : { kind: 'agents', agentIds: ids }
+            )
+          }}
           onStopAgent={stopAgent}
           onRenameAgent={(id, name) => window.api.agents.rename(id, name).catch(showError)}
           globalVoiceAutoSend={settings.voiceAutoSend}
@@ -386,7 +485,9 @@ function Workspace(): React.JSX.Element {
           onEditProject={(p) => setProjectDialog({ project: p })}
           onRemoveProject={removeProject}
           onOpenProjectFile={(p) => window.api.projects.openProjectFile(p.id).catch(showError)}
-          onOpenVSCode={(p) => window.api.projects.openInVSCode(p.id).catch(showError)}
+          globalProjectFileApp={settings.projectFileApp}
+          globalFolderApp={settings.folderApp}
+          onOpenFolder={(p) => window.api.projects.openFolder(p.id).catch(showError)}
           onGlobalVoice={() => toggleVoice('global')}
           onOpenSettings={() => {
             refreshVoice()
@@ -439,6 +540,8 @@ function Workspace(): React.JSX.Element {
         <ProjectDialog
           project={projectDialog.project}
           vscodeInstalled={vscodeInstalled}
+          globalProjectFileApp={settings.projectFileApp}
+          globalFolderApp={settings.folderApp}
           onClose={() => setProjectDialog(null)}
           onSaved={async (p) => {
             setProjectDialog(null)
@@ -448,10 +551,47 @@ function Workspace(): React.JSX.Element {
         />
       )}
 
-      {settingsOpen && voiceStatus && (
+      {/* Vorlagen-Dialog ersetzt die Einstellungen, solange er offen ist (keine gestapelten Modals) */}
+      {teamDialog && (
+        <TeamTemplateDialog
+          team={teamDialog.team}
+          templates={templates}
+          onClose={() => setTeamDialog(null)}
+          onSaved={async () => {
+            setTeamDialog(null)
+            setTeamTemplates(await window.api.teamTemplates.list())
+          }}
+        />
+      )}
+
+      {templateDialog && (
+        <AgentTemplateDialog
+          template={templateDialog.template}
+          onClose={() => setTemplateDialog(null)}
+          onSaved={async () => {
+            setTemplateDialog(null)
+            setTemplates(await window.api.templates.list())
+          }}
+        />
+      )}
+
+      {settingsOpen && !templateDialog && !teamDialog && voiceStatus && (
         <SettingsDialog
           settings={settings}
           voiceStatus={voiceStatus}
+          vscodeInstalled={vscodeInstalled}
+          templates={templates}
+          onEditTemplate={(template) => setTemplateDialog({ template })}
+          onRemoveTemplate={async (t) => {
+            await window.api.templates.remove(t.id).catch(showError)
+            setTemplates(await window.api.templates.list())
+          }}
+          teamTemplates={teamTemplates}
+          onEditTeam={(team) => setTeamDialog({ team })}
+          onRemoveTeam={async (t) => {
+            await window.api.teamTemplates.remove(t.id).catch(showError)
+            setTeamTemplates(await window.api.teamTemplates.list())
+          }}
           onSettingsChanged={setSettings}
           onVoiceChanged={refreshVoice}
           onClose={() => setSettingsOpen(false)}

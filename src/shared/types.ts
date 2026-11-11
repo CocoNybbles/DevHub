@@ -11,10 +11,14 @@ export interface Project {
   name: string
   /** Pfad 1: Arbeitsverzeichnis, in dem Agents gestartet werden */
   agentPath: string
-  /** Pfad 2: .sln / Projektdatei (z. B. für Visual Studio) */
+  /** Pfad 2: .sln / Projektdatei (z. B. für Visual Studio, Rider …) */
   projectFile?: string
-  /** Pfad 3: Ordner für VS Code (nur wenn VS Code installiert ist) */
-  vscodePath?: string
+  /** Programm (Pfad zur .exe) für die Projektdatei; leer = globale Einstellung */
+  projectFileApp?: string
+  /** Pfad 3: Ordner, der in einem Editor geöffnet wird (früher `vscodePath`, wird beim Laden übernommen) */
+  folderPath?: string
+  /** Programm (Pfad zur .exe) für den Ordner; leer = globale Einstellung */
+  folderApp?: string
   /** Zusätzliche Start-Flags für Agents dieses Projekts (ergänzen/überschreiben die globalen) */
   agentArgs?: string
 }
@@ -40,9 +44,54 @@ export interface Agent {
   createdAt: number
   /** Sprachtext automatisch abschicken: überschreibt `Settings.voiceAutoSend`, undefined = global */
   voiceAutoSend?: boolean
-  /** Beim Start festgelegtes Modell (`--model`, z. B. per Sprachbefehl), hat Vorrang vor den Start-Flags */
+  /** Beim Start festgelegtes Modell (`--model`, z. B. per Sprachbefehl), hat Vorrang vor Vorlage und Start-Flags */
   model?: string
+  /** Vorlage, aus der der Agent gestartet wurde (Modell + Anweisung werden bei jedem Start gelesen) */
+  templateId?: string
+  /** Laufendes Team, zu dem der Agent gehört (Mitglieder dürfen sich Nachrichten schicken) */
+  teamId?: string
 }
+
+/** Mitglied einer Team-Vorlage: vordefinierter Agent oder (ohne templateId) normaler Agent. */
+export interface TeamMember {
+  templateId?: string
+}
+
+/** Fest definiertes Team aus vordefinierten Agents (Einstellungen). */
+export interface TeamTemplate {
+  id: string
+  name: string
+  /** Reihenfolge zählt: das erste Mitglied leitet das Team und bekommt die Aufgabe */
+  members: TeamMember[]
+  /** Gemeinsame Richtlinien für alle Mitglieder (z. B. Ablauf, Übergaben) */
+  instructions?: string
+}
+
+export type TeamTemplateInput = Omit<TeamTemplate, 'id'> & { id?: string }
+
+/** Laufendes Team in einem Projekt (aus einer Team-Vorlage oder temporär per Sprache). */
+export interface Team {
+  id: string
+  name: string
+  projectId: string
+  /** Team-Vorlage (Richtlinien werden bei jedem Start gelesen); fehlt bei temporären Teams */
+  teamTemplateId?: string
+  temporary: boolean
+  createdAt: number
+}
+
+/** Vordefinierter, benannter Agent (z. B. „Entwickler“) – per Sprache oder Liste startbar. */
+export interface AgentTemplate {
+  id: string
+  /** Eindeutig; gestartete Agents heißen so (bei Bedarf „Name 2“, „Name 3“ …) */
+  name: string
+  /** `--model` (Alias oder voller Name); leer = Start-Flags. Ein per Sprache genanntes Modell hat Vorrang. */
+  model?: string
+  /** Rolle/Richtlinien, werden an den System-Prompt angehängt */
+  instructions?: string
+}
+
+export type AgentTemplateInput = Omit<AgentTemplate, 'id'> & { id?: string }
 
 /** Von einem Agent über das MCP-Tool `show_code` gemeldete Code-Stelle. */
 export interface CodeFocus {
@@ -82,7 +131,23 @@ export interface DownloadProgress {
 export type VoiceCommandResult =
   /** sent = false: nur ins Terminal eingetragen (Auto-Abschicken aus) */
   | { kind: 'sent'; agentName: string; message: string; sent: boolean }
-  | { kind: 'started'; agentName: string; projectName: string; task?: string; model?: string }
+  | {
+      kind: 'started'
+      agentName: string
+      projectName: string
+      task?: string
+      model?: string
+      /** Name der verwendeten Vorlage */
+      template?: string
+    }
+  | {
+      kind: 'teamStarted'
+      teamName: string
+      projectName: string
+      temporary: boolean
+      agentNames: string[]
+      task?: string
+    }
   | { kind: 'none'; message: string }
 
 export interface Settings {
@@ -95,6 +160,10 @@ export interface Settings {
   hotkeyGlobalVoice: string
   /** Zusätzliche Start-Flags für alle Agents, z. B. `--permission-mode auto` (siehe shared/agentArgs.ts) */
   agentArgs: string
+  /** Programm (Pfad zur .exe) für Projektdateien; leer = Windows-Standardprogramm der Dateiendung */
+  projectFileApp: string
+  /** Programm (Pfad zur .exe) für Projektordner; leer = VS Code (falls installiert), sonst Explorer */
+  folderApp: string
   /** Zuletzt erkannte Sprache merken und bei der nächsten Aufnahme zuerst vorgeben (schneller) */
   voiceRememberLanguage: boolean
   /** Gemerkte Sprache (whisper-Code, z. B. „de“), null = noch keine */
@@ -108,6 +177,14 @@ export interface TranscribeResult {
   /** true = gemerkte Sprache wurde übernommen (ohne automatische Erkennung) */
   remembered: boolean
 }
+
+/** Ansicht in der Mitte; wird gespeichert und beim App-Start wiederhergestellt. */
+export type Selection =
+  | { kind: 'agent'; agentId: string }
+  | { kind: 'project'; projectId: string; activeAgentId?: string }
+  /** Frei zusammengestelltes Raster (Strg+Klick), auch projektübergreifend */
+  | { kind: 'agents'; agentIds: string[]; activeAgentId?: string }
+  | null
 
 export type FileReadResult = { ok: true; content: string } | { ok: false; error: string }
 
@@ -126,17 +203,21 @@ export interface DevHubApi {
     save: (input: ProjectInput) => Promise<Project>
     remove: (id: string) => Promise<void>
     openProjectFile: (id: string) => Promise<void>
-    openInVSCode: (id: string) => Promise<void>
+    /** Ordner (Pfad 3) öffnen: Programm Projekt → global → VS Code → Explorer */
+    openFolder: (id: string) => Promise<void>
     pickFolder: (defaultPath?: string) => Promise<string | null>
     pickProjectFile: (defaultPath?: string) => Promise<string | null>
     /** Sucht im Ordner (bis 3 Ebenen tief) nach einer .sln/.slnx; null, wenn keine. */
     findSolution: (dir: string) => Promise<string | null>
+    /** Dateiauswahl für ein Programm (.exe/.cmd/.bat) */
+    pickProgram: (defaultPath?: string) => Promise<string | null>
   }
   agents: {
     list: () => Promise<Agent[]>
     /** Stellt beim App-Start die Agents der letzten Sitzung wieder her. */
     restore: () => Promise<void>
-    start: (projectId: string, task?: string) => Promise<Agent>
+    /** templateId: aus einer Vorlage starten (Name, Modell, Anweisung) */
+    start: (projectId: string, task?: string, templateId?: string) => Promise<Agent>
     stop: (id: string) => Promise<void>
     rename: (id: string, name: string) => Promise<void>
     write: (id: string, data: string) => void
@@ -150,7 +231,8 @@ export interface DevHubApi {
     /** Bisherige Terminal-Ausgabe (z. B. nach Neuladen der Oberfläche). */
     buffer: (id: string) => Promise<string>
     onData: (cb: (id: string, data: string) => void) => Unsubscribe
-    onChanged: (cb: (agents: Agent[]) => void) => Unsubscribe
+    /** Agents und laufende Teams haben sich geändert */
+    onChanged: (cb: (agents: Agent[], teams: Team[]) => void) => Unsubscribe
     /** Agent hat sich direkt nach dem Start mit Fehler beendet (z. B. ungültiges Start-Flag) */
     onStartFailed: (cb: (agentName: string, output: string) => void) => Unsubscribe
   }
@@ -174,5 +256,29 @@ export interface DevHubApi {
     update: (patch: Partial<Settings>) => Promise<Settings>
     /** Globales Kürzel vorübergehend freigeben (während ein neues Kürzel aufgenommen wird) */
     suspendGlobalHotkey: (suspend: boolean) => Promise<void>
+  }
+  teams: {
+    /** Laufende Teams */
+    list: () => Promise<Team[]>
+    /** Team aus einer Team-Vorlage für ein Projekt starten (Aufgabe geht an das erste Mitglied) */
+    start: (projectId: string, teamTemplateId: string, task?: string) => Promise<Team>
+    /** Beendet alle Agents des Teams */
+    stop: (teamId: string) => Promise<void>
+  }
+  teamTemplates: {
+    list: () => Promise<TeamTemplate[]>
+    save: (input: TeamTemplateInput) => Promise<TeamTemplate>
+    remove: (id: string) => Promise<void>
+  }
+  templates: {
+    list: () => Promise<AgentTemplate[]>
+    /** Wirft bei leerem/doppeltem Namen oder ungültigem Modell */
+    save: (input: AgentTemplateInput) => Promise<AgentTemplate>
+    remove: (id: string) => Promise<void>
+  }
+  view: {
+    /** Zuletzt gezeigte Ansicht (kann bereits beendete Agents enthalten) */
+    get: () => Promise<Selection>
+    set: (selection: Selection) => Promise<void>
   }
 }

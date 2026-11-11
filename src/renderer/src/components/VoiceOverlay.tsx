@@ -11,7 +11,7 @@ export interface VoiceRecording {
 export interface VoiceJob {
   id: number
   state: 'processing' | 'done' | 'error'
-  /** z. B. „Erkenne Sprache …“ oder das Ergebnis */
+  /** z. B. „Wandle in Text um …“ oder das Ergebnis */
   message: string
   /** Wer angesprochen wurde („Agent 2“, „Sprachbefehl“) */
   target: string

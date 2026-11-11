@@ -31,12 +31,20 @@ export function toggleAgent(sel: Selection, agentId: string, agents: Agent[]): S
   return fromIds([...ids, agentId], agentId)
 }
 
-/** Strg+Klick auf ein Projekt: alle seine Agents hinzufügen – oder entfernen, wenn alle schon gezeigt werden. */
-export function toggleProject(sel: Selection, projectId: string, agents: Agent[]): Selection {
+/**
+ * Strg+Klick auf eine Gruppe (Projekt, Team): alle ihre Agents hinzufügen – oder entfernen,
+ * wenn alle schon gezeigt werden.
+ */
+export function toggleAgents(sel: Selection, groupIds: string[], agents: Agent[]): Selection {
   const ids = shownAgentIds(sel, agents)
+  if (groupIds.length === 0) return sel
+  const allShown = groupIds.every((id) => ids.includes(id))
+  if (allShown) return fromIds(ids.filter((id) => !groupIds.includes(id)))
+  return fromIds([...ids, ...groupIds.filter((id) => !ids.includes(id))], groupIds[0])
+}
+
+/** Strg+Klick auf ein Projekt: alle seine Agents hinzufügen bzw. entfernen. */
+export function toggleProject(sel: Selection, projectId: string, agents: Agent[]): Selection {
   const projectIds = agents.filter((a) => a.projectId === projectId).map((a) => a.id)
-  if (projectIds.length === 0) return sel
-  const allShown = projectIds.every((id) => ids.includes(id))
-  if (allShown) return fromIds(ids.filter((id) => !projectIds.includes(id)))
-  return fromIds([...ids, ...projectIds.filter((id) => !ids.includes(id))], projectIds[0])
+  return toggleAgents(sel, projectIds, agents)
 }

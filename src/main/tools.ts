@@ -1,7 +1,7 @@
-import { exec } from 'child_process'
-import { existsSync } from 'fs'
+import { exec, spawn } from 'child_process'
+import { existsSync, statSync } from 'fs'
 import { readdir } from 'fs/promises'
-import { basename, join } from 'path'
+import { basename, dirname, isAbsolute, join } from 'path'
 
 /** Führt einen Shell-Befehl aus und liefert die erste Ausgabezeile (oder null bei Fehler). */
 function firstLine(command: string): Promise<string | null> {
@@ -87,6 +87,46 @@ export function openInVSCode(path: string, line?: number): void {
   if (!existsSync(path)) throw new Error(`Pfad nicht gefunden: ${path}`)
   const cmd = line ? `code -g ${quote(`${path}:${line}`)}` : `code ${quote(path)}`
   exec(cmd, { windowsHide: true })
+}
+
+/** Prüft einen vom Nutzer angegebenen Programmpfad; liefert eine Fehlermeldung oder null. */
+export function validateProgram(exe: string | undefined): string | null {
+  if (!exe) return null
+  if (!isAbsolute(exe)) return 'Programm: bitte den vollständigen Pfad angeben'
+  if (!/\.(exe|cmd|bat)$/i.test(exe)) return 'Programm: muss eine .exe (oder .cmd/.bat) sein'
+  if (!existsSync(exe)) return `Programm nicht gefunden: ${exe}`
+  return null
+}
+
+/**
+ * Öffnet eine Datei oder einen Ordner mit einem bestimmten Programm (losgelöst von DevHub, ohne
+ * Konsolenfenster). Arbeitsverzeichnis = der Ordner selbst bzw. der Ordner der Datei.
+ */
+export function openWithProgram(exe: string, file: string): Promise<void> {
+  const err = validateProgram(exe)
+  if (err) return Promise.reject(new Error(err))
+  const cwd = statSync(file).isDirectory() ? file : dirname(file)
+  return new Promise((resolve, reject) => {
+    // .cmd/.bat brauchen eine Shell; .exe direkt starten (keine Shell → keine Sonderzeichen-Probleme)
+    const script = /\.(cmd|bat)$/i.test(exe)
+    const child = script
+      ? // cmd /s /c ""a b.cmd" "datei"": äußere Quotes werden entfernt, innere bleiben (Leerzeichen)
+        spawn('cmd.exe', ['/d', '/s', '/c', `""${exe}" "${file}""`], {
+          cwd,
+          detached: true,
+          stdio: 'ignore',
+          windowsHide: true,
+          windowsVerbatimArguments: true
+        })
+      : spawn(exe, [file], { cwd, detached: true, stdio: 'ignore' })
+    child.once('error', (e) =>
+      reject(new Error(`Programm konnte nicht gestartet werden: ${e.message}`))
+    )
+    child.once('spawn', () => {
+      child.unref()
+      resolve()
+    })
+  })
 }
 
 /** Ordner, die bei der Suche nach Projektmappen übersprungen werden. */

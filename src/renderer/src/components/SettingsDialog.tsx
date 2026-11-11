@@ -1,11 +1,12 @@
 import { useState } from 'react'
-import type { Settings, VoiceStatus } from '../../../shared/types'
+import type { AgentTemplate, Settings, TeamTemplate, VoiceStatus } from '../../../shared/types'
 import { validateAgentArgs } from '../../../shared/agentArgs'
 import { errorText } from '../lib/errors'
 import AgentArgsHelp from './AgentArgsHelp'
 import { DEFAULT_HOTKEYS } from '../../../shared/hotkeys'
 import HotkeyInput from './HotkeyInput'
 import Modal from './Modal'
+import ProgramInput from './ProgramInput'
 import VoiceModels from './VoiceModels'
 
 /** whisper-Sprachcode → „Deutsch“, „Englisch“ … (Fallback: Code) */
@@ -20,9 +21,63 @@ function languageName(code: string): string {
 interface Props {
   settings: Settings
   voiceStatus: VoiceStatus
+  /** Für die Anzeige des Standardprogramms für Ordner */
+  vscodeInstalled: boolean
+  templates: AgentTemplate[]
+  /** null = neue Vorlage anlegen */
+  onEditTemplate: (t: AgentTemplate | null) => void
+  onRemoveTemplate: (t: AgentTemplate) => void
+  teamTemplates: TeamTemplate[]
+  /** null = neues Team anlegen */
+  onEditTeam: (t: TeamTemplate | null) => void
+  onRemoveTeam: (t: TeamTemplate) => void
   onSettingsChanged: (s: Settings) => void
   onVoiceChanged: () => void
   onClose: () => void
+}
+
+/**
+ * Programmpfad als Einstellung: Entwurf lokal, gespeichert beim Verlassen des Feldes bzw. nach
+ * Auswahl/Zurücksetzen. Ungültige Pfade lehnt der Main-Prozess ab → Fehler, alter Wert bleibt.
+ */
+function ProgramSetting(p: {
+  label: string
+  value: string
+  placeholder: string
+  help: string
+  onSave: (value: string) => Promise<void>
+}): React.JSX.Element {
+  const [draft, setDraft] = useState(p.value)
+  const [error, setError] = useState<string | null>(null)
+  const save = async (value: string): Promise<void> => {
+    if (value.trim() === p.value) return
+    try {
+      await p.onSave(value)
+    } catch (e) {
+      setError(errorText(e))
+    }
+  }
+  return (
+    <div className="form">
+      <label>
+        <span>{p.label}</span>
+        <ProgramInput
+          value={draft}
+          onChange={(v) => {
+            setDraft(v)
+            setError(null)
+          }}
+          onCommit={save}
+          placeholder={p.placeholder}
+        />
+        {error ? (
+          <small className="error">{error}</small>
+        ) : (
+          <small className="muted">{p.help}</small>
+        )}
+      </label>
+    </div>
+  )
 }
 
 function SettingsDialog(props: Props): React.JSX.Element {
@@ -46,7 +101,7 @@ function SettingsDialog(props: Props): React.JSX.Element {
       return false
     }
   }
-  // Ungültige Flags werden nicht gespeichert (Dialog schließt trotzdem, alter Wert bleibt)
+  // Ungültige Werte werden nicht gespeichert (Dialog schließt trotzdem, alter Wert bleibt)
   const close = async (): Promise<void> => {
     await saveArgs()
     props.onClose()
@@ -78,6 +133,103 @@ function SettingsDialog(props: Props): React.JSX.Element {
           </label>
         </div>
         {argsError ? <p className="error small">{argsError}</p> : <AgentArgsHelp scope="global" />}
+      </section>
+
+      <section className="settings-section">
+        <h3>Vordefinierte Agents</h3>
+        {props.templates.length > 0 && (
+          <div className="template-list">
+            {props.templates.map((t) => (
+              <div key={t.id} className="template-item">
+                <span className="template-info">
+                  <span className="template-name">{t.name}</span>
+                  <span className="muted">
+                    {' · '}
+                    {t.model || 'Modell aus Start-Flags'}
+                    {t.instructions ? ` · ${t.instructions}` : ''}
+                  </span>
+                </span>
+                <button className="link" onClick={() => props.onEditTemplate(t)}>
+                  Bearbeiten
+                </button>
+                <button
+                  className="link danger"
+                  onClick={() => {
+                    if (confirm(`Vorlage „${t.name}“ löschen?`)) props.onRemoveTemplate(t)
+                  }}
+                >
+                  Löschen
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+        <button onClick={() => props.onEditTemplate(null)}>Neuer vordefinierter Agent …</button>
+        <p className="muted small">
+          Benannte Agents mit eigenem Modell und eigenen Richtlinien. Start über den ▶-Button am
+          Projekt oder per Sprache („Starte einen Entwickler für DevHub, der …“); laufende sprichst
+          du mit ihrem Namen an.
+        </p>
+      </section>
+
+      <section className="settings-section">
+        <h3>Teams</h3>
+        {props.teamTemplates.length > 0 && (
+          <div className="template-list">
+            {props.teamTemplates.map((t) => (
+              <div key={t.id} className="template-item">
+                <span className="template-info">
+                  <span className="template-name">{t.name}</span>
+                  <span className="muted">
+                    {' · '}
+                    {t.members
+                      .map(
+                        (m) => props.templates.find((x) => x.id === m.templateId)?.name ?? 'Agent'
+                      )
+                      .join(', ')}
+                  </span>
+                </span>
+                <button className="link" onClick={() => props.onEditTeam(t)}>
+                  Bearbeiten
+                </button>
+                <button
+                  className="link danger"
+                  onClick={() => {
+                    if (confirm(`Team „${t.name}“ löschen?`)) props.onRemoveTeam(t)
+                  }}
+                >
+                  Löschen
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+        <button onClick={() => props.onEditTeam(null)}>Neues Team …</button>
+        <p className="muted small">
+          Mehrere Agents, die zusammen für ein Projekt starten und sich Nachrichten schicken dürfen.
+          Start über ▶ am Projekt oder per Sprache („Starte das Team Feature für DevHub“). Per
+          Sprache geht auch ein temporäres Team: „Starte einen Entwickler und einen Reviewer als
+          Team für DevHub, …“.
+        </p>
+      </section>
+
+      <section className="settings-section">
+        <h3>Öffnen mit</h3>
+        <ProgramSetting
+          label="Projektdateien (Pfad 2)"
+          value={settings.projectFileApp}
+          placeholder="Windows-Standardprogramm der Dateiendung"
+          help="Pfad zur .exe, z. B. Visual Studio oder Rider. Leer = Programm, das Windows für die Dateiendung verwendet."
+          onSave={(projectFileApp) => update({ projectFileApp })}
+        />
+        <ProgramSetting
+          label="Ordner (Pfad 3)"
+          value={settings.folderApp}
+          placeholder={props.vscodeInstalled ? 'VS Code' : 'Windows-Explorer'}
+          help={`Pfad zur .exe, z. B. VS Code, Cursor oder ein anderer Editor. Leer = ${props.vscodeInstalled ? 'VS Code' : 'Windows-Explorer (VS Code ist nicht installiert)'}.`}
+          onSave={(folderApp) => update({ folderApp })}
+        />
+        <small className="muted">Beides ist pro Projekt abweichend einstellbar.</small>
       </section>
 
       <section className="settings-section">

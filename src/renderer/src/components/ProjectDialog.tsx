@@ -4,10 +4,15 @@ import Modal from './Modal'
 import { errorText } from '../lib/errors'
 import { validateAgentArgs } from '../../../shared/agentArgs'
 import AgentArgsHelp from './AgentArgsHelp'
+import ProgramInput from './ProgramInput'
 
 interface Props {
   project: Project | null
+  /** Nur für die Anzeige des Standardprogramms für Ordner (VS Code oder Explorer) */
   vscodeInstalled: boolean
+  /** Globale Programme aus den Einstellungen, '' = Standard */
+  globalProjectFileApp: string
+  globalFolderApp: string
   onSaved: (p: Project) => void
   onClose: () => void
 }
@@ -19,11 +24,21 @@ const folderName = (path: string): string =>
     .pop() ?? ''
 
 /** Projekt anlegen/bearbeiten mit den drei Pfaden. */
-function ProjectDialog({ project, vscodeInstalled, onSaved, onClose }: Props): React.JSX.Element {
+function ProjectDialog({
+  project,
+  vscodeInstalled,
+  globalProjectFileApp,
+  globalFolderApp,
+  onSaved,
+  onClose
+}: Props): React.JSX.Element {
   const [name, setName] = useState(project?.name ?? '')
   const [agentPath, setAgentPath] = useState(project?.agentPath ?? '')
   const [projectFile, setProjectFile] = useState(project?.projectFile ?? '')
-  const [vscodePath, setVscodePath] = useState(project?.vscodePath ?? '')
+  const [projectFileApp, setProjectFileApp] = useState(project?.projectFileApp ?? '')
+  const [folderPath, setFolderPath] = useState(project?.folderPath ?? '')
+  const [folderApp, setFolderApp] = useState(project?.folderApp ?? '')
+  const folderDefault = vscodeInstalled ? 'VS Code' : 'Windows-Explorer'
   const [agentArgs, setAgentArgs] = useState(project?.agentArgs ?? '')
   const argsError = validateAgentArgs(agentArgs)
   const [error, setError] = useState<string | null>(null)
@@ -57,7 +72,9 @@ function ProjectDialog({ project, vscodeInstalled, onSaved, onClose }: Props): R
         name: name.trim() || folderName(agentPath),
         agentPath: agentPath.trim(),
         projectFile: projectFile.trim() || undefined,
-        vscodePath: vscodeInstalled ? vscodePath.trim() || undefined : undefined,
+        projectFileApp: (projectFile.trim() && projectFileApp.trim()) || undefined,
+        folderPath: folderPath.trim() || undefined,
+        folderApp: (folderPath.trim() && folderApp.trim()) || undefined,
         agentArgs: agentArgs.trim() || undefined
       })
       onSaved(saved)
@@ -118,7 +135,7 @@ function ProjectDialog({ project, vscodeInstalled, onSaved, onClose }: Props): R
           <small className="muted">
             {autoFile && projectFile === autoFile
               ? 'Automatisch im Agent-Ordner gefunden.'
-              : '.sln oder Projektdatei, z. B. zum Öffnen in Visual Studio.'}
+              : '.sln oder Projektdatei, z. B. zum Öffnen in Visual Studio oder Rider.'}
           </small>
           <div className="path-input">
             <input
@@ -142,38 +159,68 @@ function ProjectDialog({ project, vscodeInstalled, onSaved, onClose }: Props): R
           </div>
         </label>
 
-        <label className={vscodeInstalled ? '' : 'disabled'}>
-          <span>3 · VS-Code-Ordner</span>
-          <small className="muted">
-            {vscodeInstalled
-              ? 'Ordner, der in VS Code geöffnet wird.'
-              : 'Nicht verfügbar – VS Code ist nicht installiert.'}
-          </small>
+        {projectFile.trim() && (
+          <label>
+            <span>
+              Öffnen mit <em>(optional)</em>
+            </span>
+            <small className="muted">
+              {`Programm für die Projektdatei, z. B. Rider oder eine bestimmte Visual-Studio-Version. Leer = ${
+                globalProjectFileApp ? 'Programm aus den Einstellungen' : 'Windows-Standardprogramm'
+              }.`}
+            </small>
+            <ProgramInput
+              value={projectFileApp}
+              onChange={setProjectFileApp}
+              placeholder={globalProjectFileApp || 'Windows-Standardprogramm'}
+            />
+          </label>
+        )}
+
+        <label>
+          <span>3 · Ordner</span>
+          <small className="muted">Ordner, der in einem Editor geöffnet wird, z. B. VS Code.</small>
           <div className="path-input">
             <input
-              value={vscodePath}
-              onChange={(e) => setVscodePath(e.target.value)}
+              value={folderPath}
+              onChange={(e) => setFolderPath(e.target.value)}
               placeholder="optional"
-              disabled={!vscodeInstalled}
             />
             <button
-              disabled={!vscodeInstalled || !agentPath}
+              disabled={!agentPath}
               title="Agent-Ordner übernehmen"
-              onClick={() => setVscodePath(agentPath)}
+              onClick={() => setFolderPath(agentPath)}
             >
               = Pfad 1
             </button>
             <button
-              disabled={!vscodeInstalled}
               onClick={async () => {
-                const p = await window.api.projects.pickFolder(vscodePath || agentPath || undefined)
-                if (p) setVscodePath(p)
+                const p = await window.api.projects.pickFolder(folderPath || agentPath || undefined)
+                if (p) setFolderPath(p)
               }}
             >
               Durchsuchen …
             </button>
           </div>
         </label>
+
+        {folderPath.trim() && (
+          <label>
+            <span>
+              Öffnen mit <em>(optional)</em>
+            </span>
+            <small className="muted">
+              {`Programm für den Ordner, z. B. Cursor oder ein anderer Editor. Leer = ${
+                globalFolderApp ? 'Programm aus den Einstellungen' : folderDefault
+              }.`}
+            </small>
+            <ProgramInput
+              value={folderApp}
+              onChange={setFolderApp}
+              placeholder={globalFolderApp || folderDefault}
+            />
+          </label>
+        )}
 
         <label>
           <span>

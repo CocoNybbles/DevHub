@@ -23,15 +23,16 @@ const api: DevHubApi = {
     save: (input) => invoke('projects:save', input),
     remove: (id) => invoke('projects:remove', id),
     openProjectFile: (id) => invoke('projects:openProjectFile', id),
-    openInVSCode: (id) => invoke('projects:openInVSCode', id),
+    openFolder: (id) => invoke('projects:openFolder', id),
     pickFolder: (defaultPath) => invoke('projects:pickFolder', defaultPath),
     pickProjectFile: (defaultPath) => invoke('projects:pickProjectFile', defaultPath),
-    findSolution: (dir) => invoke('projects:findSolution', dir)
+    findSolution: (dir) => invoke('projects:findSolution', dir),
+    pickProgram: (defaultPath) => invoke('projects:pickProgram', defaultPath)
   },
   agents: {
     list: () => invoke('agents:list'),
     restore: () => invoke('agents:restore'),
-    start: (projectId, task) => invoke('agents:start', projectId, task),
+    start: (projectId, task, templateId) => invoke('agents:start', projectId, task, templateId),
     stop: (id) => invoke('agents:stop', id),
     rename: (id, name) => invoke('agents:rename', id, name),
     write: (id, data) => ipcRenderer.send('agents:write', id, data),
@@ -62,6 +63,26 @@ const api: DevHubApi = {
     get: () => invoke('settings:get'),
     update: (patch) => invoke('settings:update', patch),
     suspendGlobalHotkey: (suspend) => invoke('settings:suspendGlobalHotkey', suspend)
+  },
+  teams: {
+    list: () => invoke('teams:list'),
+    start: (projectId, teamTemplateId, task) =>
+      invoke('teams:start', projectId, teamTemplateId, task),
+    stop: (teamId) => invoke('teams:stop', teamId)
+  },
+  teamTemplates: {
+    list: () => invoke('teamTemplates:list'),
+    save: (input) => invoke('teamTemplates:save', input),
+    remove: (id) => invoke('teamTemplates:remove', id)
+  },
+  templates: {
+    list: () => invoke('templates:list'),
+    save: (input) => invoke('templates:save', input),
+    remove: (id) => invoke('templates:remove', id)
+  },
+  view: {
+    get: () => invoke('view:get'),
+    set: (selection) => invoke('view:set', selection)
   }
 }
 

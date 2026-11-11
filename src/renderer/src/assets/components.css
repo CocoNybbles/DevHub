@@ -1,6 +1,7 @@
 /* Styles der Arbeitsbereich-Komponenten (Basis-Variablen in main.css) */
 
-input {
+input,
+textarea {
   font: inherit;
   color: var(--text);
   background: var(--bg);
@@ -9,9 +10,23 @@ input {
   padding: 6px 8px;
   user-select: text;
 }
-input:focus {
+select {
+  font: inherit;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 5px 6px;
+}
+input:focus,
+textarea:focus,
+select:focus {
   outline: none;
   border-color: var(--accent);
+}
+textarea {
+  resize: vertical;
+  line-height: 1.45;
 }
 input:disabled {
   opacity: 0.5;
@@ -196,6 +211,40 @@ button.primary {
 .agent-row.attention .row-name {
   color: var(--attention-text);
 }
+/* Team: Kopfzeile + eingerückte Mitglieder mit Verbindungslinie */
+.team-row {
+  padding-left: 22px;
+  min-height: 26px;
+  color: var(--idle);
+}
+.team-row .row-name {
+  font-weight: 600;
+}
+.team-row .stop-agent {
+  opacity: 0;
+}
+.team-row:hover .stop-agent {
+  opacity: 1;
+}
+.team-row .stop-agent:hover {
+  color: var(--error);
+}
+.team-tag {
+  margin-left: 6px;
+  font-size: 10px;
+  font-weight: 400;
+  color: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0 5px;
+}
+.team-members {
+  margin-left: 31px;
+  border-left: 2px solid color-mix(in srgb, var(--idle) 45%, transparent);
+}
+.agent-row.in-team {
+  padding-left: 12px;
+}
 input.rename {
   flex: 1;
   min-width: 0;
@@ -369,12 +418,14 @@ input.rename {
   flex-direction: column;
   gap: 16px;
 }
-.form label {
+.form label,
+.form .field {
   display: flex;
   flex-direction: column;
   gap: 4px;
 }
-.form label > span {
+.form label > span,
+.form .field > span {
   font-weight: 600;
 }
 .form label em {
@@ -406,6 +457,72 @@ input.mono {
   min-width: 0;
 }
 .path-input button {
+  white-space: nowrap;
+}
+
+/* Textfeld mit Diktat-Button (Vorlagen-Anweisung) */
+.dictation-field {
+  position: relative;
+  display: flex;
+}
+.dictation-field textarea {
+  flex: 1;
+  min-height: 180px;
+  padding-right: 40px;
+}
+.dictation-field .dictation {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+}
+.dictation-status {
+  min-height: 16px;
+}
+
+/* Mitgliederliste im Team-Dialog */
+.member-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 4px 0;
+}
+.member-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.member-row select {
+  flex: 1;
+  min-width: 0;
+}
+.member-index {
+  width: 56px;
+  font-size: 12px;
+}
+
+/* Vorlagenliste in den Einstellungen */
+.template-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 8px;
+}
+.template-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+.template-item .template-name {
+  font-weight: 600;
+}
+.template-item .template-info {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 

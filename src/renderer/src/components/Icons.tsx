@@ -48,19 +48,31 @@ export const GearIcon = ({ size = 14 }: P): React.JSX.Element =>
     </>
   )
 
-/** Visual Studio (Projektmappe öffnen) */
-export const VsIcon = ({ size = 14 }: P): React.JSX.Element =>
+/** Projektdatei öffnen (Dokument mit Pfeil nach außen – unabhängig vom Programm) */
+export const OpenFileIcon = ({ size = 14 }: P): React.JSX.Element =>
   svg(
     size,
     <>
-      <path d="M11 2l3 1.5v9L11 14 4.5 8z" />
-      <path d="M2 5.5L4.5 8 2 10.5z" />
+      <path d="M9 2H4.5A1.5 1.5 0 0 0 3 3.5v9A1.5 1.5 0 0 0 4.5 14h7a1.5 1.5 0 0 0 1.5-1.5V8" />
+      <path d="M10.5 2H14v3.5M14 2L8 8" />
     </>
   )
 
-/** VS Code (Ordner öffnen) */
+/** Ordner im Editor öffnen; Code-Stelle in VS Code öffnen */
 export const CodeIcon = ({ size = 14 }: P): React.JSX.Element =>
   svg(size, <path d="M5.5 4.5L2 8l3.5 3.5M10.5 4.5L14 8l-3.5 3.5" />)
+
+/** Team (zwei Personen) */
+export const TeamIcon = ({ size = 13 }: P): React.JSX.Element =>
+  svg(
+    size,
+    <>
+      <circle cx="6" cy="5.5" r="2.2" />
+      <path d="M2 13c0-2.2 1.8-3.8 4-3.8s4 1.6 4 3.8" />
+      <circle cx="11.2" cy="6.2" r="1.7" />
+      <path d="M11 9.4c1.7 0 3 1.3 3 3.1" />
+    </>
+  )
 
 export const GridIcon = ({ size = 14 }: P): React.JSX.Element =>
   svg(

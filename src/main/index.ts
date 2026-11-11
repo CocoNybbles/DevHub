@@ -12,14 +12,30 @@ import { join } from 'path'
 import { randomUUID } from 'crypto'
 import { existsSync, readFileSync, statSync, writeFileSync } from 'fs'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
-import type { Project, ProjectInput, Settings, WhisperModelId } from '../shared/types'
+import type {
+  AgentTemplate,
+  AgentTemplateInput,
+  Project,
+  ProjectInput,
+  Selection,
+  Settings,
+  TeamTemplate,
+  TeamTemplateInput,
+  WhisperModelId
+} from '../shared/types'
 import { checkClaudeAuth, startClaudeLogin } from './claudeAuth'
 import { AgentManager } from './agents'
 import { getState, updateState } from './store'
-import { findSolution, isVSCodeInstalled, openInVSCode } from './tools'
+import {
+  findSolution,
+  isVSCodeInstalled,
+  openInVSCode,
+  openWithProgram,
+  validateProgram
+} from './tools'
 import { deleteModel, downloadVoice, transcribe, voiceStatus } from './voice'
 import { runVoiceCommand } from './voiceCommands'
-import { validateAgentArgs } from '../shared/agentArgs'
+import { isValidModelName, validateAgentArgs } from '../shared/agentArgs'
 
 let mainWindow: BrowserWindow | null = null
 
@@ -30,7 +46,7 @@ function send(channel: string, ...args: unknown[]): void {
 
 const agents = new AgentManager({
   onData: (id, data) => send('agents:data', id, data),
-  onChanged: (list) => send('agents:changed', list),
+  onChanged: (list, teams) => send('agents:changed', list, teams),
   onCodeFocus: (focus) => send('code:focus', focus),
   onStartFailed: (name, output) => send('agents:startFailed', name, output)
 })
@@ -113,6 +129,19 @@ function registerGlobalHotkey(accelerator: string): boolean {
   return true
 }
 
+/** Grobe Formprüfung einer Ansicht aus dem Renderer, bevor sie gespeichert wird. */
+function isSelection(v: unknown): v is NonNullable<Selection> {
+  if (!v || typeof v !== 'object') return false
+  const s = v as Record<string, unknown>
+  const optId = s.activeAgentId === undefined || typeof s.activeAgentId === 'string'
+  if (s.kind === 'agent') return typeof s.agentId === 'string'
+  if (s.kind === 'project') return typeof s.projectId === 'string' && optId
+  if (s.kind === 'agents') {
+    return Array.isArray(s.agentIds) && s.agentIds.every((x) => typeof x === 'string') && optId
+  }
+  return false
+}
+
 function project(id: string): Project {
   const p = getState().projects.find((x) => x.id === id)
   if (!p) throw new Error('Projekt nicht gefunden')
@@ -136,19 +165,22 @@ function registerIpc(): void {
       throw new Error('Agent-Pfad existiert nicht')
     if (input.projectFile && !existsSync(input.projectFile))
       throw new Error('Projektdatei existiert nicht')
-    if (input.vscodePath && !(await isVSCodeInstalled()))
-      throw new Error('VS Code ist nicht installiert')
-    if (input.vscodePath && !existsSync(input.vscodePath))
-      throw new Error('VS-Code-Ordner existiert nicht')
+    if (input.folderPath && !existsSync(input.folderPath))
+      throw new Error('Ordner (Pfad 3) existiert nicht')
     const argsError = validateAgentArgs(input.agentArgs)
     if (argsError) throw new Error(`Start-Flags: ${argsError}`)
+    const programError =
+      validateProgram(input.projectFileApp?.trim()) ?? validateProgram(input.folderApp?.trim())
+    if (programError) throw new Error(programError)
 
     const saved = {
       id: input.id ?? randomUUID(),
       name,
       agentPath: input.agentPath,
       projectFile: input.projectFile || undefined,
-      vscodePath: input.vscodePath || undefined,
+      projectFileApp: input.projectFileApp?.trim() || undefined,
+      folderPath: input.folderPath || undefined,
+      folderApp: input.folderApp?.trim() || undefined,
       agentArgs: input.agentArgs?.trim() || undefined
     }
     updateState((s) => {
@@ -166,14 +198,36 @@ function registerIpc(): void {
     })
   })
   ipcMain.handle('projects:openProjectFile', async (_, id: string) => {
-    const file = project(id).projectFile
-    if (!file) return
-    const err = await shell.openPath(file)
+    const p = project(id)
+    if (!p.projectFile) return
+    if (!existsSync(p.projectFile)) throw new Error(`Projektdatei nicht gefunden: ${p.projectFile}`)
+    // Programm: Projekt → global → Windows-Standardprogramm für die Dateiendung
+    const program = p.projectFileApp || getState().settings.projectFileApp
+    if (program) return openWithProgram(program, p.projectFile)
+    const err = await shell.openPath(p.projectFile)
     if (err) throw new Error(err)
   })
-  ipcMain.handle('projects:openInVSCode', (_, id: string) => {
-    const dir = project(id).vscodePath
-    if (dir) openInVSCode(dir)
+  ipcMain.handle('projects:pickProgram', async (_, defaultPath?: string) => {
+    const r = await dialog.showOpenDialog(mainWindow!, {
+      properties: ['openFile'],
+      defaultPath,
+      filters: [
+        { name: 'Programme', extensions: ['exe', 'cmd', 'bat'] },
+        { name: 'Alle Dateien', extensions: ['*'] }
+      ]
+    })
+    return r.canceled ? null : r.filePaths[0]
+  })
+  ipcMain.handle('projects:openFolder', async (_, id: string) => {
+    const p = project(id)
+    if (!p.folderPath) return
+    if (!existsSync(p.folderPath)) throw new Error(`Ordner nicht gefunden: ${p.folderPath}`)
+    // Programm: Projekt → global → VS Code (falls installiert) → Windows-Explorer
+    const program = p.folderApp || getState().settings.folderApp
+    if (program) return openWithProgram(program, p.folderPath)
+    if (await isVSCodeInstalled()) return openInVSCode(p.folderPath)
+    const err = await shell.openPath(p.folderPath)
+    if (err) throw new Error(err)
   })
   ipcMain.handle('projects:pickFolder', async (_, defaultPath?: string) => {
     const r = await dialog.showOpenDialog(mainWindow!, {
@@ -210,11 +264,91 @@ function registerIpc(): void {
     return r.canceled ? null : r.filePaths[0]
   })
 
+  // --- Vorlagen (vordefinierte Agents) ---
+  ipcMain.handle('templates:list', () => getState().templates)
+  ipcMain.handle('templates:save', (_, input: AgentTemplateInput) => {
+    const name = input.name?.trim().replace(/\s+/g, ' ')
+    if (!name) throw new Error('Name fehlt')
+    // „Agent 3“ o. Ä. kollidiert mit den automatisch vergebenen Namen
+    if (/^agent \d+$/i.test(name)) throw new Error('„Agent N“ ist für normale Agents reserviert')
+    if (/ \d+$/.test(name))
+      throw new Error('Name darf nicht auf eine Zahl enden (wird für „Name 2“, „Name 3“ verwendet)')
+    const others = getState().templates.filter((t) => t.id !== input.id)
+    if (others.some((t) => t.name.toLowerCase() === name.toLowerCase()))
+      throw new Error(`Es gibt bereits eine Vorlage „${name}“`)
+    const model = input.model?.trim() || undefined
+    if (model && !isValidModelName(model)) throw new Error(`Ungültiger Modellname: ${model}`)
+
+    const saved: AgentTemplate = {
+      id: input.id ?? randomUUID(),
+      name,
+      model,
+      instructions: input.instructions?.trim() || undefined
+    }
+    updateState((s) => {
+      const i = s.templates.findIndex((t) => t.id === saved.id)
+      if (i >= 0) s.templates[i] = saved
+      else s.templates.push(saved)
+    })
+    return saved
+  })
+  ipcMain.handle('templates:remove', (_, id: string) => {
+    const usedBy = getState().teamTemplates.filter((t) =>
+      t.members.some((m) => m.templateId === id)
+    )
+    if (usedBy.length)
+      throw new Error(`Wird in Team ${usedBy.map((t) => `„${t.name}“`).join(', ')} verwendet`)
+    // Laufende Agents behalten ihren Namen, starten danach aber ohne Vorlage
+    updateState((s) => (s.templates = s.templates.filter((t) => t.id !== id)))
+  })
+
+  // --- Teams ---
+  ipcMain.handle('teamTemplates:list', () => getState().teamTemplates)
+  ipcMain.handle('teamTemplates:save', (_, input: TeamTemplateInput) => {
+    const name = input.name?.trim().replace(/\s+/g, ' ')
+    if (!name) throw new Error('Name fehlt')
+    if (/^team \d+$/i.test(name)) throw new Error('„Team N“ ist für temporäre Teams reserviert')
+    if (/ \d+$/.test(name))
+      throw new Error('Name darf nicht auf eine Zahl enden (wird für „Name 2“ verwendet)')
+    const others = getState().teamTemplates.filter((t) => t.id !== input.id)
+    if (others.some((t) => t.name.toLowerCase() === name.toLowerCase()))
+      throw new Error(`Es gibt bereits ein Team „${name}“`)
+    const templates = getState().templates
+    const members = (input.members ?? []).map((m) => ({
+      templateId:
+        m.templateId && templates.some((t) => t.id === m.templateId) ? m.templateId : undefined
+    }))
+    if (members.length < 2) throw new Error('Ein Team braucht mindestens zwei Mitglieder')
+    if (members.length > 8) throw new Error('Höchstens 8 Mitglieder')
+
+    const saved: TeamTemplate = {
+      id: input.id ?? randomUUID(),
+      name,
+      members,
+      instructions: input.instructions?.trim() || undefined
+    }
+    updateState((s) => {
+      const i = s.teamTemplates.findIndex((t) => t.id === saved.id)
+      if (i >= 0) s.teamTemplates[i] = saved
+      else s.teamTemplates.push(saved)
+    })
+    return saved
+  })
+  ipcMain.handle('teamTemplates:remove', (_, id: string) => {
+    // Laufende Teams bleiben bestehen, verlieren aber die gemeinsamen Richtlinien
+    updateState((s) => (s.teamTemplates = s.teamTemplates.filter((t) => t.id !== id)))
+  })
+  ipcMain.handle('teams:list', () => agents.teams())
+  ipcMain.handle('teams:start', (_, projectId: string, teamTemplateId: string, task?: string) =>
+    agents.startTeam(projectId, { teamTemplateId, task })
+  )
+  ipcMain.handle('teams:stop', (_, teamId: string) => agents.stopTeam(teamId))
+
   // --- Agents ---
   ipcMain.handle('agents:list', () => agents.list())
   ipcMain.handle('agents:restore', () => agents.restore())
-  ipcMain.handle('agents:start', (_, projectId: string, task?: string) =>
-    agents.start(projectId, task)
+  ipcMain.handle('agents:start', (_, projectId: string, task?: string, templateId?: string) =>
+    agents.start(projectId, task, undefined, templateId)
   )
   ipcMain.handle('agents:stop', (_, id: string) => agents.stop(id))
   ipcMain.handle('agents:rename', (_, id: string, name: string) => agents.rename(id, name))
@@ -255,10 +389,21 @@ function registerIpc(): void {
           ? `→ ${result.agentName}: ${result.message}`
           : result.kind === 'started'
             ? `${result.agentName} gestartet (${result.projectName})`
-            : result.message
+            : result.kind === 'teamStarted'
+              ? `Team ${result.teamName} gestartet (${result.projectName}): ${result.agentNames.join(', ')}`
+              : result.message
       new Notification({ title: 'DevHub', body }).show()
     }
     return result
+  })
+
+  // --- Ansicht (wird beim nächsten Start wiederhergestellt) ---
+  ipcMain.handle('view:get', () => getState().view)
+  ipcMain.handle('view:set', (_, selection: Selection) => {
+    const next = isSelection(selection) ? selection : null
+    if (JSON.stringify(next) !== JSON.stringify(getState().view)) {
+      updateState((s) => (s.view = next))
+    }
   })
 
   // --- Einstellungen ---
@@ -271,6 +416,16 @@ function registerIpc(): void {
       const argsError = validateAgentArgs(patch.agentArgs)
       if (argsError) throw new Error(`Start-Flags: ${argsError}`)
       next.agentArgs = patch.agentArgs.trim()
+    }
+    if (patch.projectFileApp !== undefined) {
+      next.projectFileApp = patch.projectFileApp.trim()
+      const programError = validateProgram(next.projectFileApp)
+      if (programError) throw new Error(programError)
+    }
+    if (patch.folderApp !== undefined) {
+      next.folderApp = patch.folderApp.trim()
+      const programError = validateProgram(next.folderApp)
+      if (programError) throw new Error(programError)
     }
     if (patch.hotkeyAgentVoice !== undefined || patch.hotkeyGlobalVoice !== undefined) {
       if (!next.hotkeyAgentVoice || !next.hotkeyGlobalVoice) throw new Error('Kürzel fehlt')

@@ -5,6 +5,7 @@ import type { AgentManager } from './agents'
 import { getState } from './store'
 import { claudeEnv, resolveClaude } from './tools'
 import { isValidModelName } from '../shared/agentArgs'
+import { routerPrompt } from './voicePrompt'
 
 /**
  * Globaler Sprachbefehl: Eine headless Claude-Instanz (`claude -p`, vorhandener Account)
@@ -15,48 +16,29 @@ import { isValidModelName } from '../shared/agentArgs'
 
 type Decision =
   | { action: 'send'; agentId: string; message: string }
-  | { action: 'start'; projectId: string; task?: string; model?: string }
+  | { action: 'start'; projectId: string; task?: string; model?: string; templateId?: string }
+  | {
+      action: 'start_team'
+      projectId: string
+      teamTemplateId?: string
+      /** Vorlagen-IDs oder 'agent' (normaler Agent) */
+      members?: string[]
+      teamName?: string
+      task?: string
+      model?: string
+    }
   | { action: 'none'; reason?: string }
 
 export async function runVoiceCommand(
   text: string,
   agents: AgentManager
 ): Promise<VoiceCommandResult> {
-  const projects = getState().projects
+  const { projects, templates, teamTemplates } = getState()
   const running = agents.list()
   if (projects.length === 0)
     return { kind: 'none', message: 'Es sind noch keine Projekte angelegt.' }
 
-  const prompt = [
-    'You route voice commands inside DevHub, an app that manages AI coding agents per project.',
-    'The command was transcribed by speech recognition and may contain recognition errors.',
-    '',
-    `Command: """${text}"""`,
-    '',
-    'Projects:',
-    ...projects.map((p) => `- id=${p.id} name="${p.name}"`),
-    '',
-    'Running agents:',
-    ...(running.length
-      ? running.map(
-          (a) =>
-            `- id=${a.id} name="${a.name}" project="${projects.find((p) => p.id === a.projectId)?.name}"`
-        )
-      : ['(none)']),
-    '',
-    'Decide what the user wants and answer with ONLY one JSON object, no other text:',
-    '{"action":"send","agentId":"<id>","message":"<instruction for the agent>"}',
-    '  → the user addresses an existing agent by name. "message" is the instruction without the addressing part, in the language the user spoke.',
-    '{"action":"start","projectId":"<id>","task":"<task or empty>","model":"<model or empty>"}',
-    '  → the user wants a new agent for a project (optionally with a task, in the language the user spoke).',
-    '  "model": only if the user explicitly names a Claude model for the new agent, otherwise "".',
-    '  Use the lowercase alias of the model family: "fable", "opus", "sonnet" or "haiku" (speech recognition may garble them, e.g. "Sonett" = sonnet, "Opas"/"Opus" = opus, "Haiku"/"Hai Ku" = haiku).',
-    '  Only if a specific version is named, use the full name, e.g. "Opus 5.5" = "claude-opus-5-5", "Sonnet 5.5" = "claude-sonnet-5-5".',
-    '  The model mention is NOT part of "task" (e.g. "Starte mit Opus einen Agent für DevHub, der die Tests fixt" → model "opus", task "Fixe die Tests").',
-    '{"action":"none","reason":"<short reason in German>"}',
-    '  → unclear, or the named agent/project does not exist.',
-    'Match names fuzzily (e.g. "Agent eins" / "agent one" = "Agent 1"; similar sounding project names).'
-  ].join('\n')
+  const prompt = routerPrompt(text, projects, running, templates, teamTemplates, agents.teams())
 
   const raw = await askClaude(prompt)
   const decision = parseDecision(raw)
@@ -76,13 +58,55 @@ export async function runVoiceCommand(
     const model = decision.model?.trim().toLowerCase() || undefined
     if (model && !isValidModelName(model))
       return { kind: 'none', message: `Modell „${model}“ nicht erkannt.` }
-    const agent = await agents.start(project.id, decision.task, model)
+    const template = decision.templateId
+      ? templates.find((t) => t.id === decision.templateId)
+      : undefined
+    const agent = await agents.start(project.id, decision.task, model, template?.id)
     return {
       kind: 'started',
       agentName: agent.name,
       projectName: project.name,
       task: decision.task || undefined,
+      // angezeigt wird das tatsächlich verwendete Modell (Sprache > Vorlage)
+      model: model || template?.model,
+      template: template?.name
+    }
+  }
+
+  if (decision.action === 'start_team') {
+    const project = projects.find((p) => p.id === decision.projectId)
+    if (!project) return { kind: 'none', message: 'Projekt nicht erkannt.' }
+    const model = decision.model?.trim().toLowerCase() || undefined
+    if (model && !isValidModelName(model))
+      return { kind: 'none', message: `Modell „${model}“ nicht erkannt.` }
+    const teamTemplate = decision.teamTemplateId
+      ? teamTemplates.find((t) => t.id === decision.teamTemplateId)
+      : undefined
+    // Unbekannte IDs (Fehlzuordnung) → normaler Agent statt Abbruch
+    const members = teamTemplate
+      ? undefined
+      : (decision.members ?? []).map((id) => ({
+          templateId: templates.some((t) => t.id === id) ? id : undefined
+        }))
+    if (!teamTemplate && (members?.length ?? 0) < 2)
+      return { kind: 'none', message: 'Für ein Team bitte mindestens zwei Agents nennen.' }
+    const team = await agents.startTeam(project.id, {
+      teamTemplateId: teamTemplate?.id,
+      members,
+      name: decision.teamName,
+      task: decision.task,
       model
+    })
+    return {
+      kind: 'teamStarted',
+      teamName: team.name,
+      projectName: project.name,
+      temporary: team.temporary,
+      agentNames: agents
+        .list()
+        .filter((a) => a.teamId === team.id)
+        .map((a) => a.name),
+      task: decision.task || undefined
     }
   }
 

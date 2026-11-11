@@ -3,12 +3,7 @@ import type { ClaudeAuthState } from '../../shared/types'
 import AuthGate from './components/AuthGate'
 import Workspace from './Workspace'
 
-export type Selection =
-  | { kind: 'agent'; agentId: string }
-  | { kind: 'project'; projectId: string; activeAgentId?: string }
-  /** Frei zusammengestelltes Raster (Strg+Klick), auch projektübergreifend */
-  | { kind: 'agents'; agentIds: string[]; activeAgentId?: string }
-  | null
+export type { Selection } from '../../shared/types'
 
 /** Einstieg: erst Claude-Login prüfen, dann den Arbeitsbereich zeigen. */
 function App(): React.JSX.Element {

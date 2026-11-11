@@ -6,7 +6,8 @@ import type { AddressInfo } from 'net'
  * Lokaler HTTP-Server (nur 127.0.0.1) als Rückkanal von den Agents zur App:
  *  - POST /hook/<token>/<agentId>  → Claude-Code-Hooks (per curl, Hook-JSON im Body)
  *  - POST /mcp/<token>/<agentId>   → minimaler MCP-Server (Streamable HTTP, JSON-Antworten)
- *                                    mit dem Tool `show_code`
+ *                                    mit `show_code` und – nur für Teammitglieder –
+ *                                    `team_members` / `send_team_message`
  * Das zufällige Token verhindert, dass andere lokale Prozesse Ereignisse einschleusen.
  */
 
@@ -25,9 +26,20 @@ export interface ShowCodeArgs {
   note?: string
 }
 
+export interface TeamMessageArgs {
+  /** Name eines Teammitglieds oder "all" */
+  to: string
+  message: string
+}
+
+export type ToolName = 'show_code' | 'team_members' | 'send_team_message'
+
 export interface BridgeHandlers {
   onHook: (agentId: string, event: HookEvent) => void
-  onShowCode: (agentId: string, args: ShowCodeArgs) => string | Promise<string>
+  /** Welche Tools der Agent sieht (Team-Tools nur für Teammitglieder) */
+  tools: (agentId: string) => ToolName[]
+  /** Liefert den Antworttext an den Agent; Fehler werden als Tool-Fehler gemeldet */
+  onToolCall: (agentId: string, name: ToolName, args: Record<string, unknown>) => Promise<string>
 }
 
 const SHOW_CODE_TOOL = {
@@ -50,11 +62,45 @@ const SHOW_CODE_TOOL = {
   }
 }
 
+const TEAM_MEMBERS_TOOL = {
+  name: 'team_members',
+  description:
+    'List the other agents in your DevHub team (name, role, current status). ' +
+    'Use it to find out whom to hand work to or ask.',
+  inputSchema: { type: 'object', properties: {} }
+}
+
+const SEND_TEAM_MESSAGE_TOOL = {
+  name: 'send_team_message',
+  description:
+    'Send a message to a teammate in your DevHub team. It is typed into their terminal as a new ' +
+    'prompt (queued if they are busy). Use it to hand over work, ask a question or report a result. ' +
+    'Be concise and self-contained (include file paths, what you did, what you need). ' +
+    'Do not send pure acknowledgements or thanks, to avoid endless back-and-forth.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      to: {
+        type: 'string',
+        description: 'Name of the teammate (see team_members), or "all" for every teammate'
+      },
+      message: { type: 'string', description: 'The message' }
+    },
+    required: ['to', 'message']
+  }
+}
+
+const TOOLS: Record<ToolName, object> = {
+  show_code: SHOW_CODE_TOOL,
+  team_members: TEAM_MEMBERS_TOOL,
+  send_team_message: SEND_TEAM_MESSAGE_TOOL
+}
+
 type JsonRpcMessage = {
   jsonrpc: '2.0'
   id?: string | number
   method?: string
-  params?: { protocolVersion?: string; name?: string; arguments?: ShowCodeArgs }
+  params?: { protocolVersion?: string; name?: string; arguments?: Record<string, unknown> }
 }
 
 export class AgentBridge {
@@ -138,16 +184,14 @@ export class AgentBridge {
       case 'ping':
         return ok({})
       case 'tools/list':
-        return ok({ tools: [SHOW_CODE_TOOL] })
+        return ok({ tools: this.handlers.tools(agentId).map((t) => TOOLS[t]) })
       case 'tools/call': {
-        if (msg.params?.name !== 'show_code') {
+        const name = msg.params?.name as ToolName
+        if (!this.handlers.tools(agentId).includes(name)) {
           return ok({ isError: true, content: [{ type: 'text', text: 'Unknown tool' }] })
         }
         try {
-          const text = await this.handlers.onShowCode(
-            agentId,
-            msg.params.arguments ?? ({} as ShowCodeArgs)
-          )
+          const text = await this.handlers.onToolCall(agentId, name, msg.params?.arguments ?? {})
           return ok({ content: [{ type: 'text', text }] })
         } catch (e) {
           return ok({ isError: true, content: [{ type: 'text', text: String(e) }] })
