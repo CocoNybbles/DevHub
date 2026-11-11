@@ -46,7 +46,8 @@ const DEFAULT_STATE: PersistedState = {
     projectFileApp: '',
     folderApp: '',
     voiceRememberLanguage: true,
-    voiceLanguage: null
+    voiceLanguage: null,
+    voiceFixedLanguage: null
   }
 }
 

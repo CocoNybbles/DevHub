@@ -166,8 +166,10 @@ export interface Settings {
   folderApp: string
   /** Zuletzt erkannte Sprache merken und bei der nächsten Aufnahme zuerst vorgeben (schneller) */
   voiceRememberLanguage: boolean
-  /** Gemerkte Sprache (whisper-Code, z. B. „de“), null = noch keine */
+  /** Gemerkte Sprache (whisper-Code, z. B. „de“), null = noch keine; Englisch wird nie gemerkt */
   voiceLanguage: string | null
+  /** Feste Sprache der Spracheingabe (whisper-Code), null = automatisch erkennen */
+  voiceFixedLanguage: string | null
 }
 
 export interface TranscribeResult {

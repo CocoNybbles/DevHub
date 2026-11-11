@@ -8,6 +8,7 @@ import HotkeyInput from './HotkeyInput'
 import Modal from './Modal'
 import ProgramInput from './ProgramInput'
 import VoiceModels from './VoiceModels'
+import { canRememberLanguage, FIXED_LANGUAGES } from '../../../shared/voiceLanguage'
 
 /** whisper-Sprachcode → „Deutsch“, „Englisch“ … (Fallback: Code) */
 function languageName(code: string): string {
@@ -250,17 +251,40 @@ function SettingsDialog(props: Props): React.JSX.Element {
         <small className="muted">
           Pro Agent abweichend einstellbar: Rechtsklick auf den Agent in der Liste.
         </small>
-        <label className="checkbox">
-          <input
-            type="checkbox"
-            checked={settings.voiceRememberLanguage}
-            onChange={(e) => update({ voiceRememberLanguage: e.target.checked })}
-          />
-          Zuletzt erkannte Sprache merken und zuerst verwenden (schnellere Erkennung)
-        </label>
-        {settings.voiceRememberLanguage && (
+        <div className="form">
+          <label>
+            <span>Gesprochene Sprache</span>
+            <select
+              value={settings.voiceFixedLanguage ?? ''}
+              onChange={(e) => update({ voiceFixedLanguage: e.target.value || null })}
+            >
+              <option value="">Automatisch erkennen</option>
+              {FIXED_LANGUAGES.map((code) => (
+                <option key={code} value={code}>
+                  Immer {languageName(code)}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+        {settings.voiceFixedLanguage ? (
           <small className="muted">
-            {settings.voiceLanguage ? (
+            Feste Sprache: am schnellsten und zuverlässigsten. Andere Sprachen werden dann
+            allerdings falsch erkannt bzw. übersetzt.
+          </small>
+        ) : (
+          <label className="checkbox">
+            <input
+              type="checkbox"
+              checked={settings.voiceRememberLanguage}
+              onChange={(e) => update({ voiceRememberLanguage: e.target.checked })}
+            />
+            Zuletzt erkannte Sprache merken und zuerst verwenden (schnellere Erkennung)
+          </label>
+        )}
+        {!settings.voiceFixedLanguage && settings.voiceRememberLanguage && (
+          <small className="muted">
+            {canRememberLanguage(settings.voiceLanguage) ? (
               <>
                 Gemerkt: <strong>{languageName(settings.voiceLanguage)}</strong> – wirkt das
                 Ergebnis unsicher, wird die Sprache neu erkannt.{' '}
@@ -269,7 +293,7 @@ function SettingsDialog(props: Props): React.JSX.Element {
                 </button>
               </>
             ) : (
-              'Noch keine Sprache gemerkt – wird bei der nächsten Aufnahme erkannt.'
+              'Noch keine Sprache gemerkt – wird bei der nächsten Aufnahme erkannt. Englisch wird nie gemerkt (whisper würde sonst andere Sprachen ins Englische übersetzen).'
             )}
           </small>
         )}

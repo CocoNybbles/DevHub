@@ -106,7 +106,8 @@ Lokale Windows-Desktop-App zum Verwalten von Projekten und den darin laufenden K
 
 **Sprachsteuerung**: Renderer nimmt WAV auf (`lib/recorder.ts`, 16 kHz mono) → `voice:transcribe` (whisper-cli, Priorität „niedriger als normal“, Threads = halbe Kerne) →
 
-- **Sprache merken** (`settings.voiceRememberLanguage`, Standard an; gemerkt in `settings.voiceLanguage`): zuerst `-l <gemerkt>` (≈1,5 s statt ≈3 s mit `auto`). Auswertung per `-ojf` (JSON: Sprache + Token-Wahrscheinlichkeit `p`). Leeres Ergebnis oder Ø p < 0,6 → zweiter Lauf mit `auto`, dessen Sprache gespeichert wird. Zusätzlich jede 5. Aufnahme `auto`, weil whisper bei erzwungenem `en` andere Sprachen unauffällig ins Englische übersetzt (p bleibt hoch); erzwungenes `de` bei englischer Sprache ergibt dagegen p ≈ 0,5. Die Job-Karte zeigt die gemerkte Sprache vorab (`[DE] Wandle in Text um …`), ohne gemerkte Sprache „Erkenne Sprache und Text …“; nach einem `auto`-Lauf lädt der Renderer die Einstellungen neu.
+- **Feste Sprache** (`settings.voiceFixedLanguage`, Einstellungen „Gesprochene Sprache“: Automatisch / Immer Deutsch / Immer Englisch): immer `-l <code>`, keine Erkennung, Merken entfällt.
+- **Sprache merken** (`settings.voiceRememberLanguage`, Standard an; gemerkt in `settings.voiceLanguage`): zuerst `-l <gemerkt>` (≈1,5 s statt ≈3 s mit `auto`). Auswertung per `-ojf` (JSON: Sprache + Token-Wahrscheinlichkeit `p`). Leeres Ergebnis oder Ø p < 0,6 → zweiter Lauf mit `auto`, dessen Sprache gespeichert wird. **Englisch wird nie gemerkt/vorgegeben** (`canRememberLanguage` in `shared/voiceLanguage.ts`): bei `-l en` übersetzt whisper deutsche Sprache ins Englische mit p = 0,66 (gemessen, Modell small) → Prüfung greift nicht (war ein Nutzer-Bug). Erzwungenes `de` bei englischer Sprache ergibt dagegen p ≈ 0,5. Zur Sicherheit weiterhin jede 5. Aufnahme `auto`. Die Job-Karte zeigt die gemerkte Sprache vorab (`[DE] Wandle in Text um …`), ohne gemerkte Sprache „Erkenne Sprache und Text …“; nach einem `auto`-Lauf lädt der Renderer die Einstellungen neu.
 - **Hintergrund:** „Fertig“ beendet nur die Aufnahme; Erkennung/Zuordnung laufen als `VoiceJob` weiter (Karten unten in der Mitte, mehrere gleichzeitig), neue Aufnahmen sind sofort möglich. Overlay lässt Klicks durch (`.voice-stack` mit `pointer-events: none`).
 - **Abschicken oder nur eintragen:** `agents:sendVoice` entscheidet im Main: `agent.voiceAutoSend` (pro Agent, Rechtsklick-Menü, persistiert) → sonst global `settings.voiceAutoSend`. Gilt auch für globale Befehle (`send`).
 - aktiver Agent (Standard `Strg+Shift+Leertaste` / Mikrofon in der Mitte): Text an Agent (`sendLine` = Text, 150 ms, Enter)
@@ -142,6 +143,7 @@ src/
   shared/types.ts          Gemeinsame Typen + DevHubApi
   shared/hotkeys.ts        Kürzel: Standardwerte, Tastendruck → Accelerator, Anzeigeformat
   shared/agentArgs.ts      Start-Flags: Tokenizer, Validierung, Zusammenführen global/Projekt
+  shared/voiceLanguage.ts  Welche Sprache gemerkt werden darf (nie Englisch), Auswahl feste Sprache
   main/
     index.ts               Fenster, IPC-Handler, globaler Hotkey, Mikrofon-Berechtigung
     agents.ts              AgentManager: node-pty, Start/Stop/Rename/Restore, Hook-Status, show_code

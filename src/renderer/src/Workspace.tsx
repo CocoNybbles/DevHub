@@ -31,6 +31,7 @@ import {
 import { Recorder } from './lib/recorder'
 import { errorText } from './lib/errors'
 import { shownAgentIds, toggleAgent, toggleAgents, toggleProject } from './lib/selection'
+import { canRememberLanguage } from '../../shared/voiceLanguage'
 
 type VoiceTarget = { kind: 'agent'; agentId: string } | { kind: 'global' }
 
@@ -51,7 +52,8 @@ function Workspace(): React.JSX.Element {
     projectFileApp: '',
     folderApp: '',
     voiceRememberLanguage: true,
-    voiceLanguage: null
+    voiceLanguage: null,
+    voiceFixedLanguage: null
   })
   const [voiceStatus, setVoiceStatus] = useState<VoiceStatus | null>(null)
   const [toast, setToast] = useState<string | null>(null)
@@ -289,7 +291,11 @@ function Workspace(): React.JSX.Element {
         ? (agents.find((a) => a.id === target.agentId)?.name ?? 'Agent')
         : 'Sprachbefehl'
     // Gemerkte Sprache anzeigen, damit sichtbar ist, dass die automatische Erkennung entfällt
-    const knownLanguage = settings.voiceRememberLanguage ? settings.voiceLanguage : null
+    const knownLanguage =
+      settings.voiceFixedLanguage ??
+      (settings.voiceRememberLanguage && canRememberLanguage(settings.voiceLanguage)
+        ? settings.voiceLanguage
+        : null)
     setVoiceJobs((jobs) => [
       ...jobs,
       {
@@ -349,7 +355,13 @@ function Workspace(): React.JSX.Element {
     } catch (e) {
       fail(errorText(e))
     }
-  }, [agents, updateJob, settings.voiceRememberLanguage, settings.voiceLanguage])
+  }, [
+    agents,
+    updateJob,
+    settings.voiceRememberLanguage,
+    settings.voiceLanguage,
+    settings.voiceFixedLanguage
+  ])
 
   const cancelVoice = useCallback(() => {
     recorder.current?.cancel()

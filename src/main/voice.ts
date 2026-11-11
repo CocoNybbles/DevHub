@@ -13,6 +13,7 @@ import type {
   WhisperModelInfo
 } from '../shared/types'
 import { dataDir, getState, updateState } from './store'
+import { canRememberLanguage } from '../shared/voiceLanguage'
 
 /**
  * Sprache → Text mit whisper.cpp (lokal, offline).
@@ -130,23 +131,27 @@ interface WhisperResult {
 
 /**
  * WAV (16 kHz, mono, 16 bit) → Text.
- * Mit `voiceRememberLanguage` wird zuerst die zuletzt erkannte Sprache vorgegeben (spart die
+ * `voiceFixedLanguage` gesetzt: immer diese Sprache (keine Erkennung).
+ * Sonst mit `voiceRememberLanguage`: zuerst die zuletzt erkannte Sprache vorgeben (spart die
  * Spracherkennung, ≈ halbe Laufzeit). Ist das Ergebnis leer oder unsicher, folgt ein Durchlauf
- * mit automatischer Erkennung, dessen Sprache dann gespeichert wird.
+ * mit automatischer Erkennung, dessen Sprache dann gespeichert wird (außer Englisch, s. o.).
  */
 export async function transcribe(wav: ArrayBuffer): Promise<TranscribeResult> {
   const status = voiceStatus()
   if (!status.activeModel) throw new Error('Sprachsteuerung ist noch nicht eingerichtet')
   const model = modelPath(status.activeModel)
-  const { voiceRememberLanguage, voiceLanguage } = getState().settings
+  const { voiceRememberLanguage, voiceLanguage, voiceFixedLanguage } = getState().settings
 
   const file = join(tmpdir(), `devhub-voice-${randomUUID()}.wav`)
   await writeFile(file, Buffer.from(wav))
   try {
-    // Jede n-te Aufnahme trotzdem automatisch erkennen: Bei gemerktem „en“ übersetzt whisper
-    // andere Sprachen unauffällig ins Englische, das würde die Konfidenz-Prüfung nicht bemerken.
+    if (voiceFixedLanguage) {
+      const r = await runWhisper(model, file, voiceFixedLanguage)
+      return { text: r.text, language: voiceFixedLanguage, remembered: true }
+    }
+    // Jede n-te Aufnahme trotzdem automatisch erkennen (falls whisper doch einmal übersetzt)
     const verify = ++sinceAutoDetect >= AUTO_DETECT_EVERY
-    if (voiceRememberLanguage && voiceLanguage && !verify) {
+    if (voiceRememberLanguage && canRememberLanguage(voiceLanguage) && !verify) {
       const r = await runWhisper(model, file, voiceLanguage)
       if (r.text && r.confidence >= MIN_CONFIDENCE) {
         return { text: r.text, language: r.language, remembered: true }
@@ -155,8 +160,9 @@ export async function transcribe(wav: ArrayBuffer): Promise<TranscribeResult> {
     }
     const r = await runWhisper(model, file, 'auto')
     sinceAutoDetect = 0
-    if (voiceRememberLanguage && r.text && r.language && r.language !== voiceLanguage) {
-      updateState((s) => (s.settings.voiceLanguage = r.language))
+    if (voiceRememberLanguage && r.text && r.language) {
+      const remember = canRememberLanguage(r.language) ? r.language : null
+      if (remember !== voiceLanguage) updateState((s) => (s.settings.voiceLanguage = remember))
     }
     return { text: r.text, language: r.language, remembered: false }
   } finally {
