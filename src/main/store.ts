@@ -85,6 +85,19 @@ export function getState(): PersistedState {
   return state!
 }
 
+/**
+ * Ordnet die Einträge mit den Ids `ids` in dieser Reihenfolge an. Sie nehmen die Plätze ein,
+ * die sie bisher in der Liste belegt haben; alle anderen Einträge bleiben, wo sie sind.
+ * So lässt sich auch nur eine Gruppe (z. B. die Agents eines Teams) umsortieren.
+ */
+export function applyOrder<T extends { id: string }>(list: T[], ids: string[]): T[] {
+  const byId = new Map(list.map((x) => [x.id, x]))
+  const ordered = [...new Set(ids)].filter((id) => byId.has(id)).map((id) => byId.get(id)!)
+  const moved = new Set(ordered.map((x) => x.id))
+  let i = 0
+  return list.map((x) => (moved.has(x.id) ? ordered[i++] : x))
+}
+
 /** Ändert den Zustand und schreibt ihn sofort (atomar über Temp-Datei). */
 export function updateState(mutator: (s: PersistedState) => void): void {
   const s = getState()

@@ -477,6 +477,12 @@ function Workspace(): React.JSX.Element {
           }}
           onStopAgent={stopAgent}
           onRenameAgent={(id, name) => window.api.agents.rename(id, name).catch(showError)}
+          onReorderProjects={(ids) => {
+            // sofort anzeigen, dann gespeicherte Liste übernehmen
+            setProjects((list) => ids.map((id) => list.find((p) => p.id === id)!).filter(Boolean))
+            window.api.projects.reorder(ids).then(setProjects).catch(showError)
+          }}
+          onReorderAgents={(ids) => window.api.agents.reorder(ids).catch(showError)}
           globalVoiceAutoSend={settings.voiceAutoSend}
           onSetVoiceAutoSend={(id, value) =>
             window.api.agents.setVoiceAutoSend(id, value).catch(showError)

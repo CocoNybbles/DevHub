@@ -202,6 +202,8 @@ export interface DevHubApi {
     list: () => Promise<Project[]>
     save: (input: ProjectInput) => Promise<Project>
     remove: (id: string) => Promise<void>
+    /** Neue Reihenfolge (Ids in Anzeigereihenfolge); liefert die sortierte Liste */
+    reorder: (ids: string[]) => Promise<Project[]>
     openProjectFile: (id: string) => Promise<void>
     /** Ordner (Pfad 3) öffnen: Programm Projekt → global → VS Code → Explorer */
     openFolder: (id: string) => Promise<void>
@@ -220,6 +222,8 @@ export interface DevHubApi {
     start: (projectId: string, task?: string, templateId?: string) => Promise<Agent>
     stop: (id: string) => Promise<void>
     rename: (id: string, name: string) => Promise<void>
+    /** Neue Reihenfolge einer Gruppe (Agents eines Projekts/Teams); andere bleiben stehen */
+    reorder: (ids: string[]) => Promise<void>
     write: (id: string, data: string) => void
     /** Text als Anweisung senden (Text + Enter). */
     sendLine: (id: string, text: string) => Promise<void>

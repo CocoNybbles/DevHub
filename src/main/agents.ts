@@ -5,7 +5,7 @@ import { homedir } from 'os'
 import { isAbsolute, join, resolve as resolvePath } from 'path'
 import type { Agent, AgentStatus, CodeFocus, Team, TeamMember } from '../shared/types'
 import { AgentBridge, HookEvent, ShowCodeArgs, TeamMessageArgs, ToolName } from './agentBridge'
-import { dataDir, getState, updateState, type PersistedAgent } from './store'
+import { applyOrder, dataDir, getState, updateState, type PersistedAgent } from './store'
 import { claudeEnv, resolveClaude } from './tools'
 import { isValidModelName, mergeAgentArgs } from '../shared/agentArgs'
 
@@ -75,8 +75,17 @@ export class AgentManager {
     return this.bridge.start()
   }
 
+  /** Laufende Agents in der gespeicherten Reihenfolge (vom Nutzer per Drag & Drop festgelegt). */
   list(): Agent[] {
-    return [...this.running.values()].map((r) => r.agent)
+    const order = new Map(getState().agents.map((a, i) => [a.id, i]))
+    const pos = (id: string): number => order.get(id) ?? Number.MAX_SAFE_INTEGER
+    return [...this.running.values()].map((r) => r.agent).sort((a, b) => pos(a.id) - pos(b.id))
+  }
+
+  /** Neue Reihenfolge für eine Gruppe von Agents (Projekt oder Team); andere bleiben stehen. */
+  reorder(ids: string[]): void {
+    updateState((s) => (s.agents = applyOrder(s.agents, ids)))
+    this.emitChanged()
   }
 
   /** Laufende Teams */

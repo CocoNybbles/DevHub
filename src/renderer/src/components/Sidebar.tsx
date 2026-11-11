@@ -12,12 +12,30 @@ import {
   PlayIcon,
   OpenFileIcon,
   PlusIcon,
+  SortIcon,
   TeamIcon
 } from './Icons'
 
 /** „rider64.exe“ statt vollem Pfad; leer = Bezeichnung des Standardprogramms */
 const programLabel = (exe: string, fallback: string): string =>
   exe ? (exe.split(/[\\/]/).pop() ?? exe) : fallback
+
+/** Alphanumerisch aufsteigend: „Agent 2“ vor „Agent 10“, Groß-/Kleinschreibung egal */
+const byName = (a: { name: string }, b: { name: string }): number =>
+  a.name.localeCompare(b.name, 'de', { numeric: true, sensitivity: 'base' })
+
+/** Ids einer Gruppe nach dem Verschieben von `moved` vor/hinter `target` */
+function moveId(ids: string[], moved: string, target: string, after: boolean): string[] {
+  const rest = ids.filter((id) => id !== moved)
+  const i = rest.indexOf(target)
+  if (i < 0) return ids
+  rest.splice(after ? i + 1 : i, 0, moved)
+  return rest
+}
+
+/** Leitung eines Teams = zuerst gestartetes Mitglied (unabhängig von der Anzeigereihenfolge) */
+const leadOf = (members: Agent[]): Agent | undefined =>
+  members.reduce<Agent | undefined>((l, a) => (!l || a.createdAt < l.createdAt ? a : l), undefined)
 
 interface Props {
   projects: Project[]
@@ -43,6 +61,10 @@ interface Props {
   onStopTeam: (team: Team) => void
   onStopAgent: (agent: Agent) => void
   onRenameAgent: (id: string, name: string) => void
+  /** Neue Reihenfolge aller Projekte (Ids) */
+  onReorderProjects: (ids: string[]) => void
+  /** Neue Reihenfolge einer Agent-Gruppe (Projekt ohne Team bzw. Team) */
+  onReorderAgents: (ids: string[]) => void
   /** Globale Einstellung „Sprachtext automatisch abschicken“ (Anzeige im Menü) */
   globalVoiceAutoSend: boolean
   /** undefined = globale Einstellung verwenden */
@@ -72,6 +94,54 @@ function Sidebar(props: Props): React.JSX.Element {
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set())
   const [renaming, setRenaming] = useState<string | null>(null)
   const [menu, setMenu] = useState<MenuState | null>(null)
+  /** Gezogene Zeile; `group` = nur innerhalb dieser Gruppe ablegbar */
+  const [drag, setDrag] = useState<{ group: string; id: string } | null>(null)
+  const [drop, setDrop] = useState<{ id: string; after: boolean } | null>(null)
+
+  /**
+   * Drag & Drop für eine Zeile. `group`: Projekte bzw. Agents eines Projekts (ohne Team) /
+   * eines Teams – verschoben wird nur innerhalb derselben Gruppe. `ids` = Gruppe in Anzeigereihenfolge.
+   */
+  const dnd = (
+    group: string,
+    id: string,
+    ids: string[],
+    onReorder: (ids: string[]) => void,
+    enabled = true
+  ): React.HTMLAttributes<HTMLDivElement> & { draggable: boolean; className: string } => ({
+    draggable: enabled,
+    className: [
+      drag?.id === id ? 'dragging' : '',
+      drop?.id === id ? (drop.after ? 'drop-after' : 'drop-before') : ''
+    ].join(' '),
+    onDragStart: (e) => {
+      e.dataTransfer.effectAllowed = 'move'
+      e.dataTransfer.setData('text/plain', id)
+      setDrag({ group, id })
+    },
+    onDragOver: (e) => {
+      if (drag?.group !== group) return
+      e.preventDefault()
+      e.dataTransfer.dropEffect = 'move'
+      const r = e.currentTarget.getBoundingClientRect()
+      const after = e.clientY > r.top + r.height / 2
+      if (drag.id === id) return setDrop(null)
+      if (drop?.id !== id || drop.after !== after) setDrop({ id, after })
+    },
+    onDrop: (e) => {
+      e.preventDefault()
+      if (drag?.group === group && drop && drag.id !== drop.id) {
+        const next = moveId(ids, drag.id, drop.id, drop.after)
+        if (next.join() !== ids.join()) onReorder(next)
+      }
+      setDrag(null)
+      setDrop(null)
+    },
+    onDragEnd: () => {
+      setDrag(null)
+      setDrop(null)
+    }
+  })
 
   /** Menüeinträge zum Starten: normaler Agent, je Vorlage ein Eintrag, je Team ein Eintrag. */
   const startItems = (projectId: string): MenuItem[] => [
@@ -100,74 +170,87 @@ function Sidebar(props: Props): React.JSX.Element {
     (selection?.kind === 'agent' && selection.agentId === id) ||
     (selection?.kind === 'agents' && selection.agentIds.includes(id))
 
-  const agentRow = (a: Agent, inTeam: boolean): React.JSX.Element => (
-    <div
-      key={a.id}
-      className={[
-        'row agent-row',
-        inTeam ? 'in-team' : '',
-        a.status === 'needsInput' ? 'attention' : '',
-        isShown(a.id) ? 'selected' : ''
-      ].join(' ')}
-      onClick={(e) => props.onSelectAgent(a.id, e.ctrlKey || e.metaKey)}
-      onContextMenu={(e) => {
-        e.preventDefault()
-        const voice = (label: string, value: boolean | undefined): MenuItem => ({
-          label,
-          checked: a.voiceAutoSend === value,
-          action: () => props.onSetVoiceAutoSend(a.id, value)
-        })
-        setMenu({
-          x: e.clientX,
-          y: e.clientY,
-          items: [
-            { label: 'Umbenennen', action: () => setRenaming(a.id) },
-            { label: 'Beenden', danger: true, action: () => props.onStopAgent(a) },
-            { label: 'Sprach-Anweisungen', heading: true, action: () => {} },
-            voice(
-              `Wie global (${props.globalVoiceAutoSend ? 'abschicken' : 'nur eintragen'})`,
-              undefined
-            ),
-            voice('Automatisch abschicken', true),
-            voice('Nur ins Terminal eintragen', false)
-          ]
-        })
-      }}
-      title={`${STATUS_LABEL[a.status]}${a.statusMessage ? ` – ${a.statusMessage}` : ''}${a.model ? `\nModell: ${a.model}` : ''}\nStrg+Klick: zum Raster hinzufügen/entfernen\nRechtsklick: umbenennen, Sprach-Einstellung`}
-    >
-      <span className={`dot ${a.status}`} />
-      {renaming === a.id ? (
-        <RenameInput
-          initial={a.name}
-          onDone={(name) => {
-            setRenaming(null)
-            if (name && name !== a.name) props.onRenameAgent(a.id, name)
-          }}
-        />
-      ) : (
-        <span className="row-name">
-          {a.name}
-          {a.status === 'needsInput' && a.statusMessage && (
-            <span className="row-sub">{a.statusMessage}</span>
-          )}
-        </span>
-      )}
-      <button
-        className="icon stop-agent"
-        title="Agent beenden"
-        onClick={(e) => {
-          e.stopPropagation()
-          props.onStopAgent(a)
+  /** `group`/`groupIds`: Agents, zwischen denen per Drag & Drop umsortiert werden kann */
+  const agentRow = (
+    a: Agent,
+    group: string,
+    groupIds: string[],
+    lead = false
+  ): React.JSX.Element => {
+    const d = dnd(group, a.id, groupIds, props.onReorderAgents, renaming !== a.id)
+    return (
+      <div
+        key={a.id}
+        {...d}
+        className={[
+          'row agent-row',
+          group.startsWith('team:') ? 'in-team' : '',
+          a.status === 'needsInput' ? 'attention' : '',
+          isShown(a.id) ? 'selected' : '',
+          d.className
+        ].join(' ')}
+        onClick={(e) => props.onSelectAgent(a.id, e.ctrlKey || e.metaKey)}
+        onContextMenu={(e) => {
+          e.preventDefault()
+          const voice = (label: string, value: boolean | undefined): MenuItem => ({
+            label,
+            checked: a.voiceAutoSend === value,
+            action: () => props.onSetVoiceAutoSend(a.id, value)
+          })
+          setMenu({
+            x: e.clientX,
+            y: e.clientY,
+            items: [
+              { label: 'Umbenennen', action: () => setRenaming(a.id) },
+              { label: 'Beenden', danger: true, action: () => props.onStopAgent(a) },
+              { label: 'Sprach-Anweisungen', heading: true, action: () => {} },
+              voice(
+                `Wie global (${props.globalVoiceAutoSend ? 'abschicken' : 'nur eintragen'})`,
+                undefined
+              ),
+              voice('Automatisch abschicken', true),
+              voice('Nur ins Terminal eintragen', false)
+            ]
+          })
         }}
+        title={`${STATUS_LABEL[a.status]}${a.statusMessage ? ` – ${a.statusMessage}` : ''}${a.model ? `\nModell: ${a.model}` : ''}${lead ? '\nLeitet das Team' : ''}\nStrg+Klick: zum Raster hinzufügen/entfernen\nZiehen: Reihenfolge ändern\nRechtsklick: umbenennen, Sprach-Einstellung`}
       >
-        <CloseIcon />
-      </button>
-    </div>
-  )
+        <span className={`dot ${a.status}`} />
+        {renaming === a.id ? (
+          <RenameInput
+            initial={a.name}
+            onDone={(name) => {
+              setRenaming(null)
+              if (name && name !== a.name) props.onRenameAgent(a.id, name)
+            }}
+          />
+        ) : (
+          <span className="row-name">
+            {a.name}
+            {lead && <span className="team-tag">Leitung</span>}
+            {a.status === 'needsInput' && a.statusMessage && (
+              <span className="row-sub">{a.statusMessage}</span>
+            )}
+          </span>
+        )}
+        <button
+          className="icon stop-agent"
+          title="Agent beenden"
+          onClick={(e) => {
+            e.stopPropagation()
+            props.onStopAgent(a)
+          }}
+        >
+          <CloseIcon />
+        </button>
+      </div>
+    )
+  }
 
-  /** Teamkopf + eingerückte Mitglieder (Reihenfolge wie beim Start, erstes = Leitung). */
+  /** Teamkopf + eingerückte Mitglieder (Reihenfolge frei sortierbar, Leitung = zuerst gestartet). */
   const teamGroup = (team: Team, members: Agent[]): React.JSX.Element => {
     const ids = members.map((a) => a.id)
+    const lead = leadOf(members)
     const allShown = selection?.kind === 'agents' && ids.every((id) => isShown(id))
     const attention = members.some((a) => a.status === 'needsInput')
     const isOpen = !collapsed.has(team.id)
@@ -183,11 +266,15 @@ function Sidebar(props: Props): React.JSX.Element {
               y: e.clientY,
               items: [
                 { label: 'Im Raster zeigen', action: () => props.onSelectTeam(team, false) },
+                {
+                  label: 'Mitglieder nach Name sortieren',
+                  action: () => props.onReorderAgents([...members].sort(byName).map((a) => a.id))
+                },
                 { label: 'Team beenden', danger: true, action: () => props.onStopTeam(team) }
               ]
             })
           }}
-          title={`${team.temporary ? 'Temporäres Team' : 'Team'} „${team.name}“ – Mitglieder dürfen sich Nachrichten schicken\nLeitung: ${members[0]?.name ?? '–'}\nKlick: alle im Raster · Strg+Klick: hinzufügen/entfernen · Rechtsklick: beenden`}
+          title={`${team.temporary ? 'Temporäres Team' : 'Team'} „${team.name}“ – Mitglieder dürfen sich Nachrichten schicken\nLeitung: ${lead?.name ?? '–'}\nKlick: alle im Raster · Strg+Klick: hinzufügen/entfernen · Rechtsklick: beenden`}
         >
           <button
             className={`chevron ${isOpen ? 'open' : ''}`}
@@ -216,7 +303,11 @@ function Sidebar(props: Props): React.JSX.Element {
             <CloseIcon />
           </button>
         </div>
-        {isOpen && <div className="team-members">{members.map((a) => agentRow(a, true))}</div>}
+        {isOpen && (
+          <div className="team-members">
+            {members.map((a) => agentRow(a, `team:${team.id}`, ids, a.id === lead?.id))}
+          </div>
+        )}
       </div>
     )
   }
@@ -232,6 +323,14 @@ function Sidebar(props: Props): React.JSX.Element {
             onClick={props.onGlobalVoice}
           >
             <MicIcon />
+          </button>
+          <button
+            className="icon"
+            title="Projekte alphanumerisch aufsteigend sortieren"
+            disabled={projects.length < 2}
+            onClick={() => props.onReorderProjects([...projects].sort(byName).map((p) => p.id))}
+          >
+            <SortIcon />
           </button>
           <button className="icon" title="Einstellungen" onClick={props.onOpenSettings}>
             <GearIcon />
@@ -256,6 +355,7 @@ function Sidebar(props: Props): React.JSX.Element {
         )}
 
         {projects.map((p) => {
+          // Reihenfolge der Agents kommt aus dem Main (gespeichert, per Drag & Drop änderbar)
           const projectAgents = agents.filter((a) => a.projectId === p.id)
           const projectTeams = teams
             .filter((t) => t.projectId === p.id)
@@ -263,12 +363,20 @@ function Sidebar(props: Props): React.JSX.Element {
           const teamIds = new Set(projectTeams.map((t) => t.id))
           // Agents ohne (bekanntes) Team stehen unter den Teams
           const loose = projectAgents.filter((a) => !a.teamId || !teamIds.has(a.teamId))
+          const looseIds = loose.map((a) => a.id)
           const isOpen = !collapsed.has(p.id)
           const attention = projectAgents.some((a) => a.status === 'needsInput')
+          const d = dnd(
+            'projects',
+            p.id,
+            projects.map((x) => x.id),
+            props.onReorderProjects
+          )
           return (
             <div key={p.id} className="tree-project">
               <div
-                className={`row project-row ${selection?.kind === 'project' && selection.projectId === p.id ? 'selected' : ''}`}
+                {...d}
+                className={`row project-row ${selection?.kind === 'project' && selection.projectId === p.id ? 'selected' : ''} ${d.className}`}
                 onClick={(e) => props.onSelectProject(p.id, e.ctrlKey || e.metaKey)}
                 onContextMenu={(e) => {
                   e.preventDefault()
@@ -278,12 +386,24 @@ function Sidebar(props: Props): React.JSX.Element {
                     items: [
                       ...startItems(p.id),
                       { label: 'Projekt', heading: true, action: () => {} },
+                      ...(projectAgents.length > 1
+                        ? [
+                            {
+                              // Alle auf einmal: Teams und Agents ohne Team sind getrennte Gruppen
+                              label: 'Agents nach Name sortieren',
+                              action: () =>
+                                props.onReorderAgents(
+                                  [...projectAgents].sort(byName).map((a) => a.id)
+                                )
+                            }
+                          ]
+                        : []),
                       { label: 'Bearbeiten …', action: () => props.onEditProject(p) },
                       { label: 'Entfernen', danger: true, action: () => props.onRemoveProject(p) }
                     ]
                   })
                 }}
-                title={`${p.agentPath}\nStrg+Klick: alle Agents zum Raster hinzufügen/entfernen`}
+                title={`${p.agentPath}\nStrg+Klick: alle Agents zum Raster hinzufügen/entfernen\nZiehen: Reihenfolge ändern`}
               >
                 <button
                   className={`chevron ${isOpen ? 'open' : ''}`}
@@ -352,12 +472,10 @@ function Sidebar(props: Props): React.JSX.Element {
                   {projectTeams.map((t) =>
                     teamGroup(
                       t,
-                      projectAgents
-                        .filter((a) => a.teamId === t.id)
-                        .sort((a, b) => a.createdAt - b.createdAt)
+                      projectAgents.filter((a) => a.teamId === t.id)
                     )
                   )}
-                  {loose.map((a) => agentRow(a, false))}
+                  {loose.map((a) => agentRow(a, `project:${p.id}`, looseIds))}
                 </>
               )}
             </div>

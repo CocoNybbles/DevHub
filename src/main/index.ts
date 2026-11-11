@@ -26,7 +26,7 @@ import type {
 } from '../shared/types'
 import { checkClaudeAuth, startClaudeLogin } from './claudeAuth'
 import { AgentManager } from './agents'
-import { getState, updateState } from './store'
+import { applyOrder, getState, updateState } from './store'
 import {
   findSolution,
   isVSCodeInstalled,
@@ -198,6 +198,10 @@ function registerIpc(): void {
       s.agents = s.agents.filter((a) => a.projectId !== id)
     })
   })
+  ipcMain.handle('projects:reorder', (_, ids: string[]) => {
+    updateState((s) => (s.projects = applyOrder(s.projects, ids)))
+    return getState().projects
+  })
   ipcMain.handle('projects:openProjectFile', async (_, id: string) => {
     const p = project(id)
     if (!p.projectFile) return
@@ -353,6 +357,7 @@ function registerIpc(): void {
   )
   ipcMain.handle('agents:stop', (_, id: string) => agents.stop(id))
   ipcMain.handle('agents:rename', (_, id: string, name: string) => agents.rename(id, name))
+  ipcMain.handle('agents:reorder', (_, ids: string[]) => agents.reorder(ids))
   ipcMain.handle('agents:sendLine', (_, id: string, text: string) => agents.sendLine(id, text))
   ipcMain.handle('agents:sendVoice', (_, id: string, text: string) => agents.sendVoice(id, text))
   ipcMain.handle('agents:setVoiceAutoSend', (_, id: string, value?: boolean) =>

@@ -28,6 +28,7 @@ Lokale Windows-Desktop-App zum Verwalten von Projekten und den darin laufenden K
   - Agents heißen standardmäßig „Agent 1“, „Agent 2“, … — Rechtsklick-Menü: Umbenennen, Beenden, Sprachtext abschicken/eintragen (pro Agent)
   - Agents, die eine Frage/Input brauchen, werden hervorgehoben, bis sie weiterarbeiten — links in der Liste und im Raster (gelber Rahmen + Frage im Zellenkopf, `.grid-cell.attention`; aktiv + wartend = gelber Rahmen mit Akzentlinie unter dem Kopf)
   - Agents können über die Liste beendet werden
+  - **Sortieren:** Projekte per Drag & Drop + Button „A→Z“ im Kopf (`localeCompare` mit `numeric`); Agents per Drag & Drop nur innerhalb ihrer Gruppe (Projekt ohne Team bzw. Team), dazu Rechtsklick „… nach Name sortieren“. Reihenfolge = Reihenfolge der Arrays `state.projects`/`state.agents` (`projects:reorder`, `agents:reorder` → `applyOrder` in `store.ts`, ordnet nur die übergebenen Ids um); `AgentManager.list()` liefert in dieser Reihenfolge (gilt auch fürs Raster)
 - Mitte: Terminal des ausgewählten Agents (`claude.exe` direkt per ConPTY, **ohne** Shell dazwischen – so beendet `/exit` den Agent wirklich)
   - Klick auf ein Projekt → alle Agents des Projekts im Raster
   - **Strg+Klick** (projektübergreifend): Agent zum Raster hinzufügen/entfernen; auf ein Projekt = alle seine Agents. Ausgangspunkt ist die aktuelle Ansicht (auch ein Projekt-Raster). Auswahl-Typ `{ kind: 'agents', agentIds }`, Logik in `lib/selection.ts`; 1 Agent → Einzelansicht, 0 → leer
@@ -55,7 +56,7 @@ Lokale Windows-Desktop-App zum Verwalten von Projekten und den darin laufenden K
 
 - Team-Vorlagen (`TeamTemplate`, Einstellungen → „Teams“, `TeamTemplateDialog`): Name (nicht „Team N“), 2–8 Mitglieder (vordefinierte oder normale Agents, Reihenfolge änderbar), gemeinsame Richtlinien (`DictationTextarea`)
 - Laufendes Team (`Team`, `state.teams`): aus Vorlage oder **temporär** per Sprache („Starte einen Entwickler und einen Reviewer als Team für …“, Name sonst „Team N“). Agents tragen `teamId`; Team verschwindet mit dem letzten Mitglied (`removeEmptyTeams`)
-- `AgentManager.startTeam`: erst alle Agents speichern (Namen + Teamkollegen fest, `createdAt` fortlaufend → Reihenfolge eindeutig), dann starten. **Erstes Mitglied leitet** und bekommt die Aufgabe; System-Prompt (`teamContext`) erklärt Rolle, Kollegen, Team-Richtlinien
+- `AgentManager.startTeam`: erst alle Agents speichern (Namen + Teamkollegen fest, `createdAt` fortlaufend → Reihenfolge eindeutig), dann starten. **Erstes Mitglied leitet** (= kleinstes `createdAt`, **nicht** die Anzeigereihenfolge, die frei sortierbar ist; Sidebar markiert es mit „Leitung“) und bekommt die Aufgabe; System-Prompt (`teamContext`) erklärt Rolle, Kollegen, Team-Richtlinien
 - Kommunikation: MCP-Tools `team_members` + `send_team_message(to|"all", message)` nur für Teammitglieder (Bridge fragt `tools(agentId)`), nur innerhalb des Teams. Zustellung = `sendLine` ins Terminal des Empfängers mit Präfix `[Team message from X]`; vor erster Ausgabe gepuffert (`pending`), nicht bei offener `AskUserQuestion`
 - Links: Teamkopf (Icon, „temporär“, Anzahl, ✕ = Team beenden) mit eingerückten Mitgliedern; Klick = Raster (`kind: 'agents'`), Strg+Klick = hinzufügen/entfernen (`toggleAgents`)
 - Sprache: `start_team` (Vorlage oder `members`-Liste) · laufendes Team per Name ansprechen → geht an die Leitung
@@ -180,6 +181,7 @@ Typ in `DevHubApi` (`shared/types.ts`). Alle drei immer zusammen anpassen. Ereig
 - [x] Sprach-Kürzel in den Einstellungen änderbar — Build/Typcheck ok, **in der UI noch nicht getestet**
 - [x] Start-Flags global + pro Projekt — Parser getestet, claude-Verhalten per PTY geprüft (unbekanntes Flag → Exit 1, `--enable-auto-mode` ist gültig, aber undokumentiert); **in der UI noch nicht getestet**
 - [x] Freies Raster per Strg+Klick — Auswahl-Logik per Skript getestet, **in der UI noch nicht getestet**
+- [x] Projekte/Agents sortieren (Drag & Drop, A→Z) — Build/Lint ok, App startet; **Ziehen in der UI noch nicht getestet**
 - [x] Teams (fest + temporär per Sprache, Kommunikation per MCP) — Router mit echtem `claude -p` getestet (6 Fälle: Team-Vorlage, Ad-hoc-Team mit Aufgabe/Name/„zwei Entwickler“/normale Agents, Einzelstart bleibt `start`, Team ansprechen → Leitung); Team-Tools über den echten Bridge von `claude -p` aufgerufen; **Zustellung zwischen laufenden Agents und UI in der App noch nicht getestet**
 - [x] Vordefinierte Agents (Vorlagen) — Router mit echtem `claude -p` getestet (7 Fälle: Vorlage de/en, verhörter Name, Modell aus Sprache, laufender Agent wird angesprochen statt neu gestartet), mehrzeilige Richtlinien per node-pty an claude getestet; **UI/Diktat in der App noch nicht getestet**
 - [x] Modell per Sprachbefehl („Starte mit Opus einen Agent für …“) — Router-Prompt mit echtem `claude -p` getestet (de/en, „Sonett“, Version), Flag-Zusammenführung getestet; **Agent-Start in der App noch nicht getestet**

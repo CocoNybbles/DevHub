@@ -63,6 +63,16 @@ export const CodeIcon = ({ size = 14 }: P): React.JSX.Element =>
   svg(size, <path d="M5.5 4.5L2 8l3.5 3.5M10.5 4.5L14 8l-3.5 3.5" />)
 
 /** Team (zwei Personen) */
+/** A→Z mit Pfeil nach unten: alphabetisch aufsteigend sortieren */
+export const SortIcon = ({ size = 14 }: P): React.JSX.Element =>
+  svg(
+    size,
+    <>
+      <path d="M2.5 7l2-5 2 5M3.2 5.3h2.6M2.5 9.5h4l-4 4.5h4" />
+      <path d="M11.5 2.5v11M9 11l2.5 2.5L14 11" />
+    </>
+  )
+
 export const TeamIcon = ({ size = 13 }: P): React.JSX.Element =>
   svg(
     size,
