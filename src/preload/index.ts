@@ -50,7 +50,12 @@ const api: DevHubApi = {
   code: {
     readFile: (path) => invoke('code:readFile', path),
     openInVSCode: (path, line) => invoke('code:openInVSCode', path, line),
-    onFocus: (cb) => subscribe('code:focus', cb)
+    onFocus: (cb) => subscribe('code:focus', cb),
+    snippets: () => invoke('code:snippets'),
+    onSnippets: (cb) => subscribe('code:snippets', cb)
+  },
+  clipboard: {
+    writeText: (text) => invoke('clipboard:writeText', text)
   },
   voice: {
     status: () => invoke('voice:status'),

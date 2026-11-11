@@ -1,34 +1,100 @@
 import { useEffect, useRef, useState } from 'react'
-// Schlanker Import: Editor-Kern + Syntax-Hervorhebung (ohne TS/JSON/CSS/HTML-Sprachdienste)
-import * as monaco from 'monaco-editor/editor/editor.api'
-import 'monaco-editor/basic-languages/monaco.contribution'
-import EditorWorker from 'monaco-editor/editor/editor.worker?worker'
-import type { CodeFocus } from '../../../shared/types'
+import type { CodeFocus, CodeSnippet } from '../../../shared/types'
+import { languageForPath, monaco } from '../lib/monaco'
 import { CodeIcon } from './Icons'
-
-// Nur der Basis-Worker: Ansicht ist schreibgeschützt, Syntax-Hervorhebung braucht keine Sprach-Worker
-self.MonacoEnvironment = { getWorker: () => new EditorWorker() }
+import SnippetList from './SnippetList'
 
 interface Props {
-  focus: CodeFocus
+  /** Code-Stelle aus `show_code` (null = keine) */
+  focus: CodeFocus | null
+  /** Code-Blöcke aus den Antworten des aktiven Agents, neueste zuerst */
+  snippets: CodeSnippet[]
+  /** Name des Agents, von dem Fokus/Snippets stammen */
   agentName?: string
   vscodeInstalled: boolean
 }
 
-function languageFor(path: string): string {
-  const ext = '.' + (path.split('.').pop() ?? '').toLowerCase()
-  const name = path.split(/[\\/]/).pop()?.toLowerCase() ?? ''
-  const lang = monaco.languages
-    .getLanguages()
-    .find((l) => l.extensions?.includes(ext) || l.filenames?.some((f) => f.toLowerCase() === name))
-  if (lang) return lang.id
-  // JSON gehört nicht zu den Basis-Sprachen → JavaScript-Hervorhebung passt dafür gut
-  if (['.json', '.jsonc', '.json5'].includes(ext)) return 'javascript'
-  return 'plaintext'
+type Tab = 'file' | 'snippets'
+
+/**
+ * Rechte Spalte (nur sichtbar, solange es etwas zu zeigen gibt):
+ * „Datei“ = Stelle aus `show_code`, „Snippets“ = Code-Blöcke aus den Antworten mit Kopier-Button.
+ * Gezeigt wird der zuletzt aktualisierte Reiter, bis der Nutzer selbst wechselt.
+ */
+function CodePane({ focus, snippets, agentName, vscodeInstalled }: Props): React.JSX.Element {
+  const snippetsAt = snippets[0]?.at ?? 0
+  const focusAt = focus?.at ?? 0
+  /** Vom Nutzer gewählter Reiter – gilt, bis danach etwas Neues ankommt */
+  const [chosen, setChosen] = useState<{ tab: Tab; at: number } | null>(null)
+  const newest: Tab = snippetsAt > focusAt ? 'snippets' : 'file'
+  let tab: Tab = chosen && chosen.at >= Math.max(snippetsAt, focusAt) ? chosen.tab : newest
+  if (tab === 'file' && !focus) tab = 'snippets'
+  if (tab === 'snippets' && !snippets.length) tab = 'file'
+  const choose = (t: Tab): void => setChosen({ tab: t, at: Math.max(snippetsAt, focusAt) })
+
+  const fileName = focus?.filePath.split(/[\\/]/).pop()
+
+  return (
+    <aside className="pane code">
+      <header className="pane-header">
+        <div className="tabs">
+          {focus && (
+            <button
+              className={`tab ${tab === 'file' ? 'active' : ''}`}
+              title={focus.filePath}
+              onClick={() => choose('file')}
+            >
+              Datei
+            </button>
+          )}
+          {snippets.length > 0 && (
+            <button
+              className={`tab ${tab === 'snippets' ? 'active' : ''}`}
+              title="Code-Blöcke aus den Antworten des Agents"
+              onClick={() => choose('snippets')}
+            >
+              Snippets <span className="count">{snippets.length}</span>
+            </button>
+          )}
+        </div>
+        {tab === 'file' && focus && vscodeInstalled && (
+          <div className="header-actions">
+            <button
+              className="icon"
+              title="In VS Code öffnen"
+              onClick={() => window.api.code.openInVSCode(focus.filePath, focus.startLine)}
+            >
+              <CodeIcon />
+            </button>
+          </div>
+        )}
+      </header>
+
+      {focus && (
+        // Bleibt beim Reiterwechsel erhalten (Editor nicht neu aufbauen)
+        <div className="code-file-view" style={tab === 'file' ? undefined : { display: 'none' }}>
+          <div className="code-note">
+            <span className="code-file" title={focus.filePath}>
+              {fileName} · Z. {focus.startLine}
+              {focus.endLine !== focus.startLine ? `–${focus.endLine}` : ''}
+            </span>
+            {(focus.note || agentName) && (
+              <div>
+                {agentName && <strong>{agentName}: </strong>}
+                {focus.note}
+              </div>
+            )}
+          </div>
+          <FileView focus={focus} />
+        </div>
+      )}
+      {tab === 'snippets' && <SnippetList snippets={snippets} />}
+    </aside>
+  )
 }
 
-/** Rechte Spalte (nur sichtbar, solange ein Fokus existiert): Datei aus `show_code` mit hervorgehobener Stelle. */
-function CodePane({ focus, agentName, vscodeInstalled }: Props): React.JSX.Element {
+/** Monaco (schreibgeschützt) mit hervorgehobener Stelle */
+function FileView({ focus }: { focus: CodeFocus }): React.JSX.Element {
   const hostRef = useRef<HTMLDivElement>(null)
   const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null)
   const decoRef = useRef<monaco.editor.IEditorDecorationsCollection | null>(null)
@@ -68,7 +134,7 @@ function CodePane({ focus, agentName, vscodeInstalled }: Props): React.JSX.Eleme
       }
       setError(null)
       const old = editor.getModel()
-      editor.setModel(monaco.editor.createModel(res.content, languageFor(focus.filePath)))
+      editor.setModel(monaco.editor.createModel(res.content, languageForPath(focus.filePath)))
       old?.dispose()
 
       const lines = editor.getModel()!.getLineCount()
@@ -92,42 +158,11 @@ function CodePane({ focus, agentName, vscodeInstalled }: Props): React.JSX.Eleme
     }
   }, [focus])
 
-  const fileName = focus.filePath.split(/[\\/]/).pop()
-
   return (
-    <aside className="pane code">
-      <header className="pane-header">
-        <span className="title" title={focus.filePath}>
-          {fileName}
-          <span className="muted">
-            {' '}
-            · Z. {focus.startLine}
-            {focus.endLine !== focus.startLine ? `–${focus.endLine}` : ''}
-          </span>
-        </span>
-        {vscodeInstalled && (
-          <div className="header-actions">
-            <button
-              className="icon"
-              title="In VS Code öffnen"
-              onClick={() => window.api.code.openInVSCode(focus.filePath, focus.startLine)}
-            >
-              <CodeIcon />
-            </button>
-          </div>
-        )}
-      </header>
-
-      {(focus.note || agentName) && (
-        <div className="code-note">
-          {agentName && <strong>{agentName}: </strong>}
-          {focus.note}
-        </div>
-      )}
+    <>
       {error && <div className="code-note error">{error}</div>}
-
       <div className="code-editor" ref={hostRef} />
-    </aside>
+    </>
   )
 }
 

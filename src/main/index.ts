@@ -7,7 +7,8 @@ import {
   dialog,
   globalShortcut,
   session,
-  Notification
+  Notification,
+  clipboard
 } from 'electron'
 import { join } from 'path'
 import { randomUUID } from 'crypto'
@@ -49,6 +50,7 @@ const agents = new AgentManager({
   onData: (id, data) => send('agents:data', id, data),
   onChanged: (list, teams) => send('agents:changed', list, teams),
   onCodeFocus: (focus) => send('code:focus', focus),
+  onSnippets: (id, snippets) => send('code:snippets', id, snippets),
   onStartFailed: (name, output) => send('agents:startFailed', name, output)
 })
 
@@ -379,6 +381,8 @@ function registerIpc(): void {
     }
   })
   ipcMain.handle('code:openInVSCode', (_, path: string, line: number) => openInVSCode(path, line))
+  ipcMain.handle('code:snippets', () => agents.snippets())
+  ipcMain.handle('clipboard:writeText', (_, text: string) => clipboard.writeText(String(text)))
 
   // --- Sprache ---
   ipcMain.handle('voice:status', () => voiceStatus())

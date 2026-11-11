@@ -3,6 +3,7 @@ import type {
   Agent,
   AgentTemplate,
   CodeFocus,
+  CodeSnippet,
   Project,
   Settings,
   Team,
@@ -42,6 +43,8 @@ function Workspace(): React.JSX.Element {
   /** Gespeicherte Ansicht ist geladen → Änderungen dürfen gespeichert werden */
   const viewLoaded = useRef(false)
   const [focusByAgent, setFocusByAgent] = useState<Record<string, CodeFocus>>({})
+  /** Code-Blöcke aus den Antworten je Agent (neueste zuerst) */
+  const [snippetsByAgent, setSnippetsByAgent] = useState<Record<string, CodeSnippet[]>>({})
   const [vscodeInstalled, setVscodeInstalled] = useState(false)
   const [settings, setSettings] = useState<Settings>({
     voiceModel: null,
@@ -89,6 +92,11 @@ function Workspace(): React.JSX.Element {
     const offFocus = window.api.code.onFocus((f) =>
       setFocusByAgent((m) => ({ ...m, [f.agentId]: f }))
     )
+    const offSnippets = window.api.code.onSnippets((id, list) =>
+      setSnippetsByAgent((m) => ({ ...m, [id]: list }))
+    )
+    // Nach Neuladen der Oberfläche: bisher gesammelte Snippets der laufenden Agents
+    window.api.code.snippets().then((all) => setSnippetsByAgent((m) => ({ ...all, ...m })))
 
     ;(async () => {
       setProjects(await window.api.projects.list())
@@ -128,6 +136,7 @@ function Workspace(): React.JSX.Element {
       offData()
       offChanged()
       offFocus()
+      offSnippets()
       offFailed()
     }
   }, [refreshVoice, showError])
@@ -198,6 +207,13 @@ function Workspace(): React.JSX.Element {
     }
     return null
   }, [activeAgentId, focusByAgent, selection, agents])
+
+  /** Snippets des aktiven Agents (rechts, Reiter „Snippets“) */
+  const activeSnippets = useMemo(
+    () => (activeAgentId ? (snippetsByAgent[activeAgentId] ?? []) : []),
+    [activeAgentId, snippetsByAgent]
+  )
+  const showCodePane = !!codeFocus || activeSnippets.length > 0
 
   // ---------------------------------------------------------------- Aktionen
   const startAgent = useCallback(
@@ -457,7 +473,7 @@ function Workspace(): React.JSX.Element {
   // ---------------------------------------------------------------- Render
   return (
     <>
-      <div className={codeFocus ? 'layout with-code' : 'layout'}>
+      <div className={showCodePane ? 'layout with-code' : 'layout'}>
         <Sidebar
           projects={projects}
           agents={agents}
@@ -531,10 +547,11 @@ function Workspace(): React.JSX.Element {
           onStopAgent={stopAgent}
           onAgentVoice={() => toggleVoice('agent')}
         />
-        {codeFocus && (
+        {showCodePane && (
           <CodePane
             focus={codeFocus}
-            agentName={agents.find((a) => a.id === codeFocus.agentId)?.name}
+            snippets={activeSnippets}
+            agentName={agents.find((a) => a.id === codeFocus?.agentId)?.name}
             vscodeInstalled={vscodeInstalled}
           />
         )}

@@ -33,8 +33,11 @@ Lokale Windows-Desktop-App zum Verwalten von Projekten und den darin laufenden K
   - Klick auf ein Projekt → alle Agents des Projekts im Raster
   - **Strg+Klick** (projektübergreifend): Agent zum Raster hinzufügen/entfernen; auf ein Projekt = alle seine Agents. Ausgangspunkt ist die aktuelle Ansicht (auch ein Projekt-Raster). Auswahl-Typ `{ kind: 'agents', agentIds }`, Logik in `lib/selection.ts`; 1 Agent → Einzelansicht, 0 → leer
   - Beendet sich ein Agent im Terminal selbst (z. B. `/exit`), wird die Ansicht geschlossen und der Eintrag links entfernt
-- Rechts: Code-Ansicht — bei Analyse/Bugfund wird die betroffene Datei angezeigt und die Stelle hervorgehoben
-  - Spalte wird **nur eingeblendet, solange eine Datei angezeigt wird** (Fokus für den aktiven Agent / das ausgewählte Projekt), sonst nimmt das Terminal die Breite ein (`.layout.with-code`)
+- Rechts: Code-Ansicht (`CodePane`) mit zwei Reitern
+  - „Datei“: bei Analyse/Bugfund wird die betroffene Datei angezeigt und die Stelle hervorgehoben (Fokus des aktiven Agents / jüngster im ausgewählten Projekt)
+  - „Snippets“: alle Code-Blöcke (` ``` `/`~~~`) aus den Antworten des **aktiven** Agents, neueste zuerst, je mit Button „Kopieren“ (`SnippetList`, Hervorhebung per `monaco.editor.colorize`, Kopieren über Main `clipboard:writeText`)
+  - Gezeigt wird der zuletzt aktualisierte Reiter, bis der Nutzer selbst wechselt
+  - Spalte wird **nur eingeblendet, solange es etwas zu zeigen gibt**, sonst nimmt das Terminal die Breite ein (`.layout.with-code`)
 
 **Sitzungen**
 
@@ -93,6 +96,8 @@ Lokale Windows-Desktop-App zum Verwalten von Projekten und den darin laufenden K
 - `POST /hook/<token>/<agentId>`: Hooks posten ihr JSON per `curl.exe … --data-binary @-`
   Status: `SessionStart`→idle · `UserPromptSubmit`/`PreToolUse`/`PostToolUse`→working · `PreToolUse(AskUserQuestion)`/`Notification`/`Stop`→**needsInput** (links hervorgehoben)
 - `POST /mcp/<token>/<agentId>`: minimaler MCP-Server (Streamable HTTP, nur JSON-Antworten) mit Tool `show_code(file_path, start_line, end_line?, note?)` → Event `code:focus` → Monaco rechts; für Teammitglieder zusätzlich `team_members`/`send_team_message` (s. Teams). Tools sind per `permissions.allow` freigegeben.
+
+**Snippets** (`main/snippets.ts`): Jedes Hook-Ereignis enthält `transcript_path` → `TranscriptReader` pro Agent liest das JSONL-Transkript inkrementell (Byte-Offset, nur vollständige Zeilen; erstes Lesen = ganze Datei, nach Wiederherstellung sind alte Snippets also wieder da). Gelesen bei `SessionStart`, `Stop` (+ erneut nach 1,5 s), `Notification`, `PreToolUse(AskUserQuestion)`. Nur `type: "assistant"`, nicht `isSidechain` (Subagents), Text-Blöcke → Code-Zäune. Pro Agent max. 30, gleicher Code nur einmal. Event `code:snippets` (volle Liste), `code:snippets`-Abfrage nach Renderer-Reload. Kein Mitwirken des Agents nötig (kein MCP-Tool).
 
 **Agent-Lebenszyklus**
 
@@ -155,12 +160,14 @@ src/
     voice.ts               whisper.cpp-Download/Transkription, Modellverwaltung
     voiceCommands.ts       Globale Sprachbefehle via `claude -p`
     voicePrompt.ts         Router-Prompt (rein, per esbuild-Skript mit echtem claude testbar)
+    snippets.ts            Code-Blöcke aus dem Transkript (inkrementell), ohne Electron-Abhängigkeit
   preload/index.ts         window.api (contextBridge)
   renderer/src/
     App.tsx                Auth-Gate → Workspace; Typ `Selection`
     Workspace.tsx          Zustand, Auswahl, Sprachablauf, Hotkeys, Dialoge
-    lib/                   terminals.ts, recorder.ts, errors.ts, hotkeyCapture.ts, selection.ts
-    components/            Sidebar, CenterPane, TerminalView, CodePane, ProjectDialog, SettingsDialog,
+    lib/                   terminals.ts, recorder.ts, errors.ts, hotkeyCapture.ts, selection.ts,
+                           monaco.ts (schlanker Monaco-Import, Theme, Sprache für Datei/Code-Zaun)
+    components/            Sidebar, CenterPane, TerminalView, CodePane, SnippetList, ProjectDialog, SettingsDialog,
                            VoiceSetupDialog, VoiceModels, VoiceOverlay, HotkeyInput, ProgramInput, AgentArgsHelp, Modal,
                            AgentTemplateDialog, TeamTemplateDialog, DictationButton, DictationTextarea,
                            ContextMenu, AuthGate, Icons
@@ -169,7 +176,7 @@ electron-builder.yml       Windows-Ziele, asarUnpack node-pty, nur Sprachen de/e
 
 **IPC-Muster:** Kanal `bereich:aktion` (z. B. `agents:start`) → Handler in `main/index.ts`, Methode in `preload/index.ts`,
 Typ in `DevHubApi` (`shared/types.ts`). Alle drei immer zusammen anpassen. Ereignisse Main→Renderer: `agents:data`,
-`agents:changed` (Agents + laufende Teams), `agents:startFailed`, `code:focus`, `voice:progress`, `voice:globalHotkey` (Abo liefert Abmelde-Funktion).
+`agents:changed` (Agents + laufende Teams), `agents:startFailed`, `code:focus`, `code:snippets`, `voice:progress`, `voice:globalHotkey` (Abo liefert Abmelde-Funktion).
 
 ## Stand
 
@@ -178,6 +185,7 @@ Typ in `DevHubApi` (`shared/types.ts`). Alle drei immer zusammen anpassen. Ereig
 - [x] Agents starten/umbenennen (Rechtsklick)/beenden, Terminal, Raster-Ansicht, Selbstbeendigung schließt Ansicht
 - [x] Input-Erkennung via Hooks, Hervorhebung links — **getestet**
 - [x] Code-Ansicht + MCP `show_code` — **Ende-zu-Ende getestet**
+- [x] Snippets mit Kopier-Button — Auswertung an echten Transkripten getestet, `transcript_path` im Stop-Hook per `claude -p` geprüft, Build ok; **Anzeige/Kopieren in der App noch nicht getestet**
 - [x] Session-Wiederherstellung — Speichern/Neustart getestet; `--resume` mit echtem Transkript noch **nicht** getestet
 - [x] Sprachsteuerung inkl. Download-Dialog — Routing via `claude -p` getestet; **whisper-Download/Transkription + Mikrofon noch nicht getestet**
 - [x] Sprach-Kürzel in den Einstellungen änderbar — Build/Typcheck ok, **in der UI noch nicht getestet**

@@ -73,6 +73,18 @@ export const SortIcon = ({ size = 14 }: P): React.JSX.Element =>
     </>
   )
 
+export const CopyIcon = ({ size = 13 }: P): React.JSX.Element =>
+  svg(
+    size,
+    <>
+      <rect x="5.5" y="5.5" width="8" height="8" rx="1.5" />
+      <path d="M10.5 5.5V3.5a1 1 0 0 0-1-1h-6a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h2" />
+    </>
+  )
+
+export const CheckIcon = ({ size = 13 }: P): React.JSX.Element =>
+  svg(size, <path d="M3 8.5l3.2 3L13 4.5" />)
+
 export const TeamIcon = ({ size = 13 }: P): React.JSX.Element =>
   svg(
     size,

@@ -103,6 +103,18 @@ export interface CodeFocus {
   at: number
 }
 
+/** Code-Block aus einer Antwort des Agents (aus dem Transkript), rechts mit Kopier-Button. */
+export interface CodeSnippet {
+  /** `<Nachrichten-uuid>-<n>` */
+  id: string
+  agentId: string
+  /** Sprache aus dem Code-Zaun (```sql), klein geschrieben; '' = keine Angabe */
+  language: string
+  code: string
+  /** Zeitpunkt der Antwort (ms) */
+  at: number
+}
+
 export type WhisperModelId = 'base' | 'small' | 'large-v3-turbo'
 
 export interface WhisperModelInfo {
@@ -246,6 +258,13 @@ export interface DevHubApi {
     readFile: (path: string) => Promise<FileReadResult>
     openInVSCode: (path: string, line: number) => Promise<void>
     onFocus: (cb: (focus: CodeFocus) => void) => Unsubscribe
+    /** Snippets aller laufenden Agents (neueste zuerst), z. B. nach Neuladen der Oberfläche */
+    snippets: () => Promise<Record<string, CodeSnippet[]>>
+    /** Snippet-Liste eines Agents hat sich geändert (vollständige Liste, neueste zuerst) */
+    onSnippets: (cb: (agentId: string, snippets: CodeSnippet[]) => void) => Unsubscribe
+  }
+  clipboard: {
+    writeText: (text: string) => Promise<void>
   }
   voice: {
     status: () => Promise<VoiceStatus>

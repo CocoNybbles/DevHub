@@ -3,7 +3,8 @@ import { randomUUID } from 'crypto'
 import { existsSync, readdirSync, rmSync, writeFileSync } from 'fs'
 import { homedir } from 'os'
 import { isAbsolute, join, resolve as resolvePath } from 'path'
-import type { Agent, AgentStatus, CodeFocus, Team, TeamMember } from '../shared/types'
+import type { Agent, AgentStatus, CodeFocus, CodeSnippet, Team, TeamMember } from '../shared/types'
+import { mergeSnippets, TranscriptReader } from './snippets'
 import { AgentBridge, HookEvent, ShowCodeArgs, TeamMessageArgs, ToolName } from './agentBridge'
 import { applyOrder, dataDir, getState, updateState, type PersistedAgent } from './store'
 import { claudeEnv, resolveClaude } from './tools'
@@ -31,6 +32,10 @@ interface RunningAgent {
   stopping: boolean
   /** Team-Nachrichten, die vor der ersten Ausgabe ankamen (TUI noch nicht bereit) */
   pending: string[]
+  /** Transkript der Session (Pfad aus den Hook-Ereignissen), Quelle der Snippets */
+  transcript?: TranscriptReader
+  /** Code-Blöcke aus den Antworten, neueste zuerst */
+  snippets: CodeSnippet[]
 }
 
 export interface StartTeamOptions {
@@ -49,6 +54,8 @@ export interface AgentEvents {
   onData: (id: string, data: string) => void
   onChanged: (agents: Agent[], teams: Team[]) => void
   onCodeFocus: (focus: CodeFocus) => void
+  /** Snippet-Liste eines Agents hat sich geändert (vollständig, neueste zuerst) */
+  onSnippets: (agentId: string, snippets: CodeSnippet[]) => void
   /** Agent hat sich direkt nach dem Start mit Fehler beendet */
   onStartFailed: (agentName: string, output: string) => void
 }
@@ -374,7 +381,8 @@ export class AgentManager {
       buffer: '',
       startedAt: Date.now(),
       stopping: false,
-      pending: []
+      pending: [],
+      snippets: []
     }
     this.running.set(agent.id, r)
 
@@ -435,6 +443,18 @@ export class AgentManager {
     if (process.env.DEVHUB_DEBUG) {
       console.log('[DevHub] Hook', agentId.slice(0, 8), ev.hook_event_name, ev.tool_name ?? '')
     }
+    // Jedes Hook-Ereignis nennt das Transkript; Snippets lesen, wenn der Agent etwas gesagt hat
+    if (typeof ev.transcript_path === 'string') this.useTranscript(agentId, ev.transcript_path)
+    if (
+      ev.hook_event_name === 'SessionStart' ||
+      ev.hook_event_name === 'Stop' ||
+      ev.hook_event_name === 'Notification' ||
+      (ev.hook_event_name === 'PreToolUse' && ev.tool_name === 'AskUserQuestion')
+    ) {
+      this.readSnippets(agentId)
+      // Falls die letzte Antwort beim Hook noch nicht im Transkript steht: kurz danach erneut
+      if (ev.hook_event_name === 'Stop') setTimeout(() => this.readSnippets(agentId), 1500)
+    }
     switch (ev.hook_event_name) {
       case 'SessionStart':
         // Beim Fortsetzen (Wiederherstellung) den gespeicherten Wartezustand behalten
@@ -461,6 +481,31 @@ export class AgentManager {
         this.setStatus(agentId, 'needsInput', 'Fertig – wartet auf Eingabe')
         break
     }
+  }
+
+  /** Snippets aller laufenden Agents (für die Oberfläche nach einem Neuladen) */
+  snippets(): Record<string, CodeSnippet[]> {
+    return Object.fromEntries([...this.running].map(([id, r]) => [id, r.snippets]))
+  }
+
+  private useTranscript(agentId: string, path: string): void {
+    const r = this.running.get(agentId)
+    if (r && r.transcript?.path !== path) r.transcript = new TranscriptReader(path, agentId)
+  }
+
+  /** Neue Code-Blöcke aus dem Transkript übernehmen und melden. */
+  private readSnippets(agentId: string): void {
+    const reader = this.running.get(agentId)?.transcript
+    if (!reader) return
+    reader
+      .read()
+      .then((added) => {
+        const r = this.running.get(agentId)
+        if (!added.length || !r || r.transcript !== reader) return
+        r.snippets = mergeSnippets(r.snippets, added)
+        this.events.onSnippets(agentId, r.snippets)
+      })
+      .catch((e) => console.error('[DevHub] Transkript nicht lesbar:', e))
   }
 
   private async handleToolCall(
