@@ -67,12 +67,12 @@ Lokale Windows-Desktop-App zum Verwalten von Projekten und den darin laufenden K
 ## Tech-Stack
 
 - **Electron + TypeScript** (entschieden 2026-11-10: am stabilsten, einfach zu verteilen)
-- Build: electron-vite (Vite 8), Electron 44, electron-builder 26 — nur Windows (NSIS-Installer + portable .exe)
+- Build: electron-vite (Vite 8), Electron 44, electron-builder 26 — nur Windows, **nur portable .exe — bewusst kein Installer** (Deinstallieren = Ordner löschen, Daten liegen in `data\` daneben)
 - UI: React 19, reines CSS (`assets/main.css` = Variablen/Basis, `assets/components.css` = Komponenten), Dark Theme
 - Terminal: `@xterm/xterm` 6 + `@xterm/addon-fit` (Renderer), `node-pty` 1.1 (Main, ConPTY, N-API-Prebuilds)
 - Code-Ansicht: `monaco-editor` 0.57, **schlanker Import** (`monaco-editor/editor/editor.api` + `basic-languages/monaco.contribution` + nur `editor.worker`)
 - Sprache → Text: whisper.cpp lokal (Release `b5454`, `whisper-bin-x64.zip`), mehrsprachige quantisierte Modelle, Sprache automatisch (`-l auto`) bzw. gemerkt (s. Architektur)
-  - Engine (~9 MB) **und** Modell werden **nicht** mitgeliefert, sondern beim ersten Nutzen nach `%APPDATA%\DevHub\whisper\` geladen
+  - Engine (~9 MB) **und** Modell werden **nicht** mitgeliefert, sondern beim ersten Nutzen nach `<data>\whisper\` geladen (Datenordner neben der .exe, s. Architektur)
   - Erster Voice-Versuch ohne Modell → `VoiceSetupDialog` (Modellauswahl base ~60 MB / small ~190 MB [Standard] / large-v3-turbo ~550 MB, Download mit Fortschritt direkt im Dialog)
   - Einstellungen: dieselbe Auswahl (`VoiceModels`), Modell wechseln/löschen
 - Laufzeit-Abhängigkeiten (`dependencies`) nur: `node-pty`, `@electron-toolkit/utils`. Alles, was Vite bündelt (React, xterm, Monaco), gehört in `devDependencies` (sonst landet es doppelt im Paket).
@@ -84,7 +84,7 @@ Lokale Windows-Desktop-App zum Verwalten von Projekten und den darin laufenden K
 
 - **Nutzer-Flags** (`shared/agentArgs.ts`): global `settings.agentArgs` + pro Projekt `project.agentArgs`, Text wie in einer Shell (Quotes, Backslashes bleiben). `mergeAgentArgs(global, projekt, agent)`: gleichnamiges Flag einer höheren Ebene ersetzt das niedrigere; Ebene „agent“ = `agent.model` (per Sprachbefehl genannt, persistiert) oder sonst Modell der Vorlage → `--model` (gilt auch bei Wiederherstellung; geprüft mit `isValidModelName`). Stehen **vor** den DevHub-Flags (beendet variadische Werte, Aufgabe bleibt positional). `validateAgentArgs` (Dialoge live + Main beim Speichern) lehnt freien Text und reservierte Flags ab (`--session-id`, `--resume`/`-r`, `--continue`/`-c`, `--fork-session`, `--no-session-persistence`, `--settings`, `--mcp-config`, `--append-system-prompt`, `--print`/`-p`, `--help`, `--version`). Unbekannte Flags prüft erst claude selbst → Startfehler (s. u.).
 - `--resume` nur, wenn `~/.claude/projects/*/<sessionId>.jsonl` existiert, sonst `--session-id` (gleiche ID)
-- Pro-Agent-Dateien in `%APPDATA%\DevHub\agents\<agentId>\` (bei jedem Start neu geschrieben, da Port/Token wechseln)
+- Pro-Agent-Dateien in `<data>\agents\<agentId>\` (bei jedem Start neu geschrieben, da Port/Token wechseln)
 - Env ohne Session-Marker einer übergeordneten Claude-Instanz (`claudeEnv()` in `main/tools.ts`)
 
 **Rückkanal Agent → App** (`main/agentBridge.ts`): HTTP-Server auf `127.0.0.1:<zufälliger Port>` mit Zufalls-Token
@@ -112,7 +112,9 @@ Lokale Windows-Desktop-App zum Verwalten von Projekten und den darin laufenden K
 - global (Standard `Strg+Alt+Leertaste` per `globalShortcut` / Mikrofon links): `voice:command` → `claude -p --model haiku --output-format json --tools "" --strict-mcp-config --no-session-persistence` (Prompt via stdin) liefert JSON `send` | `start` (+ optional `model`: Alias `fable`/`opus`/`sonnet`/`haiku`, bei genannter Version voller Name wie `claude-opus-5-5`) | `none`
 - **Kürzel einstellbar** (Einstellungen → `HotkeyInput`): gespeichert als Electron-Accelerator in `settings.hotkeyAgentVoice` / `hotkeyGlobalVoice`. `shared/hotkeys.ts` übersetzt Tastendrücke (layoutunabhängig über `KeyboardEvent.code`) und formatiert die Anzeige. Main registriert das globale Kürzel neu (`registerGlobalHotkey`; belegt → altes zurück + Fehler im Dialog); während der Aufnahme wird es per `settings:suspendGlobalHotkey` freigegeben. Das Agent-Kürzel lässt das Terminal per `setAppHotkeys()` durch.
 
-**Persistenz** (`main/store.ts`): `%APPDATA%\DevHub\devhub-state.json` (Projekte, laufende Agents, Einstellungen, `view` = zuletzt gezeigte Ansicht), atomar geschrieben.
+**Datenordner** (`main/dataPath.ts`, erster Import in `index.ts`): **alle Daten neben der .exe** in `<exe-Ordner>\data\` (`app.setPath('userData')` vor `ready`, also auch Chromium-Cache). Portable: `PORTABLE_EXECUTABLE_DIR` (nicht der Entpack-Ordner in `%TEMP%`); Entwicklung: `<Projekt>\data\` (gitignored). Nicht beschreibbar → Fehlermeldung + Beenden. Einmalige Übernahme von `devhub-state.json` + `whisper\` aus dem alten `%APPDATA%\DevHub`. Im Folgenden `<data>`.
+
+**Persistenz** (`main/store.ts`): `<data>\devhub-state.json` (Projekte, laufende Agents, Einstellungen, `view` = zuletzt gezeigte Ansicht), atomar geschrieben.
 
 - Ansicht (`Selection` in `shared/types.ts`): Renderer speichert jede Änderung per `view:set` (erst nachdem `view:get` beim Start geladen wurde, Ref `viewLoaded`); beim Start `savedView` → sonst erstes Projekt mit Agents. Nicht mehr laufende Agents filtert `selection` (useMemo) heraus → `agents` vor der Auswahl setzen.
 
@@ -125,7 +127,7 @@ Lokale Windows-Desktop-App zum Verwalten von Projekten und den darin laufenden K
 | Lint / Format                                                | `npm run lint` / `npm run format` |
 | Build (Typcheck + Bundle nach `out/`)                        | `npm run build`                   |
 | Entpacktes Paket zum Testen (`dist/win-unpacked/DevHub.exe`) | `npm run build:unpack`            |
-| Installer + portable .exe nach `dist/`                       | `npm run build:win`               |
+| Portable .exe nach `dist/`                                   | `npm run build:win`               |
 
 **Debug-Umgebungsvariablen**
 
@@ -143,6 +145,7 @@ src/
     index.ts               Fenster, IPC-Handler, globaler Hotkey, Mikrofon-Berechtigung
     agents.ts              AgentManager: node-pty, Start/Stop/Rename/Restore, Hook-Status, show_code
     agentBridge.ts         Lokaler HTTP-Server: Hooks + MCP (show_code)
+    dataPath.ts            Datenordner neben der .exe (vor allem anderen importiert)
     store.ts               JSON-Persistenz, dataDir()
     tools.ts               claude/VS-Code-Erkennung, claudeEnv(), openInVSCode(), openWithProgram()
     claudeAuth.ts          `claude auth status --json`, Login-Konsole
@@ -185,7 +188,7 @@ Typ in `DevHubApi` (`shared/types.ts`). Alle drei immer zusammen anpassen. Ereig
 - [x] Automatische `.sln`-Suche beim Projekt-Anlegen — Suche getestet, **in der UI noch nicht getestet**
 - [x] Paketierung (`build:unpack`) getestet: entpackt ~338 MB (App selbst ~17 MB, Rest Electron)
 - [x] Initialer Git-Commit (nach Durchsicht durch den Nutzer)
-- Verteilung an Tester: `npx electron-builder --win portable` → portable .exe + `LIESMICH.txt` als ZIP (in `dist/`, nicht versioniert)
+- Verteilung an Tester: `npm run build:win` → portable .exe + `LIESMICH.txt` als ZIP (in `dist/`, nicht versioniert)
 
 ## Konventionen
 
@@ -197,6 +200,7 @@ Typ in `DevHubApi` (`shared/types.ts`). Alle drei immer zusammen anpassen. Ereig
 
 - Pakete in `dist/` werden nicht automatisch neu gebaut → vor dem Testen neuer Funktionen mit der .exe `npm run build:unpack` ausführen (sonst läuft ein alter Stand).
 - **Kein Native-Rebuild:** `postinstall` ist nur `install-electron`. `electron-builder install-app-deps` würde node-pty aus dem Quellcode bauen und scheitert ohne C++-Buildtools; die N-API-Prebuilds funktionieren direkt in Electron. Nach fehlgeschlagenem Rebuild: `rm -rf node_modules/node-pty && npm install`.
+- Keinen Installer (NSIS o. ä.) wieder einführen: Er würde beim Deinstallieren/Aktualisieren `data\` mitlöschen, und unter „Programme“ fehlen Schreibrechte.
 - node-pty muss in `asarUnpack` stehen (DLLs/OpenConsole.exe nicht aus asar ladbar).
 - Wird DevHub aus einem Claude-Terminal gestartet, erben Agents sonst `CLAUDE_CODE_CHILD_SESSION` usw. → „Transcript saving is off“ → keine Wiederherstellung. Immer `claudeEnv()` für Claude-Prozesse nutzen.
 - Hooks: `curl.exe` mit `.exe` (in PowerShell 5.1 ist `curl` ein Alias). Kein `|| exit 0` (Syntaxfehler in PS 5.1); Fehlercodes ≠ 2 blockieren nicht.

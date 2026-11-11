@@ -1,3 +1,4 @@
+import './dataPath' // muss zuerst laufen: legt den Datenordner neben der .exe fest
 import {
   app,
   shell,

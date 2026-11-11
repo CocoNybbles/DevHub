@@ -18,13 +18,7 @@ electronLanguages:
 win:
   executableName: DevHub
   target:
-    - nsis
     - portable
-nsis:
-  artifactName: ${productName}-${version}-setup.${ext}
-  shortcutName: ${productName}
-  uninstallDisplayName: ${productName}
-  createDesktopShortcut: always
 portable:
   artifactName: ${productName}-${version}-portable.${ext}
 npmRebuild: false
