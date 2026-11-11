@@ -28,6 +28,8 @@ interface PersistedState {
   teamTemplates: TeamTemplate[]
   /** Laufende Teams (werden mit ihren Agents wiederhergestellt, leere werden entfernt) */
   teams: Team[]
+  /** Zuletzt in der Ordnerauswahl benutzter Ort (übergeordneter Ordner der Wahl) */
+  lastPickDir?: string
 }
 
 const DEFAULT_STATE: PersistedState = {

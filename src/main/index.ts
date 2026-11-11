@@ -10,7 +10,7 @@ import {
   Notification,
   clipboard
 } from 'electron'
-import { join } from 'path'
+import { dirname, join } from 'path'
 import { randomUUID } from 'crypto'
 import { existsSync, readFileSync, statSync, writeFileSync } from 'fs'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
@@ -266,11 +266,17 @@ function registerIpc(): void {
     if (err) throw new Error(err)
   })
   ipcMain.handle('projects:pickFolder', async (_, defaultPath?: string) => {
+    // Ohne Vorgabe (neues Projekt): dort weitermachen, wo zuletzt gewählt wurde – im
+    // übergeordneten Ordner, damit das nächste Projekt daneben gleich sichtbar ist
+    const last = getState().lastPickDir
     const r = await dialog.showOpenDialog(mainWindow!, {
       properties: ['openDirectory'],
-      defaultPath
+      defaultPath: defaultPath || (last && existsSync(last) ? last : undefined)
     })
-    return r.canceled ? null : r.filePaths[0]
+    if (r.canceled || !r.filePaths[0]) return null
+    const parent = dirname(r.filePaths[0])
+    if (parent !== last) updateState((s) => (s.lastPickDir = parent))
+    return r.filePaths[0]
   })
   ipcMain.handle('projects:findSolution', (_, dir: string) =>
     dir && existsSync(dir) ? findSolution(dir) : null
