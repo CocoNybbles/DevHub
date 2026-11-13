@@ -66,9 +66,25 @@ Lokale Windows-Desktop-App zum Verwalten von Projekten und den darin laufenden K
 - **Orchestrator:** `AgentManager.startTeam` startet immer zusätzlich einen Agent `teamRole: 'orchestrator'` („Orchestrator“, „Orchestrator 2“ …; kleinstes `createdAt`), die Mitglieder sind `teamRole: 'worker'`. Erst alle speichern (Namen fest), dann starten. Der Orchestrator bekommt die Aufgabe, plant, verteilt, prüft, entscheidet Freigaben und berichtet dem Nutzer (Prompt `orchestratedTeamPrompt`); er ist der **einzige Ansprechpartner** des Nutzers. Endet er (✕, `/exit`), endet das ganze Team; scheitert sein Start oder der aller Worker → Team wird abgebrochen. `teamLead()` (`shared/types.ts`) = Orchestrator, bei Teams aus älteren Ständen (ohne `teamRole`) das erste Mitglied mit altem Verhalten
 - **Worker nur beobachten** (`isTeamWorker`): Main sperrt `write`, `sendLine` (wirft), `rename`, einzelnes `stop` (wirft; nur Team beenden); `sendVoice` an einen Worker geht mit Präfix `[Message from the user about X]` an den Orchestrator (auch per globalem Sprachbefehl). Renderer: Terminal `setTerminalReadOnly` (kein Tippen, Auswahl/Kopieren geht), keine Buttons/kein Kontextmenü, Kopf zeigt „👁 beobachten“, Strg+G/Stift → Hinweis, Agent-Sprachkürzel bei aktivem Worker → an den Orchestrator. Worker-Status: `Stop` → idle „Fertig“ (nie hervorgehoben, der Nutzer kann nicht antworten), `Notification` ignoriert
 - **Freigaben der Worker:** Worker-Settings haben einen `PermissionRequest`-Hook (curl **ohne** `-m`, Hook-`timeout` 24 h) auf `POST /permission/<token>/<id>` und `permissions.deny: ["AskUserQuestion"]`. Bridge hält die Anfrage offen → `requestPermission` schickt dem Orchestrator `[Permission request #N from X] … tool … input …` → er antwortet mit MCP-Tool `answer_permission(request_id, allow|deny, message)` → Antwort `{hookSpecificOutput:{hookEventName:"PermissionRequest",decision:{behavior,message}}}`. Worker-Status solange „Wartet auf Freigabe durch den Orchestrator“. Verbindungsabbruch (Worker beendet) → Anfrage verfällt. Mit echtem claude 2.1 + echtem `AgentBridge` getestet (allow → Befehl läuft, deny → Begründung kommt beim Agent an)
-- Kommunikation: MCP-Tools `team_members` + `send_team_message(to|"all", message)` für Teammitglieder (Bridge fragt `tools(agentId)`), `answer_permission` nur für den Orchestrator. **Worker schreiben nur an den Orchestrator**, er an alle. Zustellung (`deliver`) = Zeile ins Terminal mit Präfix `[Team message from X]`; zurückgehalten (`pending`), solange der Empfänger startet, im Editor-Tab ist oder eine `AskUserQuestion` offen hat (`mustHold`). Beendet ein Worker seinen Zug ohne Bericht an den Orchestrator, bekommt dieser einmal `[Team status] X finished its turn without sending you a report`
+- Kommunikation: MCP-Tools `team_members` + `send_team_message(to|"all", message)` für Teammitglieder (Bridge fragt `tools(agentId)`), `answer_permission` nur für den Orchestrator. **Worker schreiben nur an den Orchestrator**, er an alle. Zustellung (`deliver`) = Zeile ins Terminal mit Präfix `[Team message from X]`; zurückgehalten (`pending`), solange der Empfänger startet, im Editor-Tab ist, eine `AskUserQuestion` offen hat oder der Nutzer gerade tippt (`mustHold`, s. Architektur). Beendet ein Worker seinen Zug ohne Bericht an den Orchestrator, bekommt dieser einmal `[Team status] X finished its turn without sending you a report`
 - Links: Teamkopf (Icon, „temporär“, Anzahl, ✕ = Team beenden) mit eingerückten Mitgliedern (Orchestrator mit Tag „Orchestrator“, Worker mit Auge); Klick = Raster (`kind: 'agents'`), Strg+Klick = hinzufügen/entfernen (`toggleAgents`)
 - Sprache: `start_team` (Vorlage oder `members`-Liste, Orchestrator kommt automatisch dazu) · laufendes Team per Name ansprechen → geht an den Orchestrator
+
+**Workbench** (Details unter Architektur)
+
+- **Eingang** (`InboxPanel`, unten in der Seitenleiste, nur wenn nicht leer): offene Freigaben (Erlauben / Ablehnen mit Begründung / Immer = Regel fürs Projekt / im Terminal), wartende Agents (fertige mit Direktantwort), Hinweise (`notify_user`, Kontext-Warnung), Datei-Konflikte (zwei laufende Agents haben denselben Pfad bearbeitet; aus `editsByAgent` im Workspace berechnet). Dazu Windows-Benachrichtigung + Taskleisten-Blinken, wenn DevHub im Hintergrund ist (`settings.notifyOnWaiting`; Klick zeigt den Agent)
+- **Worktree je Agent** (`project.useWorktrees`): eigener Branch `devhub/<name>-<id8>` unter `<repo>/.devhub/worktrees/`; Kennzeichen „wt“ in der Liste
+- **Änderungen prüfen** (`ReviewDialog`; Rechtsklick auf Projekt/Agent, MCP `show_diff`): Ziel wählen (Hauptordner / Worktrees), Dateiliste, Monaco-Diff (rechts bearbeitbar, Pfeile am Rand nehmen einzelne Änderungen zurück → „Speichern“), Verwerfen, Datei/alles committen, Worktree zusammenführen/löschen, Zeilenkommentare gesammelt an den Agent
+- **Prüfungen bei „Fertig“** (`project.checks`, ein Befehl je Zeile): schlagen sie fehl, arbeitet der Agent mit der Ausgabe weiter
+- **Aufträge**: Warteschlange je Agent (`agent.queue`, Rechtsklick „Auftrag / Prompt aus der Bibliothek“, `QueueDialog`) – geht raus, sobald der Agent fertig meldet; **Aufgaben-Board** (`TaskBoardDialog`, Knopf unten links): offen → in Arbeit → erledigt, mit neuem Agent starten oder laufendem einreihen
+- **Verlauf** (`HistoryDialog`): beendete Sitzungen fortsetzen/abzweigen, Volltextsuche über alle Transkripte, Verbrauch je Projekt (heute/gesamt, Kosten nur mit eingetragenen Preisen). Rechtsklick „Unterhaltung abzweigen“ = Kopie eines laufenden Agents
+- **Aktivität/Verbrauch**: aktueller Schritt bzw. `report_progress` unter dem Agent-Namen (grau) und im Zellenkopf, Kontextgröße im Kopf der Einzelansicht, Reiter „Aktivität“ rechts (letzte 60 Schritte), Reiter für Pläne (`show_plan`, `Markdown`-Komponente ohne Abhängigkeit, kein Mermaid)
+- **Ausführen** (`RunDialog`, Rechtsklick aufs Projekt): `project.runCommands` („Name = Befehl“) starten/stoppen mit Live-Ausgabe; Web-Vorschau (`project.previewUrl`) in eigenem Fenster, Screenshot als `@"pfad"` in den Prompt des aktiven Agents
+- **Prompt-Bibliothek** (Einstellungen): Platzhalter `{{name}}` werden beim Senden abgefragt; per Sprache „Agent 2, Prompt Code-Review“
+- **Tagesbericht** (`ReportDialog`): Fakten aus dem Zustand, formuliert von `claude -p` (Haiku)
+- **Vorlesen** (`settings.voiceReadback`): Kurzfassung der Antwort fertiger Agents (Haiku → `speechSynthesis`)
+- **Weitere Engines** (Einstellungen): beliebiges Terminal-Programm (z. B. `codex`) statt Claude Code – ohne Hooks, also ohne Status/Datei-Reiter/Prüfungen/Freigaben/Verlauf
+- **Fernzugriff** (`settings.remoteEnabled`, Standard aus): Handy-Seite im lokalen Netz
 
 **Start-Prüfung**
 
@@ -94,16 +110,19 @@ Lokale Windows-Desktop-App zum Verwalten von Projekten und den darin laufenden K
 `claude [Nutzer-Flags]  --session-id <uuid> | --resume <uuid>  --settings <agent>/settings.json  --mcp-config <agent>/mcp.json  --append-system-prompt <Hinweis> [Aufgabe]`
 
 - **Nutzer-Flags** (`shared/agentArgs.ts`): global `settings.agentArgs` + pro Projekt `project.agentArgs`, Text wie in einer Shell (Quotes, Backslashes bleiben). `mergeAgentArgs(global, projekt, agent)`: gleichnamiges Flag einer höheren Ebene ersetzt das niedrigere; Ebene „agent“ = `agent.model` (per Sprachbefehl genannt, persistiert) oder sonst Modell der Vorlage → `--model` (gilt auch bei Wiederherstellung; geprüft mit `isValidModelName`). Stehen **vor** den DevHub-Flags (beendet variadische Werte, Aufgabe bleibt positional). `validateAgentArgs` (Dialoge live + Main beim Speichern) lehnt freien Text und reservierte Flags ab (`--session-id`, `--resume`/`-r`, `--continue`/`-c`, `--fork-session`, `--no-session-persistence`, `--settings`, `--mcp-config`, `--append-system-prompt`, `--print`/`-p`, `--help`, `--version`). Unbekannte Flags prüft erst claude selbst → Startfehler (s. u.).
-- `--resume` nur, wenn `~/.claude/projects/*/<sessionId>.jsonl` existiert, sonst `--session-id` (gleiche ID)
+- `--resume` nur, wenn `~/.claude/projects/*/<sessionId>.jsonl` existiert, sonst `--session-id` (gleiche ID). Abzweigen (`agent.forkFrom`): `--resume <alt> --fork-session --session-id <neu>` – nur beim ersten Start, danach gibt es das eigene Transkript
+- Arbeitsverzeichnis = Agent-Ordner oder Worktree (`worktreeCwd`: gleicher Unterordner wie der Agent-Ordner im Repo); steht in `RunningAgent.cwd`, relative Pfade der MCP-Tools beziehen sich darauf
+- **Andere Engine** (`agent.engineId`, `spawnEngine`): `cmd.exe /d /s /c "<Befehl>"` im selben pty, keine DevHub-Flags/Hooks. Status = „arbeitet“, solange Ausgabe kommt, nach 2,5 s Ruhe „bereit“; Aufgabe und Aufträge werden eingetippt (Aufträge sofort, da es kein „fertig“ gibt). Kein Verlauf, kein `--resume` (Neustart = frisches Programm)
 - Pro-Agent-Dateien in `<data>\agents\<agentId>\` (bei jedem Start neu geschrieben, da Port/Token wechseln)
 - Env ohne Session-Marker einer übergeordneten Claude-Instanz (`claudeEnv()` in `main/tools.ts`)
 
 **Rückkanal Agent → App** (`main/agentBridge.ts`): HTTP-Server auf `127.0.0.1:<zufälliger Port>` mit Zufalls-Token
 
 - `POST /hook/<token>/<agentId>`: Hooks posten ihr JSON per `curl.exe … --data-binary @-`
-  Status: `SessionStart`→idle · `UserPromptSubmit`/`PreToolUse`/`PostToolUse`→working · `PreToolUse(AskUserQuestion)`/`Notification`/`Stop`→**needsInput** (links hervorgehoben)
-- `POST /permission/<token>/<agentId>`: `PermissionRequest`-Hook der Team-Worker, bleibt offen bis zur Entscheidung des Orchestrators (s. Teams)
-- `POST /mcp/<token>/<agentId>`: minimaler MCP-Server (Streamable HTTP, nur JSON-Antworten) mit Tool `show_code(file_path, start_line, end_line?, note?)` → Event `code:focus` → Monaco rechts; für Teammitglieder zusätzlich `team_members`/`send_team_message` (s. Teams). Tools sind per `permissions.allow` freigegeben.
+  Status: `SessionStart`→idle · `UserPromptSubmit`/`PreToolUse`/`PostToolUse`→working · `PreToolUse(AskUserQuestion)`/`Notification`/`Stop`→**needsInput** (links hervorgehoben). `PreToolUse` liefert zusätzlich die Aktivität (`describeTool` in `shared/permissions.ts` → `agent.activity` + `activityLog`)
+- `POST /stop/<token>/<agentId>`: **Stop-Hook aller Agents** (curl ohne `-m`, Hook-`timeout` 1 h) – bleibt offen, solange die Prüfungen laufen; Antwort leer = anhalten, `{decision:"block",reason}` = weiterarbeiten (s. Prüfungen). Erst danach verarbeitet `handleStop` das Ereignis wie früher den Stop-Hook
+- `POST /permission/<token>/<agentId>`: `PermissionRequest`-Hook **aller** Claude-Agents, bleibt offen bis zur Entscheidung (s. Freigaben)
+- `POST /mcp/<token>/<agentId>`: minimaler MCP-Server (Streamable HTTP, nur JSON-Antworten). Für alle (`COMMON_TOOLS`): `show_code(file_path, start_line, end_line?, note?)` → `code:focus`, `show_plan(title, markdown)` → `code:plan`, `show_diff(file_path?)` → `code:showDiff` (öffnet das Review-Fenster), `notify_user(message)`, `report_progress(message, percent?)`, `run_list`/`run_output(name, lines?)`/`run_start`/`run_stop` (Projekt-Befehle, `runTool` in `index.ts`); für Teammitglieder zusätzlich `team_members`/`send_team_message` (s. Teams). Tools sind per `permissions.allow` freigegeben. **Neues Tool:** Definition + `ToolName` in `agentBridge.ts`, ggf. `COMMON_TOOLS`, Handler in `handleToolCall`, Hinweis in `SYSTEM_HINT`.
 
 **Strg+G-Editor-Tab** (statt externem Editor): Agents starten mit `EDITOR`/`VISUAL` = `devhub-notepad` und `<data>\agents\<id>\bin` vorne im `PATH`; dort liegt `devhub-notepad.cmd` = `curl.exe -s -o NUL -X POST <bridge>/editor/<token>/<agentId> --data-binary "%~1"`. claude ruft bei Strg+G per cmd `$EDITOR "<temp-prompt.md>"` auf und wartet auf das Prozessende; Bridge hält die Anfrage offen (`requestTimeout = 0`), bis `AgentManager.finishEditor` die Datei schreibt und antwortet → claude lädt den Text als Prompt. `submit` → nach 500 ms `\r`.
 
@@ -120,10 +139,30 @@ Lokale Windows-Desktop-App zum Verwalten von Projekten und den darin laufenden K
 
 **Snippets** (`main/snippets.ts`): Jedes Hook-Ereignis enthält `transcript_path` → `TranscriptReader` pro Agent liest das JSONL-Transkript inkrementell (Byte-Offset, nur vollständige Zeilen; erstes Lesen = ganze Datei, nach Wiederherstellung sind alte Snippets also wieder da). Gelesen bei `SessionStart`, `Stop` (+ erneut nach 1,5 s), `Notification`, `PreToolUse(AskUserQuestion)`. Nur `type: "assistant"`, nicht `isSidechain` (Subagents), Text-Blöcke → Code-Zäune. Pro Agent max. 30, gleicher Code nur einmal. Event `code:snippets` (volle Liste), `code:snippets`-Abfrage nach Renderer-Reload. Kein Mitwirken des Agents nötig (kein MCP-Tool).
 
+**Worktrees** (`main/git.ts`, ohne Electron → per Skript testbar; immer `execFile('git', …)`): `prepareWorktree` vor dem ersten Start (`start`, Team-Worker in `startTeam`; der Orchestrator bleibt im Hauptordner und bekommt die Branch-Namen in den Prompt – `worktreeBranch(name, id)` ist vor dem Anlegen berechenbar; Worker sollen committen, er führt per `git merge` zusammen). `createWorktree` trägt `.devhub/` in `.git/info/exclude` ein. Beim Ende (`forget`): Worktree ohne Änderungen und ohne eigene Commits wird entfernt (`removeWorktreeIfUnused`), sonst bleibt er zum Prüfen stehen; Fortsetzen aus dem Verlauf legt einen entfernten am alten Pfad wieder an (`restoreWorktree`, Sitzungen lassen sich nur in ihrem Verzeichnis fortsetzen). Abzweigen teilt sich den Worktree des Originals.
+
+**Review** (`git:*` in `index.ts`): Renderer nennt nur `(projectId, targetId)`, Main löst das Verzeichnis über `reviewTargets` auf (Hauptordner = `main`, Worktrees unter `<repo>/.devhub/worktrees` = `wt:<branch>`); Pfade prüft `insideWorkdir` (kein `..`, kein `.git`). Vergleichsbasis (`reviewRef`): Hauptordner = `HEAD`, Worktree = `merge-base(HEAD, base)` → auch Commits des Agents zählen; Repo ohne Commit = leerer Baum. `mergeWorktree`: `--no-ff` in den Branch, der im Hauptordner ausgecheckt ist; verlangt sauberen Worktree, bei Konflikt `merge --abort`.
+
+**Prüfungen** (`handleStop`): nur wenn der Agent seit der letzten Prüfung Dateien geändert hat (`editedThisTurn`, aus `PostToolUse`). Befehle laufen nacheinander per `exec` im Arbeitsverzeichnis (10 min je Befehl); erster Fehlschlag → `block` mit den letzten 6000 Zeichen der Ausgabe, höchstens 3-mal je Anweisung (`MAX_GATE_ROUNDS`). Meldet der Agent danach fertig, ohne etwas geändert zu haben (er erklärt z. B., warum er nicht korrigiert), wird nicht erneut geprüft. Statustext: „Fertig – Prüfungen grün“ / „… schlägt fehl“.
+
+**Freigaben** (`requestPermission`): 1. Regel des Projekts passt (`matchesRule`: `Tool` oder `Bash:<Anfang>`, verkettete/umgeleitete Befehle passen nie) → sofort `allow`. 2. Worker → Orchestrator (s. Teams). 3. `settings.permissionInbox` an → Eintrag im Eingang (`PermissionInfo`, Ereignis `inbox:permissions`), Antwort über `answerUserPermission` (`always` speichert `ruleFor(...)` in `project.permissionRules`). 4. sonst leere Antwort → claudes normaler Dialog im Terminal. Solange eine Freigabe offen ist, überschreiben `Notification`/`PostToolUse` den Status nicht.
+
+**Aufträge/Aufgaben**: `enqueue` hängt an `agent.queue` (persistiert) und ruft `sendNextQueued`: abgeschickt wird nur, wenn der Zug beendet ist (`turnDone`, gesetzt im Stop) und `mustHold` nichts dagegen hat; sonst nach dem nächsten Stop bzw. alle 5 s erneut versucht. `agent.currentTaskId` → beim Stop wird die Aufgabe „erledigt“; endet der Agent vorher, geht sie zurück auf „offen“. Aufgaben liegen in `state.tasks`.
+
+**Zustellung härter gemacht** (`mustHold`): automatische Eingaben (Team-Nachrichten, Aufträge) warten, solange der Agent startet, der Editor-Tab offen ist, eine `AskUserQuestion` offen ist (`r.asking`, nicht mehr über den deutschen Statustext) oder der Nutzer gerade tippt (`r.draftAt`: druckbare Zeichen in `write()`, gelöscht bei Enter/Strg+C/Strg+U, gilt 45 s).
+
+**Verlauf** (`state.archive`, max. 200): `forget` übernimmt regulär beendete Claude-Agents ohne Team mit vorhandenem Transkript (Titel = erste Anweisung, Verbrauch). `resumeArchived` startet mit derselben Session (Eintrag verschwindet) oder als Kopie. Suche (`main/history.ts`): Rohzeilen-Vorfilter, dann nur `user`/`assistant`-Texte, max. 3 Ausschnitte je Sitzung, Transkripte > 60 MB werden übersprungen.
+
+**Verbrauch** (`UsageTracker` in `main/snippets.ts`): `message.usage` der `assistant`-Zeilen, je `message.id` nur einmal gezählt (eine Antwort steht in mehreren Zeilen); Kontext = Eingabe + Cache der letzten Antwort (ohne Subagents); `byDay` in lokaler Zeit. Gelesen bei den Snippet-Anlässen und gedrosselt (4 s) bei `PostToolUse`. Kontext-Warnung ab `settings.contextWarnTokens`. Kosten nur aus `settings.priceInput/priceOutput` (Cache-Lesen 10 %, -Schreiben 125 %) – DevHub kennt keine Modellpreise.
+
+**Ausführen** (`main/runs.ts`): `spawn(command, { shell: true })` im Agent-Ordner, Ausgabe ohne ANSI, 300 KB je Befehl; Stopp per `taskkill /T /F`. Prozesse laufen bis zum App-Ende weiter. Vorschau = eigenes `BrowserWindow` (sandbox, kein Preload), nur `http(s)`.
+
+**Fernzugriff** (`main/remote.ts`): HTTP auf `0.0.0.0:<settings.remotePort>`, alles unter `/<remoteToken>/` (sonst 404, Vergleich mit `timingSafeEqual`): Seite, `GET api/state`, `POST api/send`, `POST api/permission` (nur allow/deny/always). Unverschlüsselt – bewusst nur als Opt-in fürs eigene Netz/VPN; Token entsteht beim ersten Einschalten, leeren = neue Adresse.
+
 **Agent-Lebenszyklus**
 
 - Namen: kleinste freie Nummer **global** („Agent N“) → eindeutig für Sprachbefehle
-- Prozess endet (`/exit` oder ✕ in der Liste) → Agent aus Zustand entfernt, Ansicht schließt sich
+- Prozess endet (`/exit` oder ✕ in der Liste) → Agent aus Zustand entfernt (Sitzung → Verlauf), Ansicht schließt sich
 - Startfehler: endet ein Agent < 8 s nach Start mit Exit-Code ≠ 0 (nicht per ✕), meldet Main `agents:startFailed` mit den letzten Ausgabezeilen (ohne ANSI) → Toast
 - App wird beendet (`before-quit`) → Prozesse gestoppt, Agents bleiben gespeichert → beim nächsten Start `agents:restore` (einmal pro App-Start)
 - Wartezustand überlebt Neustarts: `setStatus` speichert `needsInput` (Hinweistext) am gespeicherten Agent; Wiederherstellung startet mit diesem Status, `SessionStart` mit `source: "resume"` setzt ihn nicht auf idle zurück (erst `UserPromptSubmit`/Tool-Hooks)
@@ -145,7 +184,7 @@ Lokale Windows-Desktop-App zum Verwalten von Projekten und den darin laufenden K
 
 **Datenordner** (`main/dataPath.ts`, erster Import in `index.ts`): **alle Daten neben der .exe** in `<exe-Ordner>\data\` (`app.setPath('userData')` vor `ready`, also auch Chromium-Cache). Ordner der .exe (`PORTABLE_EXECUTABLE_DIR` nur, falls je wieder ein `portable`-Build läuft); Entwicklung: `<Projekt>\data\` (gitignored). Nicht beschreibbar → Fehlermeldung + Beenden. Einmalige Übernahme von `devhub-state.json` + `whisper\` aus dem alten `%APPDATA%\DevHub`. Im Folgenden `<data>`.
 
-**Persistenz** (`main/store.ts`): `<data>\devhub-state.json` (Projekte, laufende Agents, Einstellungen, `view` = zuletzt gezeigte Ansicht), atomar geschrieben.
+**Persistenz** (`main/store.ts`): `<data>\devhub-state.json` (Projekte, laufende Agents, Einstellungen, `view` = zuletzt gezeigte Ansicht, dazu `tasks`, `archive`, `prompts`, `engines`), atomar geschrieben. Neue Agent-Felder, die Neustarts überleben sollen, in `persisted()` (`agents.ts`) aufnehmen; Laufzeit-Felder stehen im `Omit` von `PersistedAgent`.
 
 - Ansicht (`Selection` in `shared/types.ts`): Renderer speichert jede Änderung per `view:set` (erst nachdem `view:get` beim Start geladen wurde, Ref `viewLoaded`); beim Start `savedView` → sonst erstes Projekt mit Agents. Nicht mehr laufende Agents filtert `selection` (useMemo) heraus → `agents` vor der Auswahl setzen.
 
@@ -164,6 +203,9 @@ Lokale Windows-Desktop-App zum Verwalten von Projekten und den darin laufenden K
 
 - `DEVHUB_DEBUG=1`: loggt Agent-Starts, Hook-Ereignisse und MCP-Aufrufe in die Konsole
 - `DEVHUB_SCREENSHOT=<pfad.png>` (+ `DEVHUB_SCREENSHOT_DELAY=<ms>`, Standard 8000): speichert ein Fensterbild und loggt den DOM-Zustand (Agent-Zeilen, Code-Notiz)
+- `DEVHUB_DATA_DIR=<ordner>`: eigener Datenordner → **zweite Instanz neben einer laufenden** (die Ein-Instanz-Sperre hängt am Datenordner), ohne Übernahme alter Daten. So lässt sich die Oberfläche testen, während DevHub offen ist: `devhub-state.json` vorbefüllen, `node_modules/electron/dist/electron.exe . --remote-debugging-port=<port>` starten (nach `npm run build`) und per DevTools-Protokoll (`/json` → WebSocket, `Runtime.evaluate`, `Page.captureScreenshot`) klicken und Bilder speichern
+
+**Tests per Skript** (kein Test-Runner im Projekt): Module ohne Electron (`git.ts`, `snippets.ts`, `history.ts`, `shared/*`) mit `npx rolldown <test.ts> --file <out.mjs> --platform node` bündeln und mit node ausführen. `AgentManager` läuft auch unter node: `electron` per `resolve.alias` auf einen Stub (`app.getPath` → Testordner), `external: ['node-pty']`, Ausgabe unter `node_modules/` ablegen (sonst wird node-pty nicht gefunden) – so wurden Worktree, Freigaben, Prüfungen, Warteschlange, Abzweigen und Verlauf mit echtem claude geprüft.
 
 ## Projektstruktur
 
@@ -173,7 +215,13 @@ src/
   shared/hotkeys.ts        Kürzel: Standardwerte, Tastendruck → Accelerator, Anzeigeformat
   shared/agentArgs.ts      Start-Flags: Tokenizer, Validierung, Zusammenführen global/Projekt
   shared/voiceLanguage.ts  Welche Sprache gemerkt werden darf (nie Englisch), Auswahl feste Sprache
+  shared/permissions.ts    Freigabe-Regeln (`ruleFor`, `matchesRule`, `validateRule`), `describeTool` (Aktivität)
   main/
+    git.ts                 Worktrees + Review (Änderungen, Diff, Verwerfen, Commit, Merge), ohne Electron
+    runs.ts                Projekt-Befehle als verwaltete Prozesse (RunManager)
+    history.ts             Transkript finden, Volltextsuche über Sitzungen
+    reports.ts             Tagesbericht + Kurzfassung zum Vorlesen (`claude -p`)
+    remote.ts              Fernzugriff: HTTP-Server + Handy-Seite
     index.ts               Fenster, IPC-Handler, globaler Hotkey, Mikrofon-Berechtigung
     agents.ts              AgentManager: node-pty, Start/Stop/Rename/Restore, Hook-Status, show_code
     agentBridge.ts         Lokaler HTTP-Server: Hooks + MCP (show_code)
@@ -184,24 +232,28 @@ src/
     voice.ts               whisper.cpp-Download/Transkription, Modellverwaltung
     voiceCommands.ts       Globale Sprachbefehle via `claude -p`
     voicePrompt.ts         Router-Prompt (rein, per esbuild-Skript mit echtem claude testbar)
-    snippets.ts            Code-Blöcke aus dem Transkript (inkrementell), ohne Electron-Abhängigkeit
+    snippets.ts            Transkript inkrementell: Code-Blöcke, bearbeitete Dateien, Verbrauch (`UsageTracker`); ohne Electron
   preload/index.ts         window.api (contextBridge)
   renderer/src/
     App.tsx                Auth-Gate → Workspace; Typ `Selection`
     Workspace.tsx          Zustand, Auswahl, Sprachablauf, Hotkeys, Dialoge
     lib/                   terminals.ts, recorder.ts, errors.ts, hotkeyCapture.ts, selection.ts,
                            monaco.ts (schlanker Monaco-Import, Theme, Sprache für Datei/Code-Zaun),
-                           editorText.ts (Anhänge `@"pfad"` im Editor-Tab)
+                           editorText.ts (Anhänge `@"pfad"` im Editor-Tab),
+                           format.ts (Tokens, Kosten, Datum, Prompt-Platzhalter)
+    assets/workbench.css   Styles der Workbench (Eingang, Review, Aufgaben, Verlauf, Ausführen, Markdown)
     components/            Sidebar, CenterPane, EditorTab, TerminalView, CodePane, SnippetList, ProjectDialog, SettingsDialog,
                            VoiceSetupDialog, VoiceModels, VoiceOverlay, HotkeyInput, ProgramInput, AgentArgsHelp, Modal,
                            AgentTemplateDialog, TeamTemplateDialog, DictationButton, DictationTextarea,
-                           ContextMenu, AuthGate, Icons, ImportProjectsDialog
+                           ContextMenu, AuthGate, Icons, ImportProjectsDialog,
+                           InboxPanel, ReviewDialog, TaskBoardDialog, HistoryDialog, RunDialog, ReportDialog,
+                           QueueDialog, LibraryDialogs (PromptDialog, EngineDialog), Markdown
 electron-builder.yml       Windows-Ziele, asarUnpack node-pty, nur Sprachen de/en-US
 ```
 
 **IPC-Muster:** Kanal `bereich:aktion` (z. B. `agents:start`) → Handler in `main/index.ts`, Methode in `preload/index.ts`,
 Typ in `DevHubApi` (`shared/types.ts`). Alle drei immer zusammen anpassen. Ereignisse Main→Renderer: `agents:data`,
-`agents:changed` (Agents + laufende Teams), `agents:startFailed`, `code:focus`, `code:snippets`, `code:edits`, `editor:opened`, `editor:append`, `voice:progress`, `voice:globalHotkey` (Abo liefert Abmelde-Funktion).
+`agents:changed` (Agents + laufende Teams; trägt auch die nicht gespeicherten Felder `activity`, `progress`, `usage`, `lastMessage`), `agents:startFailed`, `agents:focusRequest`, `code:focus`, `code:snippets`, `code:edits`, `code:plan`, `code:showDiff`, `inbox:permissions`, `inbox:notice`, `tasks:changed`, `runs:changed`, `runs:output`, `editor:opened`, `editor:append`, `voice:progress`, `voice:globalHotkey`, `voice:speak` (Abo liefert Abmelde-Funktion).
 
 ## Stand
 
@@ -228,19 +280,29 @@ Typ in `DevHubApi` (`shared/types.ts`). Alle drei immer zusammen anpassen. Ereig
 - [x] Automatische `.sln`-Suche beim Projekt-Anlegen — Suche getestet, **in der UI noch nicht getestet**
 - [x] Paketierung (`build:unpack`) getestet: `app.asar` ~8 MB, ZIP ~147 MB (Rest Electron), Start aus dem entpackten Ordner ≈1,3 s
 - [x] Initialer Git-Commit (nach Durchsicht durch den Nutzer)
+- [x] **Workbench** (Branch `feature/workbench`) – Build/Typcheck/Lint ok. Geprüft:
+  - per Skript (47 Fälle): Git/Worktrees (anlegen, Änderungen, Diff, Verwerfen, Teil-Commit, Merge, Konflikt-Abbruch, Entfernen/Wiederanlegen, Repo ohne Commit), Freigabe-Regeln, Verbrauch (auch an einem echten Transkript), Suche
+  - **mit echtem claude über den echten `AgentManager`**: Worktree-Agent, Freigabe über den Eingang + „Immer“-Regel (zweiter Aufruf automatisch erlaubt), Prüfung schlägt fehl → Agent korrigiert → „Prüfungen grün“, Aufgabe per Warteschlange → „erledigt“, Abzweigen (`--fork-session`, Kopie kennt die Unterhaltung), Verlauf + Fortsetzen; Standardfall Eingang aus → claudes Dialog im Terminal, danach Regel → ohne Nachfrage
+  - per Skript: MCP-Tools `show_plan`/`show_diff`/`notify_user`/`report_progress`/`run_*` über den echten Bridge, andere Engine (Start, Aufgabe/Auftrag eingetippt), Fernzugriff (Token, Seite, Zustand, Senden, Abschalten)
+  - Oberfläche in einer zweiten Instanz per DevTools-Protokoll durchgeklickt (ohne Renderer-Fehler): Eingang, Aufgaben, Verlauf mit Kosten, Review mit Diff, Ausführen mit Live-Ausgabe, Auftrag-Dialog, Projekt-Dialog, Einstellungen, Tagesbericht (echtes Haiku)
+  - **noch nicht getestet:** Teams mit Worktrees (Prompts/Merge durch den Orchestrator), Sprach-Router mit `promptId`, Vorschau-Fenster + Screenshot, Windows-Benachrichtigung/Blinken, Vorlesen, Reiter „Plan“/„Aktivität“ und Datei-Konflikt in der Oberfläche, Freigabe-Karten im Eingang (nur die Logik dahinter), Fernzugriff von einem echten Handy
 - **Releases nur von Hand** (Nutzerwunsch: nichts automatisch bei Push): `npm run release -- <notizen.md> [x.y.z]` (`scripts/release.mjs`). Prüft: Branch `main`, keine offenen Änderungen, gleich mit `origin/main`, Tag/Release noch nicht vorhanden. Dann Version = Patch +1 aus `package.json` (oder angegebene x.y.z für Minor/Major) → `npm version --no-git-tag-version` → `npm run build:win` (Fehler → Version zurück) → Commit „Version x.y.z“ + Tag `vx.y.z` pushen → GitHub-Release zu diesem Tag im Hauptrepo + ZIP hochladen (GitHub-API, Anmeldung aus dem Git Credential Manager). Release-Notizen schreibt Claude für Tester (Deutsch, Funktionen statt Commit-Liste) in eine Datei im Scratchpad und zeigt sie vorher. v1.0.0 = Tag auf 0aecc72 (von Hand veröffentlicht), ab v1.0.1 per Skript (Ende-zu-Ende gelaufen). Download-Infos für Nutzer: `README.md`.
 - Lokales Test-ZIP: `npm run build:win` → `dist/DevHub-<ver>-win.zip` (enthält `LIESMICH.txt`)
 
 ## Konventionen
 
 - Umgebung: Windows 11, PowerShell / Git Bash
-- Vorhanden: Node 23, npm 11, .NET 10, Claude Code 2.1 (`~\.local\bin\claude.exe`), VS Code, Visual Studio 2022 Community (ohne C++-Buildtools)
+- Vorhanden: Node 26, npm 11, .NET 10, Claude Code 2.1 (am 2026-11-13: npm-Installation `%APPDATA%\npm\claude.cmd`, kein `claude.exe` im PATH), Git, VS Code, Visual Studio 2022 Community (ohne C++-Buildtools)
 - Code-Kommentare und UI-Texte auf Deutsch; Prompts/Tool-Beschreibungen für Claude auf Englisch
 
 ## Bekannte Stolpersteine
 
 - **Nur eine Instanz** (`requestSingleInstanceLock` in `main/index.ts`): zwei Instanzen würden dieselben Agents/Sessions wiederherstellen. `npm run dev` beendet sich daher sofort, wenn DevHub schon läuft → vorher das offene Fenster schließen. `electron-vite dev` lädt Main-Änderungen **nicht** neu (kein `-w`) → nach Änderungen in `src/main` App neu starten.
 
+- **Vertrauens-Dialog von claude:** In einem Ordner, dem noch nicht vertraut wurde, zeigt claude beim Start „Is this a project you trust?“ – Vorauswahl **„No, exit“** (Enter beendet den Agent mit Code 1). Unterordner eines vertrauten Ordners gelten als vertraut. Deshalb liegen Worktrees **im Repository** (`<repo>/.devhub/worktrees/`), nicht im Datenordner; nie automatisch Tasten in diesen Dialog schicken. Folge: Werkzeuge, die den Hauptordner komplett durchlaufen, sehen die Worktrees – `.devhub` bei Bedarf ausnehmen (hier: `.gitignore`, `.prettierignore`, eslint `ignores`, electron-builder `files`).
+- **Auto-Modus = keine Freigabe-Anfragen:** Mit `--permission-mode auto` (oder global eingestelltem Auto-Modus) löst claude für Edits keinen `PermissionRequest` aus → Eingang und Regeln greifen dann nicht. Zum Testen `--permission-mode default` in die Start-Flags.
+- **claude als `.cmd` (npm-Installation):** dann läuft der Agent über `cmd.exe /c` und die Zeichen `" % ^ & | < >` sowie Zeilenumbrüche in Argumenten (Aufgabe, System-Prompt) werden durch Leerzeichen ersetzt – in Prompts für claude also nicht darauf angewiesen sein.
+- node-pty schreibt beim Beenden eines Agents gelegentlich „AttachConsole failed“ (Hilfsprozess `conpty_console_list_agent`) nach stderr – harmlos.
 - Tests mit `DEVHUB_SCREENSHOT`: App **nicht hart beenden** (`timeout`/kill): ohne `before-quit` enden die pty-Prozesse als „Agent beendet“ → Agents werden aus dem Zustand gelöscht. Fenster normal schließen.
 - Pakete in `dist/` werden nicht automatisch neu gebaut → vor dem Testen neuer Funktionen mit der .exe `npm run build:unpack` ausführen (sonst läuft ein alter Stand).
 - **Kein Native-Rebuild:** `postinstall` ist nur `install-electron`. `electron-builder install-app-deps` würde node-pty aus dem Quellcode bauen und scheitert ohne C++-Buildtools; die N-API-Prebuilds funktionieren direkt in Electron. Nach fehlgeschlagenem Rebuild: `rm -rf node_modules/node-pty && npm install`.

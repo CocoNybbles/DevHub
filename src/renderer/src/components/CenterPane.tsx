@@ -5,6 +5,13 @@ import TerminalView from './TerminalView'
 import { ClearIcon, CloseIcon, EditIcon, EyeIcon, LockIcon, MicIcon, PlayIcon } from './Icons'
 import { focusTerminal, hasSnapshot } from '../lib/terminals'
 import { formatAccelerator } from '../../../shared/hotkeys'
+import { formatTokens } from '../lib/format'
+
+/** Gemeldeter Fortschritt (`report_progress`), sonst der aktuelle Schritt des Agents */
+const activityText = (a: Agent): string =>
+  a.progress
+    ? `${a.progress.percent !== undefined ? `${Math.round(a.progress.percent)} % · ` : ''}${a.progress.message}`
+    : (a.activity ?? '')
 
 interface Props {
   selection: Selection
@@ -61,6 +68,24 @@ function CenterPane(props: Props): React.JSX.Element {
               <span className={`dot ${agent.status}`} />
               {agent.name}
               <span className="muted"> · {project?.name}</span>
+              {agent.worktree && (
+                <span className="muted" title={`Eigener Worktree: ${agent.worktree.path}`}>
+                  {' '}
+                  · {agent.worktree.branch}
+                </span>
+              )}
+              {agent.usage && (
+                <span
+                  className="muted"
+                  title="Tokens im Kontext der Unterhaltung (bei der letzten Antwort)"
+                >
+                  {' '}
+                  · Kontext {formatTokens(agent.usage.context)}
+                </span>
+              )}
+              {agent.status === 'working' && activityText(agent) && (
+                <span className="header-activity"> · {activityText(agent)}</span>
+              )}
               {agent.editing && <LockedBadge onOpen={() => props.onOpenEditor(agent.id)} />}
             </span>
             <div className="header-actions">
@@ -203,8 +228,11 @@ function AgentGrid(props: Props & { shown: Agent[]; showProject: boolean }): Rea
               {props.showProject && (
                 <span className="muted"> · {projects.find((p) => p.id === a.projectId)?.name}</span>
               )}
-              {a.status === 'needsInput' && (
+              {a.status === 'needsInput' ? (
                 <span className="row-sub">{a.statusMessage || 'Wartet auf Eingabe'}</span>
+              ) : (
+                a.status === 'working' &&
+                activityText(a) && <span className="row-sub info">{activityText(a)}</span>
               )}
             </span>
             {a.editing && <LockedBadge onOpen={() => props.onOpenEditor(a.id)} />}

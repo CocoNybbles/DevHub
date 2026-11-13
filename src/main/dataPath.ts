@@ -28,7 +28,12 @@ function migrateFromAppData(target: string): void {
   }
 }
 
-const dir = join(exeDir(), 'data')
+/**
+ * Entwicklung/Tests: `DEVHUB_DATA_DIR` = eigener Datenordner. Damit startet eine zweite Instanz
+ * neben einer laufenden (die Ein-Instanz-Sperre hängt am Datenordner), ohne deren Zustand anzufassen.
+ */
+const override = process.env.DEVHUB_DATA_DIR?.trim()
+const dir = override || join(exeDir(), 'data')
 try {
   mkdirSync(dir, { recursive: true })
   const probe = join(dir, '.write-test')
@@ -42,5 +47,5 @@ try {
   )
   app.exit(1)
 }
-migrateFromAppData(dir)
+if (!override) migrateFromAppData(dir)
 app.setPath('userData', dir)

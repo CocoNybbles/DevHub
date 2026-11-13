@@ -41,6 +41,14 @@ function ProjectDialog({
   const folderDefault = vscodeInstalled ? 'VS Code' : 'Windows-Explorer'
   const [agentArgs, setAgentArgs] = useState(project?.agentArgs ?? '')
   const argsError = validateAgentArgs(agentArgs)
+  const [useWorktrees, setUseWorktrees] = useState(project?.useWorktrees ?? false)
+  const [checks, setChecks] = useState(project?.checks ?? '')
+  /** Befehle als Text: je Zeile „Name = Befehl“ */
+  const [runText, setRunText] = useState(
+    (project?.runCommands ?? []).map((c) => `${c.name} = ${c.command}`).join('\n')
+  )
+  const [previewUrl, setPreviewUrl] = useState(project?.previewUrl ?? '')
+  const [rulesText, setRulesText] = useState((project?.permissionRules ?? []).join('\n'))
   const [error, setError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
 
@@ -75,7 +83,21 @@ function ProjectDialog({
         projectFileApp: (projectFile.trim() && projectFileApp.trim()) || undefined,
         folderPath: folderPath.trim() || undefined,
         folderApp: (folderPath.trim() && folderApp.trim()) || undefined,
-        agentArgs: agentArgs.trim() || undefined
+        agentArgs: agentArgs.trim() || undefined,
+        useWorktrees,
+        checks,
+        runCommands: runText
+          .split('\n')
+          .map((line) => line.trim())
+          .filter(Boolean)
+          .map((line) => {
+            const at = line.indexOf('=')
+            return at < 0
+              ? { name: line, command: '' }
+              : { name: line.slice(0, at).trim(), command: line.slice(at + 1).trim() }
+          }),
+        previewUrl,
+        permissionRules: rulesText.split('\n')
       })
       onSaved(saved)
     } catch (e) {
@@ -238,6 +260,89 @@ function ProjectDialog({
           ) : (
             <AgentArgsHelp scope="project" />
           )}
+        </label>
+
+        <label className="checkbox">
+          <input
+            type="checkbox"
+            checked={useWorktrees}
+            onChange={(e) => setUseWorktrees(e.target.checked)}
+          />
+          Jeder Agent arbeitet in einem eigenen Git-Worktree (eigener Branch)
+        </label>
+        <small className="muted">
+          Mehrere Agents stören sich so nicht gegenseitig; ihre Änderungen prüfst und führst du über
+          „Änderungen prüfen“ zusammen. Braucht ein Git-Repository mit mindestens einem Commit.
+          Nicht versionierte Dateien (z. B. node_modules, .env) fehlen im Worktree.
+        </small>
+
+        <label>
+          <span>
+            Prüfungen bei „Fertig“ <em>(optional)</em>
+          </span>
+          <textarea
+            className="mono"
+            rows={3}
+            value={checks}
+            onChange={(e) => setChecks(e.target.value)}
+            placeholder={'npm run typecheck\nnpm run lint'}
+            spellCheck={false}
+          />
+          <small className="muted">
+            Ein Befehl je Zeile. Hat ein Agent Dateien geändert und meldet fertig, laufen sie in
+            seinem Arbeitsverzeichnis; schlägt einer fehl, bekommt der Agent die Ausgabe und bessert
+            nach (höchstens dreimal je Anweisung).
+          </small>
+        </label>
+
+        <label>
+          <span>
+            Befehle zum Ausführen <em>(optional)</em>
+          </span>
+          <textarea
+            className="mono"
+            rows={3}
+            value={runText}
+            onChange={(e) => setRunText(e.target.value)}
+            placeholder={'dev = npm run dev\ntest = npm test'}
+            spellCheck={false}
+          />
+          <small className="muted">
+            Je Zeile „Name = Befehl“. Start/Stopp und Ausgabe unter „Ausführen“ (Rechtsklick aufs
+            Projekt); Agents können die Ausgabe lesen.
+          </small>
+        </label>
+
+        <label>
+          <span>
+            Web-Vorschau <em>(optional)</em>
+          </span>
+          <input
+            className="mono"
+            value={previewUrl}
+            onChange={(e) => setPreviewUrl(e.target.value)}
+            placeholder="http://localhost:5173"
+            spellCheck={false}
+          />
+        </label>
+
+        <label>
+          <span>
+            Freigabe-Regeln <em>(optional)</em>
+          </span>
+          <textarea
+            className="mono"
+            rows={3}
+            value={rulesText}
+            onChange={(e) => setRulesText(e.target.value)}
+            placeholder={'Bash:npm test\nBash:git status\nEdit'}
+            spellCheck={false}
+          />
+          <small className="muted">
+            Eine Regel je Zeile: Tool-Name (z. B. Edit) oder „Bash:Befehlsanfang“. Passende Aufrufe
+            werden für Agents dieses Projekts ohne Nachfrage erlaubt; verkettete Befehle
+            (&amp;&amp;, |, ; …) passen nie. „Immer“ im Eingang trägt hier Regeln ein.
+          </small>
         </label>
 
         {error && <p className="error">{error}</p>}

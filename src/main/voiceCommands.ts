@@ -15,7 +15,7 @@ import { routerPrompt } from './voicePrompt'
  */
 
 type Decision =
-  | { action: 'send'; agentId: string; message: string }
+  | { action: 'send'; agentId: string; message: string; promptId?: string }
   | { action: 'start'; projectId: string; task?: string; model?: string; templateId?: string }
   | {
       action: 'start_team'
@@ -33,23 +33,39 @@ export async function runVoiceCommand(
   text: string,
   agents: AgentManager
 ): Promise<VoiceCommandResult> {
-  const { projects, templates, teamTemplates } = getState()
+  const { projects, templates, teamTemplates, prompts } = getState()
   const running = agents.list()
   if (projects.length === 0)
     return { kind: 'none', message: 'Es sind noch keine Projekte angelegt.' }
 
-  const prompt = routerPrompt(text, projects, running, templates, teamTemplates, agents.teams())
+  const prompt = routerPrompt(
+    text,
+    projects,
+    running,
+    templates,
+    teamTemplates,
+    agents.teams(),
+    prompts
+  )
 
   const raw = await askClaude(prompt)
   const decision = parseDecision(raw)
 
   if (decision.action === 'send') {
     const agent = running.find((a) => a.id === decision.agentId)
-    if (!agent || !decision.message?.trim()) {
+    // Gespeicherter Prompt aus der Bibliothek (+ ggf. zusätzlich Gesagtes)
+    const saved = decision.promptId ? prompts.find((p) => p.id === decision.promptId) : undefined
+    const message = [saved?.text, decision.message?.trim()].filter(Boolean).join('\n\n')
+    if (!agent || !message) {
       return { kind: 'none', message: 'Agent oder Anweisung nicht erkannt.' }
     }
-    const sent = await agents.sendVoice(agent.id, decision.message.trim())
-    return { kind: 'sent', agentName: agent.name, message: decision.message.trim(), sent }
+    const sent = await agents.sendVoice(agent.id, message)
+    return {
+      kind: 'sent',
+      agentName: agent.name,
+      message: saved ? `Prompt „${saved.name}“` : message,
+      sent
+    }
   }
 
   if (decision.action === 'start') {
@@ -125,7 +141,7 @@ function parseDecision(raw: string): Decision {
 }
 
 /** Ruft `claude -p` ohne Tools auf; der Prompt geht über stdin (kein Quoting nötig). */
-async function askClaude(prompt: string): Promise<string> {
+export async function askClaude(prompt: string): Promise<string> {
   const claude = await resolveClaude()
   if (!claude) throw new Error('Claude Code wurde nicht gefunden')
 

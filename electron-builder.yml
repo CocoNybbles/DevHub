@@ -11,7 +11,8 @@ files:
   - '!{tsconfig.json,tsconfig.node.json,tsconfig.web.json}'
   # Entwicklungs-Datenordner (Caches, whisper-Modell, eigener Zustand) nie mitpacken
   - '!data{,/**}'
-  - '!{dist,build,.claude,scripts,.github}{,/**}'
+  # .devhub = Worktrees der Agents (Projekt mit Worktrees), nie mitpacken
+  - '!{dist,build,.claude,scripts,.github,.devhub}{,/**}'
   - '!out/THIRD_PARTY_NOTICES.txt'
   - '!LICENSE'
 asarUnpack:

@@ -1,5 +1,12 @@
 import { useState } from 'react'
-import type { Agent, AgentTemplate, Project, Team, TeamTemplate } from '../../../shared/types'
+import type {
+  Agent,
+  AgentTemplate,
+  Engine,
+  Project,
+  Team,
+  TeamTemplate
+} from '../../../shared/types'
 import { isTeamWorker, teamLead } from '../../../shared/types'
 import type { Selection } from '../App'
 import { formatAccelerator } from '../../../shared/hotkeys'
@@ -96,6 +103,25 @@ interface Props {
   onOpenFolder: (p: Project) => void
   onGlobalVoice: () => void
   onOpenSettings: () => void
+  /** Weitere Engines (andere Terminal-Programme als Claude Code) → Auswahl beim Start */
+  engines: Engine[]
+  onStartEngine: (projectId: string, engineId: string) => void
+  /** Eingang (Freigaben, wartende Agents, Hinweise) – steht unter der Projektliste */
+  inbox: React.ReactNode
+  /** projectId: Board dieses Projekts, sonst des gewählten */
+  onOpenTasks: (projectId?: string) => void
+  onOpenHistory: () => void
+  onOpenReport: () => void
+  onOpenRun: (projectId: string) => void
+  /** Änderungen prüfen: Hauptordner des Projekts bzw. Arbeitsverzeichnis des Agents */
+  onReview: (projectId: string, agentId?: string) => void
+  /** Auftrag anhängen / Prompt aus der Bibliothek senden */
+  onQueue: (agentId: string) => void
+  onFork: (agentId: string) => void
+  /** Verbrauch eines Agents für den Tooltip */
+  usageText: (agent: Agent) => string
+  /** Zahl offener Aufgaben (Anzeige am Knopf) */
+  openTaskCount: number
 }
 
 const STATUS_LABEL: Record<Agent['status'], string> = {
@@ -171,9 +197,17 @@ function Sidebar(props: Props): React.JSX.Element {
     ...props.teamTemplates.map((t) => ({
       label: `Team ${t.name} starten (${t.members.length})`,
       action: () => props.onStartTeam(projectId, t.id)
+    })),
+    ...(props.engines.length
+      ? [{ label: 'Weitere Engines', heading: true, action: () => {} }]
+      : []),
+    ...props.engines.map((e) => ({
+      label: `${e.name} starten`,
+      action: () => props.onStartEngine(projectId, e.id)
     }))
   ]
-  const hasStartChoice = props.templates.length > 0 || props.teamTemplates.length > 0
+  const hasStartChoice =
+    props.templates.length > 0 || props.teamTemplates.length > 0 || props.engines.length > 0
 
   const toggle = (id: string): void =>
     setCollapsed((s) => {
@@ -235,6 +269,19 @@ function Sidebar(props: Props): React.JSX.Element {
                 action: () => props.onEditPrompt(a.id)
               },
               {
+                label: a.queue?.length
+                  ? `Auftrag anhängen … (${a.queue.length} warten)`
+                  : 'Auftrag / Prompt aus der Bibliothek …',
+                action: () => props.onQueue(a.id)
+              },
+              {
+                label: 'Änderungen prüfen …',
+                action: () => props.onReview(a.projectId, a.id)
+              },
+              ...(!a.teamId && !a.engineId
+                ? [{ label: 'Unterhaltung abzweigen', action: () => props.onFork(a.id) }]
+                : []),
+              {
                 label: orchestrator ? 'Team beenden' : 'Beenden',
                 danger: true,
                 action: () => props.onStopAgent(a)
@@ -249,7 +296,7 @@ function Sidebar(props: Props): React.JSX.Element {
             ]
           })
         }}
-        title={`${STATUS_LABEL[a.status]}${a.statusMessage ? ` – ${a.statusMessage}` : ''}${a.model ? `\nModell: ${a.model}` : ''}${orchestrator ? '\nOrchestrator: steuert das Team, einziger Ansprechpartner' : lead ? '\nLeitet das Team' : ''}\n${hint}`}
+        title={`${STATUS_LABEL[a.status]}${a.statusMessage ? ` – ${a.statusMessage}` : ''}${a.activity ? `\n${a.activity}` : ''}${a.worktree ? `\nWorktree: ${a.worktree.branch}` : ''}${props.usageText(a) ? `\n${props.usageText(a)}` : ''}${a.queue?.length ? `\n${a.queue.length} Auftrag/Aufträge in der Warteschlange` : ''}${a.model ? `\nModell: ${a.model}` : ''}${orchestrator ? '\nOrchestrator: steuert das Team, einziger Ansprechpartner' : lead ? '\nLeitet das Team' : ''}\n${hint}`}
       >
         <span className={`dot ${a.status}`} />
         {renaming === a.id ? (
@@ -281,8 +328,28 @@ function Sidebar(props: Props): React.JSX.Element {
                 <EditIcon size={10} /> Tab
               </span>
             )}
-            {a.status === 'needsInput' && a.statusMessage && (
+            {a.worktree && (
+              <span className="team-tag" title={`Eigener Worktree: ${a.worktree.branch}`}>
+                wt
+              </span>
+            )}
+            {!!a.queue?.length && (
+              <span className="team-tag" title="Aufträge in der Warteschlange">
+                +{a.queue.length}
+              </span>
+            )}
+            {a.status === 'needsInput' && a.statusMessage ? (
               <span className="row-sub">{a.statusMessage}</span>
+            ) : (
+              // Arbeitet: gemeldeter Fortschritt, sonst der aktuelle Schritt
+              a.status === 'working' &&
+              (a.progress || a.activity) && (
+                <span className="row-sub info">
+                  {a.progress
+                    ? `${a.progress.percent !== undefined ? `${Math.round(a.progress.percent)} % · ` : ''}${a.progress.message}`
+                    : a.activity}
+                </span>
+              )
             )}
           </span>
         )}
@@ -486,6 +553,9 @@ function Sidebar(props: Props): React.JSX.Element {
                     items: [
                       ...startItems(p.id),
                       { label: 'Projekt', heading: true, action: () => {} },
+                      { label: 'Aufgaben …', action: () => props.onOpenTasks(p.id) },
+                      { label: 'Änderungen prüfen …', action: () => props.onReview(p.id) },
+                      { label: 'Ausführen / Vorschau …', action: () => props.onOpenRun(p.id) },
                       ...(projectAgents.length > 1
                         ? [
                             {
@@ -582,6 +652,29 @@ function Sidebar(props: Props): React.JSX.Element {
           )
         })}
       </div>
+
+      {props.inbox}
+
+      <footer className="sidebar-footer">
+        <button
+          title="Aufgaben-Board: Aufgaben sammeln, Agents damit starten oder ihnen einreihen"
+          onClick={() => props.onOpenTasks()}
+        >
+          Aufgaben{props.openTaskCount > 0 && <span className="count">{props.openTaskCount}</span>}
+        </button>
+        <button
+          title="Beendete Sitzungen fortsetzen, alle Unterhaltungen durchsuchen, Verbrauch"
+          onClick={props.onOpenHistory}
+        >
+          Verlauf
+        </button>
+        <button
+          title="Tagesbericht: Was haben die Agents heute getan, was ist offen?"
+          onClick={props.onOpenReport}
+        >
+          Bericht
+        </button>
+      </footer>
 
       {menu && <ContextMenu {...menu} onClose={() => setMenu(null)} />}
     </aside>

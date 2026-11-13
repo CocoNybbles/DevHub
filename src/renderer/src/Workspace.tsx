@@ -3,14 +3,29 @@ import type {
   Agent,
   AgentTemplate,
   CodeFocus,
+  CodePlan,
   CodeSnippet,
   EditedFile,
+  Engine,
+  PermissionInfo,
   Project,
+  PromptTemplate,
   Settings,
+  Task,
   Team,
   TeamTemplate,
+  UserNotice,
   VoiceStatus
 } from '../../shared/types'
+import InboxPanel, { FileConflict } from './components/InboxPanel'
+import ReviewDialog from './components/ReviewDialog'
+import TaskBoardDialog from './components/TaskBoardDialog'
+import HistoryDialog from './components/HistoryDialog'
+import RunDialog from './components/RunDialog'
+import ReportDialog from './components/ReportDialog'
+import QueueDialog from './components/QueueDialog'
+import { EngineDialog, PromptDialog } from './components/LibraryDialogs'
+import { usageLine } from './lib/format'
 import { isTeamWorker, teamLead } from '../../shared/types'
 import type { Selection } from './App'
 import Sidebar from './components/Sidebar'
@@ -85,10 +100,42 @@ function Workspace(): React.JSX.Element {
     voiceRememberLanguage: true,
     voiceLanguage: null,
     voiceFixedLanguage: null,
-    showEditedFiles: true
+    showEditedFiles: true,
+    notifyOnWaiting: true,
+    permissionInbox: false,
+    voiceReadback: false,
+    contextWarnTokens: 150_000,
+    priceInput: 0,
+    priceOutput: 0,
+    remoteEnabled: false,
+    remotePort: 8787,
+    remoteToken: ''
   })
   const [voiceStatus, setVoiceStatus] = useState<VoiceStatus | null>(null)
   const [toast, setToast] = useState<string | null>(null)
+
+  // Eingang: offene Freigaben, Hinweise der Agents, ausgeblendete Datei-Konflikte
+  const [permissions, setPermissions] = useState<PermissionInfo[]>([])
+  const [notices, setNotices] = useState<UserNotice[]>([])
+  const [dismissedConflicts, setDismissedConflicts] = useState<Set<string>>(new Set())
+  const [tasks, setTasks] = useState<Task[]>([])
+  const [prompts, setPrompts] = useState<PromptTemplate[]>([])
+  const [engines, setEngines] = useState<Engine[]>([])
+  /** Zuletzt gezeigter Plan je Agent (MCP `show_plan`) */
+  const [planByAgent, setPlanByAgent] = useState<Record<string, CodePlan>>({})
+  // Fenster der Workbench
+  const [review, setReview] = useState<{
+    projectId: string
+    agentId?: string
+    filePath?: string
+  } | null>(null)
+  const [tasksFor, setTasksFor] = useState<string | null>(null)
+  const [historyOpen, setHistoryOpen] = useState(false)
+  const [reportOpen, setReportOpen] = useState(false)
+  const [runFor, setRunFor] = useState<string | null>(null)
+  const [queueFor, setQueueFor] = useState<string | null>(null)
+  const [promptDialog, setPromptDialog] = useState<{ prompt: PromptTemplate | null } | null>(null)
+  const [engineDialog, setEngineDialog] = useState<{ engine: Engine | null } | null>(null)
 
   const [projectDialog, setProjectDialog] = useState<{ project: Project | null } | null>(null)
   const [importOpen, setImportOpen] = useState(false)
@@ -140,6 +187,38 @@ function Workspace(): React.JSX.Element {
     const offEditorAppend = window.api.editor.onAppend((id, text) =>
       setDrafts((d) => ({ ...d, [id]: appendToDraft(d[id] ?? '', text) }))
     )
+    const offPermissions = window.api.inbox.onPermissions((list) => {
+      setPermissions(list)
+      // „Immer“ hat ggf. eine Regel am Projekt gespeichert → Projekte frisch laden
+      window.api.projects.list().then(setProjects)
+    })
+    const offNotice = window.api.inbox.onNotice((n) =>
+      setNotices((list) => [n, ...list].slice(0, 20))
+    )
+    const offTasks = window.api.tasks.onChanged(setTasks)
+    const offPlan = window.api.code.onPlan((plan) =>
+      setPlanByAgent((m) => ({ ...m, [plan.agentId]: plan }))
+    )
+    // Agent bittet um Durchsicht seiner Änderungen (MCP `show_diff`)
+    const offShowDiff = window.api.code.onShowDiff((agentId, filePath) => {
+      const agent = agentsRef.current.find((a) => a.id === agentId)
+      if (agent) setReview({ projectId: agent.projectId, agentId, filePath })
+    })
+    // Windows-Benachrichtigung angeklickt → diesen Agent zeigen
+    const offFocusRequest = window.api.agents.onFocusRequest((agentId) => {
+      setEditorTab(null)
+      setSelection({ kind: 'agent', agentId })
+    })
+    // Kurzfassung eines fertigen Agents vorlesen (Windows-Sprachausgabe)
+    const offSpeak = window.api.voice.onSpeak((text) => {
+      const utterance = new SpeechSynthesisUtterance(text)
+      utterance.lang = /[äöüß]|\b(der|die|das|und|ist|hat|nicht)\b/i.test(text) ? 'de-DE' : 'en-US'
+      window.speechSynthesis.speak(utterance)
+    })
+    window.api.inbox.permissions().then(setPermissions)
+    window.api.tasks.list().then(setTasks)
+    window.api.prompts.list().then(setPrompts)
+    window.api.engines.list().then(setEngines)
     // Nach Neuladen der Oberfläche: bisher gesammelte Snippets der laufenden Agents
     window.api.code.snippets().then((all) => setSnippetsByAgent((m) => ({ ...all, ...m })))
     window.api.code.edits().then((all) => setEditsByAgent((m) => ({ ...all, ...m })))
@@ -192,6 +271,13 @@ function Workspace(): React.JSX.Element {
       offEditorOpened()
       offEditorAppend()
       offFailed()
+      offPermissions()
+      offNotice()
+      offTasks()
+      offPlan()
+      offShowDiff()
+      offFocusRequest()
+      offSpeak()
     }
   }, [refreshVoice, showError])
 
@@ -325,14 +411,52 @@ function Workspace(): React.JSX.Element {
         : [],
     [activeAgentId, editsByAgent, settings.showEditedFiles, closedTabs]
   )
+  /** Plan des aktiven Agents (rechts als Reiter), solange er nicht geschlossen wurde */
+  const planKey = `plan:${activeAgentId ?? ''}`
+  const shownPlan = activeAgentId ? planByAgent[activeAgentId] : undefined
+  const activePlan = shownPlan && !isTabClosed(closedTabs, planKey, shownPlan.at) ? shownPlan : null
   // Spalte nur, solange ein Reiter offen ist – alle geschlossen → Spalte zu
-  const showCodePane = !!codeFocus || activeSnippets.length > 0 || activeEdits.length > 0
+  const showCodePane =
+    !!codeFocus || activeSnippets.length > 0 || activeEdits.length > 0 || !!activePlan
+
+  /**
+   * Zwei laufende Agents haben dieselbe Datei bearbeitet (gleicher Pfad = gleiches Verzeichnis;
+   * Agents mit eigenem Worktree stoßen so nie zusammen).
+   */
+  const conflicts = useMemo<FileConflict[]>(() => {
+    const running = new Set(agents.map((a) => a.id))
+    const byFile = new Map<string, { filePath: string; agentIds: string[] }>()
+    for (const [agentId, files] of Object.entries(editsByAgent)) {
+      if (!running.has(agentId)) continue
+      for (const f of files) {
+        const key = f.filePath.toLowerCase()
+        const entry = byFile.get(key) ?? { filePath: f.filePath, agentIds: [] }
+        if (!entry.agentIds.includes(agentId)) entry.agentIds.push(agentId)
+        byFile.set(key, entry)
+      }
+    }
+    return [...byFile.entries()]
+      .filter(([, e]) => e.agentIds.length > 1)
+      .map(([path, e]) => ({ ...e, key: `${path}|${[...e.agentIds].sort().join(',')}` }))
+      .filter((c) => !dismissedConflicts.has(c.key))
+  }, [agents, editsByAgent, dismissedConflicts])
+
+  const showAgent = useCallback((agentId: string) => {
+    setEditorTab(null)
+    setSelection({ kind: 'agent', agentId })
+  }, [])
+
+  /** Projekt der aktuellen Ansicht (für Aufgaben), sonst das erste */
+  const currentProjectId =
+    (selection?.kind === 'project'
+      ? selection.projectId
+      : agents.find((a) => a.id === activeAgentId)?.projectId) ?? projects[0]?.id
 
   // ---------------------------------------------------------------- Aktionen
   const startAgent = useCallback(
-    async (projectId: string, task?: string, templateId?: string) => {
+    async (projectId: string, task?: string, templateId?: string, engineId?: string) => {
       try {
-        const agent = await window.api.agents.start(projectId, task, templateId)
+        const agent = await window.api.agents.start(projectId, { task, templateId, engineId })
         setSelection({ kind: 'agent', agentId: agent.id })
         return agent
       } catch (e) {
@@ -716,6 +840,42 @@ function Workspace(): React.JSX.Element {
           globalProjectFileApp={settings.projectFileApp}
           globalFolderApp={settings.folderApp}
           onOpenFolder={(p) => window.api.projects.openFolder(p.id).catch(showError)}
+          engines={engines}
+          onStartEngine={(id, engineId) => startAgent(id, undefined, undefined, engineId)}
+          inbox={
+            <InboxPanel
+              agents={agents}
+              projects={projects}
+              permissions={permissions}
+              notices={notices}
+              conflicts={conflicts}
+              onSelectAgent={showAgent}
+              onAnswer={(id, answer, message) =>
+                window.api.inbox.answer(id, answer, message).catch(showError)
+              }
+              onReply={(id, text) => window.api.agents.sendLine(id, text).catch(showError)}
+              onDismissNotice={(id) => setNotices((list) => list.filter((n) => n.id !== id))}
+              onDismissConflict={(key) => setDismissedConflicts((s) => new Set(s).add(key))}
+            />
+          }
+          onOpenTasks={(id) => {
+            const projectId = id ?? currentProjectId
+            if (projectId) setTasksFor(projectId)
+            else setToast('Lege zuerst ein Projekt an.')
+          }}
+          onOpenHistory={() => setHistoryOpen(true)}
+          onOpenReport={() => setReportOpen(true)}
+          onOpenRun={setRunFor}
+          onReview={(projectId, agentId) => setReview({ projectId, agentId })}
+          onQueue={setQueueFor}
+          onFork={(id) =>
+            window.api.agents
+              .fork(id)
+              .then((a) => showAgent(a.id))
+              .catch(showError)
+          }
+          usageText={(a) => usageLine(a.usage, settings)}
+          openTaskCount={tasks.filter((t) => t.status === 'open').length}
           onGlobalVoice={() => toggleVoice('global')}
           onOpenSettings={() => {
             refreshVoice()
@@ -801,9 +961,84 @@ function Workspace(): React.JSX.Element {
             vscodeInstalled={vscodeInstalled}
             snippetsKey={snippetsTabKey(activeAgentId ?? '')}
             onCloseTab={(key, at) => setClosedTabs((c) => ({ ...c, [key]: at }))}
+            plan={activePlan}
+            planKey={planKey}
+            activityAgent={agents.find((a) => a.id === activeAgentId && !a.engineId)}
           />
         )}
       </div>
+
+      {review && projects.some((p) => p.id === review.projectId) && (
+        <ReviewDialog
+          key={`${review.projectId}|${review.agentId ?? ''}|${review.filePath ?? ''}`}
+          project={projects.find((p) => p.id === review.projectId)!}
+          agents={agents}
+          agentId={review.agentId}
+          filePath={review.filePath}
+          onClose={() => setReview(null)}
+        />
+      )}
+      {tasksFor && (
+        <TaskBoardDialog
+          projects={projects}
+          projectId={tasksFor}
+          agents={agents}
+          templates={templates}
+          tasks={tasks}
+          onAgentStarted={(a) => {
+            setTasksFor(null)
+            showAgent(a.id)
+          }}
+          onClose={() => setTasksFor(null)}
+        />
+      )}
+      {historyOpen && (
+        <HistoryDialog
+          projects={projects}
+          agents={agents}
+          settings={settings}
+          onShowAgent={showAgent}
+          onClose={() => setHistoryOpen(false)}
+        />
+      )}
+      {reportOpen && <ReportDialog projects={projects} onClose={() => setReportOpen(false)} />}
+      {runFor && !projectDialog && projects.some((p) => p.id === runFor) && (
+        <RunDialog
+          project={projects.find((p) => p.id === runFor)!}
+          agent={agents.find((a) => a.id === activeAgentId && a.projectId === runFor)}
+          onEditProject={() =>
+            setProjectDialog({ project: projects.find((p) => p.id === runFor) ?? null })
+          }
+          onClose={() => setRunFor(null)}
+        />
+      )}
+      {queueFor && agents.some((a) => a.id === queueFor) && (
+        <QueueDialog
+          agent={agents.find((a) => a.id === queueFor)!}
+          prompts={prompts}
+          onClose={() => setQueueFor(null)}
+        />
+      )}
+      {promptDialog && (
+        <PromptDialog
+          prompt={promptDialog.prompt}
+          onClose={() => setPromptDialog(null)}
+          onSaved={async () => {
+            setPromptDialog(null)
+            setPrompts(await window.api.prompts.list())
+          }}
+        />
+      )}
+      {engineDialog && (
+        <EngineDialog
+          engine={engineDialog.engine}
+          onClose={() => setEngineDialog(null)}
+          onSaved={async () => {
+            setEngineDialog(null)
+            setEngines(await window.api.engines.list())
+          }}
+        />
+      )}
 
       <VoiceOverlay
         recording={recording}
@@ -838,7 +1073,8 @@ function Workspace(): React.JSX.Element {
           onSaved={async (p) => {
             setProjectDialog(null)
             setProjects(await window.api.projects.list())
-            setSelection({ kind: 'project', projectId: p.id })
+            // Aus „Ausführen“ heraus bearbeitet → dorthin zurück, Ansicht bleibt
+            if (!runFor) setSelection({ kind: 'project', projectId: p.id })
           }}
         />
       )}
@@ -867,28 +1103,45 @@ function Workspace(): React.JSX.Element {
         />
       )}
 
-      {settingsOpen && !templateDialog && !teamDialog && voiceStatus && (
-        <SettingsDialog
-          settings={settings}
-          voiceStatus={voiceStatus}
-          vscodeInstalled={vscodeInstalled}
-          templates={templates}
-          onEditTemplate={(template) => setTemplateDialog({ template })}
-          onRemoveTemplate={async (t) => {
-            await window.api.templates.remove(t.id).catch(showError)
-            setTemplates(await window.api.templates.list())
-          }}
-          teamTemplates={teamTemplates}
-          onEditTeam={(team) => setTeamDialog({ team })}
-          onRemoveTeam={async (t) => {
-            await window.api.teamTemplates.remove(t.id).catch(showError)
-            setTeamTemplates(await window.api.teamTemplates.list())
-          }}
-          onSettingsChanged={setSettings}
-          onVoiceChanged={refreshVoice}
-          onClose={() => setSettingsOpen(false)}
-        />
-      )}
+      {settingsOpen &&
+        !templateDialog &&
+        !teamDialog &&
+        !promptDialog &&
+        !engineDialog &&
+        voiceStatus && (
+          <SettingsDialog
+            prompts={prompts}
+            onEditPrompt={(prompt) => setPromptDialog({ prompt })}
+            onRemovePrompt={async (p) => {
+              await window.api.prompts.remove(p.id).catch(showError)
+              setPrompts(await window.api.prompts.list())
+            }}
+            engines={engines}
+            onEditEngine={(engine) => setEngineDialog({ engine })}
+            onRemoveEngine={async (e) => {
+              await window.api.engines.remove(e.id).catch(showError)
+              setEngines(await window.api.engines.list())
+            }}
+            settings={settings}
+            voiceStatus={voiceStatus}
+            vscodeInstalled={vscodeInstalled}
+            templates={templates}
+            onEditTemplate={(template) => setTemplateDialog({ template })}
+            onRemoveTemplate={async (t) => {
+              await window.api.templates.remove(t.id).catch(showError)
+              setTemplates(await window.api.templates.list())
+            }}
+            teamTemplates={teamTemplates}
+            onEditTeam={(team) => setTeamDialog({ team })}
+            onRemoveTeam={async (t) => {
+              await window.api.teamTemplates.remove(t.id).catch(showError)
+              setTeamTemplates(await window.api.teamTemplates.list())
+            }}
+            onSettingsChanged={setSettings}
+            onVoiceChanged={refreshVoice}
+            onClose={() => setSettingsOpen(false)}
+          />
+        )}
 
       {voiceSetupOpen && voiceStatus && (
         <VoiceSetupDialog

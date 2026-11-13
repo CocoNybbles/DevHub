@@ -1,9 +1,18 @@
 import { useEffect, useRef, useState } from 'react'
-import type { CodeFocus, CodeSnippet, EditedFile, LineRange } from '../../../shared/types'
+import type {
+  ActivityEntry,
+  Agent,
+  CodeFocus,
+  CodePlan,
+  CodeSnippet,
+  EditedFile,
+  LineRange
+} from '../../../shared/types'
 import { languageForPath, monaco } from '../lib/monaco'
 import { fileTabKey } from '../lib/codeTabs'
 import { CloseIcon, CodeIcon } from './Icons'
 import SnippetList from './SnippetList'
+import Markdown from './Markdown'
 
 interface Props {
   /** Code-Stelle aus `show_code` (null = keine); geschlossene Reiter filtert der Workspace heraus */
@@ -21,6 +30,43 @@ interface Props {
   onCloseTab: (key: string, at: number) => void
   /** Schlüssel des Snippets-Reiters (pro Agent) */
   snippetsKey: string
+  /** Vom Agent gezeigter Plan (MCP `show_plan`), null = keiner bzw. geschlossen */
+  plan: CodePlan | null
+  planKey: string
+  /** Aktiver Agent: Reiter „Aktivität“ mit seinen letzten Schritten */
+  activityAgent?: Agent
+}
+
+/** Letzte Schritte (Tool-Aufrufe) des Agents; lädt neu, sobald er etwas Neues tut */
+function ActivityList({ agent }: { agent: Agent }): React.JSX.Element {
+  const [log, setLog] = useState<ActivityEntry[]>([])
+  const stamp = `${agent.id}|${agent.activity ?? ''}|${agent.status}`
+  useEffect(() => {
+    let cancelled = false
+    window.api.agents.activityLog(agent.id).then((list) => !cancelled && setLog(list))
+    return () => {
+      cancelled = true
+    }
+  }, [agent.id, stamp])
+  return (
+    <div className="activity-list">
+      {log.length === 0 && (
+        <div className="muted activity-empty">Noch keine Schritte in dieser Sitzung.</div>
+      )}
+      {log.map((e, i) => (
+        <div key={`${e.at}-${i}`} className="activity-item">
+          <span className="muted">
+            {new Date(e.at).toLocaleTimeString('de-DE', {
+              hour: '2-digit',
+              minute: '2-digit',
+              second: '2-digit'
+            })}
+          </span>
+          <span className="activity-text">{e.text}</span>
+        </div>
+      ))}
+    </div>
+  )
 }
 
 /** Ein Datei-Reiter: bearbeitete Datei und/oder Stelle aus `show_code` */
@@ -35,6 +81,8 @@ interface FileTab {
 }
 
 const SNIPPETS = 'snippets'
+const PLAN = 'plan'
+const ACTIVITY = 'activity'
 const fileKey = fileTabKey
 const baseName = (path: string): string => path.split(/[\\/]/).pop() ?? path
 
@@ -76,7 +124,10 @@ function CodePane({
   editsAgentName,
   vscodeInstalled,
   onCloseTab,
-  snippetsKey
+  snippetsKey,
+  plan,
+  planKey,
+  activityAgent
 }: Props): React.JSX.Element {
   // ---- Reiter zusammenstellen
   const files: FileTab[] = edits.map((e) => ({
@@ -108,7 +159,10 @@ function CodePane({
   const snippetsAt = snippets[0]?.at ?? 0
   const all = [
     ...visible.map((f) => ({ key: f.key, at: f.at })),
-    ...(snippets.length ? [{ key: SNIPPETS, at: snippetsAt }] : [])
+    ...(plan ? [{ key: PLAN, at: plan.at }] : []),
+    ...(snippets.length ? [{ key: SNIPPETS, at: snippetsAt }] : []),
+    // Aktivität drängt sich nie von selbst vor (at = 0), bleibt aber wählbar
+    ...(activityAgent ? [{ key: ACTIVITY, at: 0 }] : [])
   ]
   const latest = Math.max(0, ...all.map((t) => t.at))
   const newest = all.reduce<{ key: string; at: number } | null>(
@@ -132,7 +186,7 @@ function CodePane({
       const next = all[i + 1] ?? all[i - 1]
       if (next) setChosen({ key: next.key, at: latest })
     }
-    onCloseTab(key === SNIPPETS ? snippetsKey : key, at)
+    onCloseTab(key === SNIPPETS ? snippetsKey : key === PLAN ? planKey : key, at)
   }
   const close = (f: FileTab): void => closeTab(f.key, f.at)
 
@@ -216,6 +270,35 @@ function CodePane({
               </button>
             </div>
           ))}
+          {plan && (
+            <div
+              className={`tab closable-tab ${tab === PLAN ? 'active' : ''}`}
+              title={`Vom Agent gezeigt: ${plan.title}`}
+              onClick={() => choose(PLAN)}
+              onAuxClick={(e) => e.button === 1 && closeTab(PLAN, plan.at)}
+            >
+              <span className="file-tab-name">{plan.title}</span>
+              <button
+                className="icon"
+                title="Reiter schließen (erscheint wieder, wenn der Agent ihn aktualisiert)"
+                onClick={(e) => {
+                  e.stopPropagation()
+                  closeTab(PLAN, plan.at)
+                }}
+              >
+                <CloseIcon size={9} />
+              </button>
+            </div>
+          )}
+          {activityAgent && (
+            <div
+              className={`tab ${tab === ACTIVITY ? 'active' : ''}`}
+              title={`Letzte Schritte von ${activityAgent.name}`}
+              onClick={() => choose(ACTIVITY)}
+            >
+              Aktivität
+            </div>
+          )}
           {snippets.length > 0 && (
             <div
               className={`tab closable-tab ${tab === SNIPPETS ? 'active' : ''}`}
@@ -268,6 +351,12 @@ function CodePane({
           )}
         </div>
       )}
+      {tab === PLAN && plan && (
+        <div className="plan-view">
+          <Markdown text={plan.markdown} />
+        </div>
+      )}
+      {tab === ACTIVITY && activityAgent && <ActivityList agent={activityAgent} />}
       {tab === SNIPPETS && <SnippetList snippets={snippets} />}
     </aside>
   )

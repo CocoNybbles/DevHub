@@ -4,7 +4,11 @@ import { join } from 'path'
 import type {
   Agent,
   AgentTemplate,
+  ArchivedSession,
+  Engine,
   Project,
+  PromptTemplate,
+  Task,
   Selection,
   Settings,
   Team,
@@ -13,7 +17,10 @@ import type {
 import { DEFAULT_HOTKEYS } from '../shared/hotkeys'
 
 /** Gespeicherter Agent; `needsInput` = Hinweistext, falls er beim Beenden auf Eingabe wartete. */
-export type PersistedAgent = Omit<Agent, 'status' | 'statusMessage'> & { needsInput?: string }
+export type PersistedAgent = Omit<
+  Agent,
+  'status' | 'statusMessage' | 'editing' | 'activity' | 'progress' | 'usage' | 'lastMessage'
+> & { needsInput?: string }
 
 /** Persistierter Zustand: Projekte, (zuletzt laufende) Agents, Einstellungen. */
 interface PersistedState {
@@ -30,6 +37,14 @@ interface PersistedState {
   teams: Team[]
   /** Zuletzt in der Ordnerauswahl benutzter Ort (übergeordneter Ordner der Wahl) */
   lastPickDir?: string
+  /** Aufgaben-Board */
+  tasks: Task[]
+  /** Beendete Sitzungen (Verlauf), neueste zuerst */
+  archive: ArchivedSession[]
+  /** Prompt-Bibliothek */
+  prompts: PromptTemplate[]
+  /** Weitere Engines neben Claude Code */
+  engines: Engine[]
 }
 
 const DEFAULT_STATE: PersistedState = {
@@ -38,6 +53,10 @@ const DEFAULT_STATE: PersistedState = {
   templates: [],
   teamTemplates: [],
   teams: [],
+  tasks: [],
+  archive: [],
+  prompts: [],
+  engines: [],
   view: null,
   settings: {
     voiceModel: null,
@@ -51,7 +70,16 @@ const DEFAULT_STATE: PersistedState = {
     voiceRememberLanguage: true,
     voiceLanguage: null,
     voiceFixedLanguage: null,
-    showEditedFiles: true
+    showEditedFiles: true,
+    notifyOnWaiting: true,
+    permissionInbox: false,
+    voiceReadback: false,
+    contextWarnTokens: 150_000,
+    priceInput: 0,
+    priceOutput: 0,
+    remoteEnabled: false,
+    remotePort: 8787,
+    remoteToken: ''
   }
 }
 

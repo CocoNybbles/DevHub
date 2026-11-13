@@ -3,20 +3,31 @@ import { randomUUID } from 'crypto'
 import { existsSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'fs'
 import { homedir } from 'os'
 import { isAbsolute, join, resolve as resolvePath } from 'path'
+import { exec } from 'child_process'
 import type {
+  ActivityEntry,
   Agent,
   AgentStatus,
+  AgentWorktree,
+  ArchivedSession,
   CodeFocus,
+  CodePlan,
   CodeSnippet,
   EditedFile,
+  PermissionAnswer,
+  PermissionInfo,
+  Project,
+  Task,
   Team,
-  TeamMember
+  TeamMember,
+  UserNotice
 } from '../shared/types'
 import { isTeamWorker, teamLead } from '../shared/types'
 import { editFromToolResult, mergeEdits, mergeSnippets, TranscriptReader } from './snippets'
 import {
   AgentBridge,
   AnswerPermissionArgs,
+  COMMON_TOOLS,
   HookEvent,
   PermissionDecision,
   ShowCodeArgs,
@@ -26,13 +37,29 @@ import {
 import { applyOrder, dataDir, getState, updateState, type PersistedAgent } from './store'
 import { claudeEnv, resolveClaude } from './tools'
 import { isValidModelName, mergeAgentArgs } from '../shared/agentArgs'
+import {
+  createWorktree,
+  removeWorktreeIfUnused,
+  repoRoot,
+  restoreWorktree,
+  worktreeBranch,
+  worktreeCwd,
+  worktreesDir,
+  worktreeDirName
+} from './git'
+import { describeTool, matchesRule, ruleFor } from '../shared/permissions'
 
 /** Wird jedem Agent per --append-system-prompt mitgegeben. */
 const SYSTEM_HINT =
   'You are running inside DevHub, a desktop app that shows your terminal next to a code panel. ' +
   'Whenever you analyze code, investigate a problem or find a bug, call the `show_code` tool of the ' +
   '`devhub` MCP server with the affected file and line range so the user sees the spot highlighted. ' +
-  'Call it again whenever your focus moves to another location.'
+  'Call it again whenever your focus moves to another location. ' +
+  'The same server offers more tools: `show_plan` (show a plan or summary as Markdown in the side panel), ' +
+  '`report_progress` (progress of longer tasks), `notify_user` (only for things worth interrupting for), ' +
+  '`show_diff` (open the review of your changes) and `run_list`/`run_output`/`run_start`/`run_stop` ' +
+  '(project commands such as the dev server or tests that DevHub runs for the user – prefer reading their ' +
+  'output over starting the same long-running process yourself).'
 
 const MAX_BUFFER = 200_000
 /** Endet ein Agent so schnell mit Fehler, war der Start kaputt (z. B. unbekanntes Start-Flag). */
@@ -57,13 +84,53 @@ interface RunningAgent {
   edits: EditedFile[]
   /** Worker: hat seit dem letzten Prompt dem Orchestrator berichtet */
   reported: boolean
+  /** Arbeitsverzeichnis (Agent-Ordner oder Worktree) */
+  cwd: string
+  /** Offene `AskUserQuestion`: Eingaben würden sie beantworten → nichts zustellen */
+  asking: boolean
+  /** Der Zug ist beendet (Stop), der Agent nimmt den nächsten Auftrag an */
+  turnDone: boolean
+  /** Seit der letzten Anweisung wurde eine Datei geändert → Prüfungen lohnen sich */
+  editedThisTurn: boolean
+  /** Prüfbefehl, der in diesem Zug zuletzt fehlgeschlagen ist */
+  gateFailed?: string
+  /** So oft haben die Prüfungen den Agent in diesem Zug schon zurückgeschickt */
+  gateRounds: number
+  /** Ergebnis der Prüfungen für den Statustext nach dem Stop */
+  gateNote?: string
+  /** Der Nutzer tippt gerade (unabgeschickter Text im Eingabefeld) – Zeitpunkt der letzten Taste */
+  draftAt: number
+  /** Letzte Schritte (Tool-Aufrufe), neueste zuerst */
+  activityLog: ActivityEntry[]
+  /** Kontext-Warnung wurde für diesen Füllstand schon gezeigt */
+  contextWarned: boolean
+  /** Erste Anweisung des Nutzers (Titel im Verlauf) */
+  title?: string
+  /** Andere Engine: Timer, der „arbeitet“ nach einer Pause der Ausgabe zurücksetzt */
+  quietTimer?: ReturnType<typeof setTimeout>
+  /** Zuletzt wurde das Transkript für die Verbrauchsanzeige gelesen */
+  usageReadAt: number
 }
 
-/** Offene Rechte-Abfrage eines Workers (claude wartet auf die Hook-Antwort) */
+/** Offene Rechte-Abfrage (claude wartet auf die Hook-Antwort): entscheidet Orchestrator oder Nutzer */
 interface PermissionRequest {
   workerId: string
+  /** `user`: steht im Eingang des Nutzers */
+  kind: 'orchestrator' | 'user'
+  info: PermissionInfo
   finish: (decision: PermissionDecision | null) => void
 }
+
+/** Höchstens so oft schicken fehlgeschlagene Prüfungen den Agent je Anweisung zurück */
+const MAX_GATE_ROUNDS = 3
+/** Längste Laufzeit eines Prüfbefehls */
+const CHECK_TIMEOUT_MS = 10 * 60_000
+/** So lange gilt getippter, nicht abgeschickter Text als Entwurf (danach wird wieder zugestellt) */
+const DRAFT_HOLD_MS = 45_000
+const MAX_ACTIVITY = 60
+const MAX_ARCHIVE = 200
+/** Andere Engines: so lange ohne Ausgabe = wartet */
+const QUIET_MS = 2500
 
 /** Name des automatisch gestarteten Orchestrators („Orchestrator“, „Orchestrator 2“ …) */
 const ORCHESTRATOR_NAME = 'Orchestrator'
@@ -96,6 +163,40 @@ export interface AgentEvents {
   onEditorOpened: (agentId: string, text: string) => void
   /** Text (z. B. Sprachbefehl) an den offenen Editor-Tab anhängen statt ans Terminal */
   onEditorAppend: (agentId: string, text: string) => void
+  /** Offene Freigaben für den Eingang des Nutzers haben sich geändert */
+  onPermissions: (list: PermissionInfo[]) => void
+  /** Hinweis für den Nutzer (notify_user, Kontext-Warnung) */
+  onNotice: (notice: UserNotice) => void
+  /** Agent wartet jetzt auf den Nutzer (Frage, fertig, Freigabe) → ggf. Benachrichtigung */
+  onAttention: (agent: Agent, message: string) => void
+  /** Agent hat seinen Zug beendet (für das Vorlesen der Kurzfassung) */
+  onTurnFinished: (agent: Agent) => void
+  onPlan: (plan: CodePlan) => void
+  onShowDiff: (agentId: string, filePath?: string) => void
+  onTasksChanged: (tasks: Task[]) => void
+  /** MCP-Tools `run_*`: Projekt-Befehle (Ausführen-Fenster) */
+  runTool: (
+    project: Project,
+    tool: 'run_list' | 'run_output' | 'run_start' | 'run_stop',
+    args: Record<string, unknown>
+  ) => string
+}
+
+/** Zusätze beim Start eines Agents (über Name/Modell/Vorlage hinaus) */
+export interface StartExtra {
+  engineId?: string
+  /** Unterhaltung dieser Session als Kopie fortsetzen */
+  forkFrom?: string
+  /** Vorhandene Session fortsetzen (aus dem Verlauf) */
+  sessionId?: string
+  /** Name (z. B. der frühere aus dem Verlauf); wird bei Bedarf nummeriert */
+  name?: string
+  /** Vorhandenen Worktree weiterverwenden (aus dem Verlauf) */
+  worktree?: AgentWorktree
+  /** Aufgabe aus dem Board, die mit `task` bearbeitet wird */
+  taskId?: string
+  /** Im Agent-Ordner starten, auch wenn das Projekt Worktrees nutzt */
+  noWorktree?: boolean
 }
 
 /** Offene Strg+G-Bearbeitung: claude wartet, bis `done` aufgerufen wird */
@@ -112,6 +213,10 @@ const EDITOR_NAME = 'devhub-notepad'
 const EDITOR_RELOAD_MS = 500
 /** So lange wartet ein Worker höchstens auf die Entscheidung des Orchestrators (Sekunden) */
 const PERMISSION_TIMEOUT_S = 24 * 60 * 60
+/** Stop-Hook: Zeit für alle Prüfbefehle zusammen (Sekunden) */
+const STOP_TIMEOUT_S = 60 * 60
+
+const noop = (): void => {}
 
 export class AgentManager {
   private running = new Map<string, RunningAgent>()
@@ -122,21 +227,30 @@ export class AgentManager {
   private editors = new Map<string, EditorSession>()
   private permissions = new Map<number, PermissionRequest>()
   private nextPermissionId = 1
+  private nextNoticeId = 1
 
   constructor(private events: AgentEvents) {
     this.bridge = new AgentBridge({
       onHook: (id, ev) => this.handleHook(id, ev),
       tools: (id) => {
         const a = this.running.get(id)?.agent
-        if (!a?.teamId) return ['show_code']
-        const team: ToolName[] = ['show_code', 'team_members', 'send_team_message']
+        if (!a?.teamId) return COMMON_TOOLS
+        const team: ToolName[] = [...COMMON_TOOLS, 'team_members', 'send_team_message']
         return a.teamRole === 'orchestrator' ? [...team, 'answer_permission'] : team
       },
       onToolCall: (id, name, args) => this.handleToolCall(id, name, args),
       onEditor: (id, filePath) => this.openEditor(id, filePath),
       onEditorAbort: (id) => this.closeEditor(id),
-      onPermission: (id, ev, signal) => this.requestPermission(id, ev, signal)
+      onPermission: (id, ev, signal) => this.requestPermission(id, ev, signal),
+      onStop: (id, ev) => this.handleStop(id, ev)
     })
+    // Zurückgehaltene Nachrichten nachreichen, sobald der Nutzer nicht mehr tippt
+    setInterval(() => {
+      for (const r of this.running.values()) {
+        if (r.pending.length) this.flushPending(r.agent.id)
+        if (r.agent.queue?.length) this.sendNextQueued(r.agent.id)
+      }
+    }, 5000).unref()
   }
 
   // ------------------------------------------------------------ Strg+G-Editor-Tab
@@ -326,6 +440,8 @@ export class AgentManager {
     const failures: string[] = []
     for (const agent of agents) {
       try {
+        // Worker bekommen je einen eigenen Worktree, der Orchestrator führt im Hauptordner zusammen
+        if (agent !== orchestrator) await this.prepareWorktree(agent, project)
         await this.spawn(agent, agent === orchestrator ? opts.task?.trim() || undefined : undefined)
       } catch (e) {
         failures.push(`${agent.name}: ${e instanceof Error ? e.message : String(e)}`)
@@ -363,7 +479,8 @@ export class AgentManager {
     projectId: string,
     task?: string,
     model?: string,
-    templateId?: string
+    templateId?: string,
+    extra: StartExtra = {}
   ): Promise<Agent> {
     const project = getState().projects.find((p) => p.id === projectId)
     if (!project) throw new Error('Projekt nicht gefunden')
@@ -371,26 +488,97 @@ export class AgentManager {
     if (m && !isValidModelName(m)) throw new Error(`Ungültiger Modellname: ${m}`)
     const template = templateId ? getState().templates.find((t) => t.id === templateId) : undefined
     if (templateId && !template) throw new Error('Vorlage nicht gefunden')
+    const engine = extra.engineId
+      ? getState().engines.find((e) => e.id === extra.engineId)
+      : undefined
+    if (extra.engineId && !engine) throw new Error('Engine nicht gefunden')
+    // „Agent 3“ aus dem Verlauf nicht als Basis nehmen (ergäbe „Agent 3 2“)
+    const wanted = extra.name && !/^agent \d+$/i.test(extra.name.trim()) ? extra.name.trim() : ''
 
     const agent: Agent = {
       id: randomUUID(),
       projectId,
-      name: this.nextName(template?.name),
-      sessionId: randomUUID(),
+      name: this.nextName(wanted || template?.name || engine?.name),
+      sessionId: extra.sessionId ?? randomUUID(),
       status: 'starting',
       createdAt: Date.now(),
       model: m,
-      templateId: template?.id
+      templateId: template?.id,
+      engineId: engine?.id,
+      forkFrom: extra.forkFrom,
+      worktree: extra.worktree,
+      currentTaskId: extra.taskId
     }
     // Erst speichern (reserviert den Namen), dann starten
     updateState((s) => s.agents.push(persisted(agent)))
     try {
+      if (!extra.noWorktree) await this.prepareWorktree(agent, project)
       await this.spawn(agent, task?.trim() || undefined)
     } catch (e) {
       updateState((s) => (s.agents = s.agents.filter((a) => a.id !== agent.id)))
+      if (agent.worktree && !extra.worktree) void removeWorktreeIfUnused(agent.worktree).catch(noop)
       throw e
     }
     this.emitChanged()
+    return agent
+  }
+
+  /** Projekt mit Worktrees: eigenes Arbeitsverzeichnis (eigener Branch) für den neuen Agent anlegen. */
+  private async prepareWorktree(agent: Agent, project: Project): Promise<void> {
+    if (agent.worktree || !project.useWorktrees) return
+    const repo = await repoRoot(project.agentPath)
+    if (!repo) {
+      throw new Error(
+        `Für „${project.name}“ sind Worktrees eingeschaltet, der Agent-Ordner liegt aber in keinem Git-Repository (oder git fehlt).`
+      )
+    }
+    agent.worktree = await createWorktree(
+      repo,
+      join(worktreesDir(repo), worktreeDirName(agent.name, agent.id)),
+      worktreeBranch(agent.name, agent.id)
+    )
+    updateState((s) => {
+      const saved = s.agents.find((a) => a.id === agent.id)
+      if (saved) saved.worktree = agent.worktree
+    })
+  }
+
+  /** Neuer Agent, der die Unterhaltung eines laufenden Agents als Kopie fortsetzt (gleiches Verzeichnis). */
+  async fork(id: string): Promise<Agent> {
+    const a = this.running.get(id)?.agent
+    if (!a) throw new Error('Agent läuft nicht mehr')
+    if (a.engineId) throw new Error('Abzweigen geht nur mit Claude-Code-Agents')
+    if (a.teamId) throw new Error('Teammitglieder können nicht abgezweigt werden')
+    if (!sessionExists(a.sessionId))
+      throw new Error(`${a.name} hat noch keine gespeicherte Unterhaltung`)
+    return this.start(a.projectId, undefined, a.model, a.templateId, {
+      forkFrom: a.sessionId,
+      worktree: a.worktree,
+      noWorktree: true
+    })
+  }
+
+  /** Sitzung aus dem Verlauf fortsetzen; `fork`: als Kopie (der Eintrag bleibt im Verlauf). */
+  async resumeArchived(id: string, fork = false): Promise<Agent> {
+    const entry = getState().archive.find((x) => x.id === id)
+    if (!entry) throw new Error('Eintrag nicht gefunden')
+    if (!sessionExists(entry.sessionId))
+      throw new Error('Das Transkript dieser Sitzung gibt es nicht mehr')
+    if (this.list().some((a) => a.sessionId === entry.sessionId))
+      throw new Error('Diese Sitzung läuft bereits')
+    // Eine Sitzung lässt sich nur in ihrem Verzeichnis fortsetzen → aufgeräumten Worktree neu anlegen
+    if (entry.worktree) await restoreWorktree(entry.worktree)
+    const templateId = getState().templates.some((t) => t.id === entry.templateId)
+      ? entry.templateId
+      : undefined
+    const agent = await this.start(entry.projectId, undefined, entry.model, templateId, {
+      name: entry.name,
+      sessionId: fork ? undefined : entry.sessionId,
+      forkFrom: fork ? entry.sessionId : undefined,
+      worktree: entry.worktree,
+      noWorktree: true
+    })
+    if (!fork) updateState((s) => (s.archive = s.archive.filter((x) => x.id !== id)))
     return agent
   }
 
@@ -464,7 +652,14 @@ export class AgentManager {
   /** Tastatureingaben aus dem Terminal; Editor-Tab offen oder Worker → gesperrt */
   write(id: string, data: string): void {
     const r = this.running.get(id)
-    if (r && !r.agent.editing && !isTeamWorker(r.agent)) r.proc.write(data)
+    if (!r || r.agent.editing || isTeamWorker(r.agent)) return
+    // Entwurf im Eingabefeld erkennen: solange der Nutzer tippt, werden keine automatischen
+    // Nachrichten (Team, Warteschlange) dazwischengeschrieben. Enter/Strg+C/Strg+U leeren ihn.
+    // eslint-disable-next-line no-control-regex
+    if (/[\r\n\x03\x15]/.test(data)) r.draftAt = 0
+    // eslint-disable-next-line no-control-regex
+    else if (!data.startsWith('\x1b') && /[^\x00-\x1f\x7f]/.test(data)) r.draftAt = Date.now()
+    r.proc.write(data)
   }
 
   /** Zeile vom Nutzer (z. B. `/clear`) – nicht an Worker, die sind nur beobachtbar. */
@@ -518,6 +713,22 @@ export class AgentManager {
     if (!project) throw new Error('Projekt nicht gefunden')
     if (!existsSync(project.agentPath)) throw new Error(`Ordner fehlt: ${project.agentPath}`)
 
+    // Worktree wurde von Hand entfernt → im Agent-Ordner weiterarbeiten
+    if (agent.worktree && !existsSync(agent.worktree.path)) {
+      agent.worktree = undefined
+      updateState((s) => {
+        const saved = s.agents.find((a) => a.id === agent.id)
+        if (saved) saved.worktree = undefined
+      })
+    }
+    const cwd = agent.worktree ? worktreeCwd(agent.worktree, project.agentPath) : project.agentPath
+
+    const engine = agent.engineId
+      ? getState().engines.find((e) => e.id === agent.engineId)
+      : undefined
+    if (agent.engineId && !engine) throw new Error('Die Engine dieses Agents wurde gelöscht')
+    if (engine) return this.spawnEngine(agent, engine.command, cwd, task)
+
     const claude = await resolveClaude()
     if (!claude) throw new Error('Claude Code wurde nicht gefunden')
 
@@ -536,7 +747,10 @@ export class AgentManager {
       model ? ['--model', model] : []
     )
     if (sessionExists(agent.sessionId)) args.push('--resume', agent.sessionId)
-    else args.push('--session-id', agent.sessionId)
+    else if (agent.forkFrom && sessionExists(agent.forkFrom)) {
+      // Kopie einer Unterhaltung: alte Session laden, unter der eigenen Id weiterschreiben
+      args.push('--resume', agent.forkFrom, '--fork-session', '--session-id', agent.sessionId)
+    } else args.push('--session-id', agent.sessionId)
     args.push('--settings', settingsFile, '--mcp-config', mcpFile)
     args.push(
       '--append-system-prompt',
@@ -566,12 +780,23 @@ export class AgentManager {
       name: 'xterm-256color',
       cols: 120,
       rows: 30,
-      cwd: project.agentPath,
+      cwd,
       env
     })
 
     if (process.env.DEVHUB_DEBUG)
       console.log('[DevHub] Agent gestartet', agent.name, file, argv.join(' '))
+    const r = this.track(agent, proc, cwd)
+
+    proc.onData((data) => {
+      r.buffer = (r.buffer + data).slice(-MAX_BUFFER)
+      if (agent.status === 'starting') this.setStatus(agent.id, 'idle')
+      this.events.onData(agent.id, data)
+    })
+  }
+
+  /** Laufenden Prozess registrieren; räumt beim Ende auf (für Claude-Agents und andere Engines). */
+  private track(agent: Agent, proc: pty.IPty, cwd: string): RunningAgent {
     const r: RunningAgent = {
       agent,
       proc,
@@ -581,28 +806,66 @@ export class AgentManager {
       pending: [],
       snippets: [],
       edits: [],
-      reported: false
+      reported: false,
+      cwd,
+      asking: false,
+      turnDone: true,
+      editedThisTurn: false,
+      gateRounds: 0,
+      draftAt: 0,
+      activityLog: [],
+      contextWarned: false,
+      usageReadAt: 0
     }
     this.running.set(agent.id, r)
 
-    proc.onData((data) => {
-      r.buffer = (r.buffer + data).slice(-MAX_BUFFER)
-      if (agent.status === 'starting') this.setStatus(agent.id, 'idle')
-      this.events.onData(agent.id, data)
-    })
-
     proc.onExit(({ exitCode }) => {
       this.running.delete(agent.id)
+      clearTimeout(r.quietTimer)
       // Offener Editor-Tab: Anfrage beantworten, damit ein verwaister curl-Prozess endet
       this.closeEditor(agent.id)
+      // Offene Freigaben dieses Agents verfallen
+      for (const p of [...this.permissions.values()]) if (p.workerId === agent.id) p.finish(null)
       if (this.quitting) return
-      if (!r.stopping && exitCode !== 0 && Date.now() - r.startedAt < EARLY_EXIT_MS) {
-        this.events.onStartFailed(agent.name, lastLines(r.buffer))
-      }
+      const failed = !r.stopping && exitCode !== 0 && Date.now() - r.startedAt < EARLY_EXIT_MS
+      if (failed) this.events.onStartFailed(agent.name, lastLines(r.buffer))
       // Agent wurde im Terminal oder über die Liste beendet → Eintrag entfernen
-      this.forget(agent.id)
+      this.forget(agent.id, failed ? undefined : r)
       // Ohne Orchestrator ist das Team nicht mehr steuerbar → Worker mit beenden
       if (agent.teamId && agent.teamRole === 'orchestrator') this.stopTeam(agent.teamId)
+    })
+    return r
+  }
+
+  /**
+   * Andere Engine (z. B. Codex CLI, Gemini CLI): beliebiges Terminal-Programm im Arbeitsverzeichnis.
+   * Ohne Hooks gibt es weder Status noch Datei-Reiter; „arbeitet“ = es kommt gerade Ausgabe.
+   */
+  private spawnEngine(agent: Agent, command: string, cwd: string, task: string | undefined): void {
+    // Befehlszeile des Nutzers unverändert an cmd.exe (ein String → node-pty quotet nicht um)
+    const proc = pty.spawn('cmd.exe', `/d /s /c "${command}"`, {
+      name: 'xterm-256color',
+      cols: 120,
+      rows: 30,
+      cwd,
+      env: claudeEnv({ FORCE_COLOR: '1' })
+    })
+    if (process.env.DEVHUB_DEBUG) console.log('[DevHub] Engine gestartet', agent.name, command)
+    const r = this.track(agent, proc, cwd)
+    let taskSent = !task
+    proc.onData((data) => {
+      r.buffer = (r.buffer + data).slice(-MAX_BUFFER)
+      this.events.onData(agent.id, data)
+      this.setStatus(agent.id, 'working')
+      clearTimeout(r.quietTimer)
+      r.quietTimer = setTimeout(() => {
+        this.setStatus(agent.id, 'idle', 'Keine Ausgabe – wartet vermutlich')
+        // Aufgabe eintippen, sobald die Oberfläche der Engine steht
+        if (!taskSent) {
+          taskSent = true
+          void this.typeLine(agent.id, task!).catch(noop)
+        }
+      }, QUIET_MS)
     })
   }
 
@@ -633,26 +896,37 @@ export class AgentManager {
         PreToolUse: [{ matcher: '*', hooks: hook }],
         PostToolUse: [{ matcher: '*', hooks: hook }],
         Notification: [{ hooks: hook }],
-        Stop: [{ hooks: hook }],
-        // Ohne -m: die Anfrage bleibt offen, bis der Orchestrator entschieden hat (Ausgabe = Antwort)
-        ...(worker && {
-          PermissionRequest: [
-            {
-              matcher: '*',
-              hooks: [
-                {
-                  type: 'command',
-                  command: `curl.exe -s -X POST -H "Content-Type: application/json" --data-binary @- ${this.bridge.permissionUrl(agentId)}`,
-                  timeout: PERMISSION_TIMEOUT_S
-                }
-              ]
-            }
-          ]
-        })
+        // Ohne -m: die Anfrage bleibt offen, solange die Prüfungen des Projekts laufen; die
+        // Ausgabe ist die Hook-Antwort (leer = anhalten, `decision: block` = weiterarbeiten)
+        Stop: [
+          {
+            hooks: [
+              {
+                type: 'command',
+                command: `curl.exe -s -X POST -H "Content-Type: application/json" --data-binary @- ${this.bridge.stopUrl(agentId)}`,
+                timeout: STOP_TIMEOUT_S
+              }
+            ]
+          }
+        ],
+        // Ohne -m: offen, bis entschieden ist – beim Worker durch den Orchestrator, sonst durch
+        // eine Projekt-Regel bzw. den Nutzer im Eingang (leere Antwort = normaler Dialog im Terminal)
+        PermissionRequest: [
+          {
+            matcher: '*',
+            hooks: [
+              {
+                type: 'command',
+                command: `curl.exe -s -X POST -H "Content-Type: application/json" --data-binary @- ${this.bridge.permissionUrl(agentId)}`,
+                timeout: PERMISSION_TIMEOUT_S
+              }
+            ]
+          }
+        ]
       },
       permissions: {
         allow: [
-          'mcp__devhub__show_code',
+          ...COMMON_TOOLS.map((t) => `mcp__devhub__${t}`),
           'mcp__devhub__team_members',
           'mcp__devhub__send_team_message',
           'mcp__devhub__answer_permission'
@@ -696,8 +970,49 @@ export class AgentManager {
       if (ev.hook_event_name === 'Stop') setTimeout(() => this.readSnippets(agentId), 1500)
     }
     const r = this.running.get(agentId)
+    if (!r) return
+    // Buchführung für alle Agents: Zug, offene Frage, Aktivität, geänderte Dateien
+    switch (ev.hook_event_name) {
+      case 'UserPromptSubmit':
+        r.turnDone = false
+        r.editedThisTurn = false
+        r.gateRounds = 0
+        r.gateNote = undefined
+        r.gateFailed = undefined
+        r.asking = false
+        r.draftAt = 0
+        r.agent.progress = undefined
+        r.agent.activity = undefined
+        break
+      case 'PreToolUse':
+        r.asking = ev.tool_name === 'AskUserQuestion'
+        this.addActivity(
+          r,
+          describeTool(String(ev.tool_name ?? ''), ev.tool_input as Record<string, unknown>)
+        )
+        break
+      case 'PostToolUse': {
+        r.asking = false
+        // Edit/Write/MultiEdit: Datei sofort rechts als Reiter zeigen
+        const edit = editFromToolResult(agentId, ev.tool_response, Date.now())
+        if (edit) {
+          r.editedThisTurn = true
+          this.addEdits(agentId, [edit])
+        }
+        // Verbrauch/Kontext laufend nachführen (gedrosselt)
+        if (Date.now() - r.usageReadAt > 4000) this.readSnippets(agentId)
+        break
+      }
+      case 'Stop':
+        r.asking = false
+        r.turnDone = true
+        r.agent.activity = undefined
+        break
+    }
+    /** Offene Freigabe: Status bleibt stehen, bis entschieden ist */
+    const awaitingPermission = [...this.permissions.values()].some((p) => p.workerId === agentId)
     // Worker warten nie auf den Nutzer (er kann ihnen nicht antworten): fertig = untätig
-    if (r && isTeamWorker(r.agent)) {
+    if (isTeamWorker(r.agent)) {
       switch (ev.hook_event_name) {
         case 'UserPromptSubmit':
           r.reported = false
@@ -728,14 +1043,10 @@ export class AgentManager {
           break
         this.setStatus(agentId, 'idle')
         break
-      case 'PostToolUse': {
-        // Edit/Write/MultiEdit: Datei sofort rechts als Reiter zeigen
-        const edit = editFromToolResult(agentId, ev.tool_response, Date.now())
-        if (edit) this.addEdits(agentId, [edit])
-        // Offene Rechte-Abfrage (Worker) bleibt sichtbar, bis der Orchestrator entschieden hat
-        if (r?.agent.statusMessage !== WAITING_FOR_PERMISSION) this.setStatus(agentId, 'working')
+      case 'PostToolUse':
+        // Offene Rechte-Abfrage bleibt sichtbar, bis sie entschieden ist
+        if (!awaitingPermission) this.setStatus(agentId, 'working')
         break
-      }
       case 'UserPromptSubmit':
         this.setStatus(agentId, 'working')
         break
@@ -743,17 +1054,247 @@ export class AgentManager {
         // AskUserQuestion wartet auf den Nutzer, alle anderen Tools = Arbeit
         if (ev.tool_name === 'AskUserQuestion') {
           this.setStatus(agentId, 'needsInput', 'Stellt eine Frage')
-        } else {
+        } else if (!awaitingPermission) {
           this.setStatus(agentId, 'working')
         }
         break
       case 'Notification':
-        this.setStatus(agentId, 'needsInput', ev.message || 'Benötigt Eingabe')
+        // Die Freigabe steht schon im Eingang (claudes Hinweis dazu würde den Text ersetzen)
+        if (!awaitingPermission) {
+          this.setStatus(agentId, 'needsInput', ev.message || 'Benötigt Eingabe')
+        }
         break
       case 'Stop':
-        this.setStatus(agentId, 'needsInput', 'Fertig – wartet auf Eingabe')
+        this.setStatus(agentId, 'needsInput', r.gateNote ?? 'Fertig – wartet auf Eingabe')
         break
     }
+  }
+
+  // ------------------------------------------------------------ Fertig-Meldung: Prüfungen, Warteschlange
+
+  /**
+   * Stop-Hook: Hat der Agent in diesem Zug Dateien geändert und das Projekt Prüfbefehle, laufen
+   * sie jetzt. Schlägt einer fehl, bekommt der Agent die Ausgabe als Grund zum Weiterarbeiten
+   * (höchstens MAX_GATE_ROUNDS-mal je Anweisung). Danach: Status, Aufgabe erledigt, nächster Auftrag.
+   */
+  private async handleStop(agentId: string, ev: HookEvent): Promise<object | null> {
+    const r = this.running.get(agentId)
+    if (!r) return null
+    const project = getState().projects.find((p) => p.id === r.agent.projectId)
+    const checks = parseChecks(project?.checks)
+    r.gateNote = undefined
+    // Seit dem letzten Fehlschlag nichts geändert (der Agent hat z. B. erklärt, warum er nicht
+    // korrigiert) → nicht noch einmal prüfen und zurückschicken
+    if (checks.length && !r.editedThisTurn && r.gateFailed) {
+      r.gateNote = `Fertig – Prüfung „${r.gateFailed}“ schlägt fehl`
+    }
+    if (checks.length && r.editedThisTurn) {
+      // Nur neue Änderungen lösen die nächste Prüfung aus
+      r.editedThisTurn = false
+      this.setStatus(agentId, 'working', 'Prüfungen laufen …')
+      const failure = await runChecks(checks, r.cwd, (cmd) =>
+        this.addActivity(r, `Prüfung: ${cmd}`)
+      )
+      if (this.running.get(agentId) !== r) return null
+      r.gateFailed = failure?.command
+      if (failure && r.gateRounds < MAX_GATE_ROUNDS) {
+        r.gateRounds++
+        this.addActivity(r, `Prüfung fehlgeschlagen: ${failure.command}`)
+        this.setStatus(
+          agentId,
+          'working',
+          `Prüfung fehlgeschlagen – korrigiert (${r.gateRounds}/${MAX_GATE_ROUNDS})`
+        )
+        return {
+          decision: 'block',
+          reason:
+            `DevHub quality gate: the project check \`${failure.command}\` failed ` +
+            `(${failure.code === null ? 'timeout or not startable' : `exit code ${failure.code}`}). ` +
+            'Fix the cause, then finish again; the checks run again automatically. ' +
+            'If the failure is unrelated to your changes or you cannot fix it, say so instead of retrying.\n' +
+            `Output (end):\n${failure.output}`
+        }
+      }
+      r.gateNote = failure
+        ? `Fertig – Prüfung „${failure.command}“ schlägt weiter fehl`
+        : 'Fertig – Prüfungen grün'
+    }
+    this.handleHook(agentId, { ...ev, hook_event_name: 'Stop' })
+    this.afterStop(r)
+    return null
+  }
+
+  /** Zug beendet: Aufgabe abhaken, nächsten Auftrag der Warteschlange schicken, ggf. vorlesen. */
+  private afterStop(r: RunningAgent): void {
+    const agent = r.agent
+    if (isTeamWorker(agent)) return
+    if (agent.currentTaskId) {
+      this.updateTask(agent.currentTaskId, { status: 'done', doneAt: Date.now() })
+      agent.currentTaskId = undefined
+      this.saveAgent(agent)
+    }
+    if (agent.queue?.length) {
+      setTimeout(() => this.sendNextQueued(agent.id), 600)
+      return
+    }
+    // Erst nach dem zweiten Lesen des Transkripts steht die letzte Antwort sicher drin
+    setTimeout(() => {
+      if (this.running.get(agent.id) === r && r.turnDone) this.events.onTurnFinished(agent)
+    }, 2200)
+  }
+
+  /** Nächsten Auftrag abschicken, sobald der Agent frei ist (sonst später erneut versucht). */
+  private sendNextQueued(id: string): void {
+    const r = this.running.get(id)
+    if (!r || !r.agent.queue?.length) return
+    // Andere Engines melden kein „fertig“ → sofort eintippen
+    if (!r.agent.engineId && (!r.turnDone || this.mustHold(r))) return
+    const [next, ...rest] = r.agent.queue
+    r.agent.queue = rest
+    r.agent.currentTaskId = next.taskId
+    r.turnDone = false
+    this.saveAgent(r.agent)
+    if (next.taskId) {
+      this.updateTask(next.taskId, {
+        status: 'running',
+        agentId: r.agent.id,
+        agentName: r.agent.name
+      })
+    }
+    this.emitChanged()
+    void this.typeLine(id, next.text).catch((e) => console.error('[DevHub] Warteschlange:', e))
+  }
+
+  /** Auftrag anhängen – wird abgeschickt, sobald der Agent fertig ist (sofort, wenn er frei ist). */
+  enqueue(id: string, text: string, taskId?: string): void {
+    const r = this.running.get(id)
+    if (!r) throw new Error('Agent läuft nicht mehr')
+    if (isTeamWorker(r.agent))
+      throw new Error(`${r.agent.name} bekommt Aufträge nur vom Orchestrator`)
+    const t = text.trim()
+    if (!t) throw new Error('Auftrag ist leer')
+    r.agent.queue = [...(r.agent.queue ?? []), { id: randomUUID(), text: t, taskId }]
+    this.saveAgent(r.agent)
+    this.emitChanged()
+    this.sendNextQueued(id)
+  }
+
+  dequeue(id: string, queueId: string): void {
+    const r = this.running.get(id)
+    if (!r) return
+    const removed = r.agent.queue?.find((q) => q.id === queueId)
+    r.agent.queue = (r.agent.queue ?? []).filter((q) => q.id !== queueId)
+    this.saveAgent(r.agent)
+    if (removed?.taskId)
+      this.updateTask(removed.taskId, { agentId: undefined, agentName: undefined })
+    this.emitChanged()
+  }
+
+  private saveAgent(agent: Agent): void {
+    updateState((s) => {
+      const i = s.agents.findIndex((a) => a.id === agent.id)
+      if (i >= 0) s.agents[i] = { ...persisted(agent), needsInput: s.agents[i].needsInput }
+    })
+  }
+
+  // ------------------------------------------------------------ Aufgaben (Board)
+
+  tasks(): Task[] {
+    return getState().tasks
+  }
+
+  saveTask(input: { id?: string; projectId: string; text: string }): Task {
+    const text = input.text?.trim()
+    if (!text) throw new Error('Aufgabe ist leer')
+    if (!getState().projects.some((p) => p.id === input.projectId))
+      throw new Error('Projekt nicht gefunden')
+    const existing = getState().tasks.find((t) => t.id === input.id)
+    const task: Task = existing
+      ? { ...existing, text }
+      : {
+          id: randomUUID(),
+          projectId: input.projectId,
+          text,
+          status: 'open',
+          createdAt: Date.now()
+        }
+    updateState((s) => {
+      const i = s.tasks.findIndex((t) => t.id === task.id)
+      if (i >= 0) s.tasks[i] = task
+      else s.tasks.push(task)
+    })
+    this.events.onTasksChanged(getState().tasks)
+    return task
+  }
+
+  removeTask(id: string): void {
+    // Auch aus Warteschlangen nehmen
+    for (const r of this.running.values()) {
+      if (r.agent.queue?.some((q) => q.taskId === id)) {
+        r.agent.queue = r.agent.queue.filter((q) => q.taskId !== id)
+        this.saveAgent(r.agent)
+      }
+    }
+    updateState((s) => (s.tasks = s.tasks.filter((t) => t.id !== id)))
+    this.events.onTasksChanged(getState().tasks)
+    this.emitChanged()
+  }
+
+  updateTask(id: string, patch: Partial<Task>): void {
+    if (!getState().tasks.some((t) => t.id === id)) return
+    updateState((s) => {
+      const t = s.tasks.find((x) => x.id === id)
+      if (!t) return
+      Object.assign(t, patch)
+      if (patch.status && patch.status !== 'done') t.doneAt = undefined
+      if (patch.status === 'done') t.doneAt ??= Date.now()
+    })
+    this.events.onTasksChanged(getState().tasks)
+  }
+
+  /** Neuen Agent starten, der die Aufgabe bearbeitet */
+  async startTask(id: string, templateId?: string): Promise<Agent> {
+    const task = getState().tasks.find((t) => t.id === id)
+    if (!task) throw new Error('Aufgabe nicht gefunden')
+    const agent = await this.start(task.projectId, task.text, undefined, templateId, { taskId: id })
+    this.updateTask(id, { status: 'running', agentId: agent.id, agentName: agent.name })
+    return agent
+  }
+
+  /** Aufgabe einem laufenden Agent geben (er bearbeitet sie, sobald er frei ist) */
+  assignTask(id: string, agentId: string): void {
+    const task = getState().tasks.find((t) => t.id === id)
+    const agent = this.running.get(agentId)?.agent
+    if (!task || !agent) throw new Error('Aufgabe oder Agent nicht gefunden')
+    this.updateTask(id, { status: 'open', agentId: agent.id, agentName: agent.name })
+    this.enqueue(agentId, task.text, id)
+  }
+
+  // ------------------------------------------------------------ Aktivität
+
+  private addActivity(r: RunningAgent, text: string): void {
+    if (!text) return
+    r.agent.activity = text
+    r.activityLog.unshift({ at: Date.now(), text })
+    if (r.activityLog.length > MAX_ACTIVITY) r.activityLog.length = MAX_ACTIVITY
+    this.emitChanged()
+  }
+
+  activityLog(id: string): ActivityEntry[] {
+    return this.running.get(id)?.activityLog ?? []
+  }
+
+  private notice(agentId: string | undefined, message: string): void {
+    this.events.onNotice({ id: this.nextNoticeId++, agentId, message, at: Date.now() })
+  }
+
+  /** Verlauf: beendete Sitzungen, neueste zuerst */
+  archive(): ArchivedSession[] {
+    return getState().archive
+  }
+
+  removeArchived(id: string): void {
+    updateState((s) => (s.archive = s.archive.filter((x) => x.id !== id)))
   }
 
   /** Snippets aller laufenden Agents (für die Oberfläche nach einem Neuladen) */
@@ -783,13 +1324,24 @@ export class AgentManager {
 
   /** Neue Code-Blöcke aus dem Transkript übernehmen und melden. */
   private readSnippets(agentId: string): void {
-    const reader = this.running.get(agentId)?.transcript
-    if (!reader) return
+    const running = this.running.get(agentId)
+    const reader = running?.transcript
+    if (!running || !reader) return
+    running.usageReadAt = Date.now()
     reader
       .read()
-      .then(({ snippets, edits }) => {
+      .then(({ snippets, edits, usage, lastText, firstPrompt }) => {
         const r = this.running.get(agentId)
         if (!r || r.transcript !== reader) return
+        r.title ??= firstPrompt
+        if (usage || lastText !== undefined) {
+          if (usage) {
+            r.agent.usage = usage
+            this.checkContext(r)
+          }
+          if (lastText !== undefined) r.agent.lastMessage = lastText
+          this.emitChanged()
+        }
         // Nach einer Wiederherstellung kommen die bearbeiteten Dateien aus dem Transkript
         this.addEdits(agentId, edits)
         if (!snippets.length) return
@@ -799,11 +1351,70 @@ export class AgentManager {
       .catch((e) => console.error('[DevHub] Transkript nicht lesbar:', e))
   }
 
+  /** Einmal warnen, wenn der Kontext die eingestellte Schwelle überschreitet */
+  private checkContext(r: RunningAgent): void {
+    const limit = getState().settings.contextWarnTokens
+    const context = r.agent.usage?.context ?? 0
+    if (!limit) return
+    if (context >= limit && !r.contextWarned) {
+      r.contextWarned = true
+      this.notice(
+        r.agent.id,
+        `${r.agent.name}: Kontext bei ${Math.round(context / 1000)}k Tokens – /compact oder /clear erwägen, bevor automatisch verdichtet wird.`
+      )
+    } else if (context < limit * 0.6) r.contextWarned = false
+  }
+
   private async handleToolCall(
     agentId: string,
     name: ToolName,
     args: Record<string, unknown>
   ): Promise<string> {
+    const r = this.running.get(agentId)
+    if (!r) throw new Error('Unknown agent')
+    const text = (key: string): string => String(args[key] ?? '').trim()
+    switch (name) {
+      case 'show_plan': {
+        if (!text('title') || !text('markdown')) throw new Error('title and markdown are required')
+        this.events.onPlan({
+          agentId,
+          title: text('title').slice(0, 80),
+          markdown: String(args.markdown),
+          at: Date.now()
+        })
+        return 'Shown to the user in the DevHub side panel.'
+      }
+      case 'show_diff': {
+        const file = text('file_path')
+        this.events.onShowDiff(agentId, file ? resolvePath(r.cwd, file) : undefined)
+        return 'The review window with your changes was opened for the user.'
+      }
+      case 'notify_user': {
+        if (!text('message')) throw new Error('message is required')
+        const message = text('message').slice(0, 400)
+        this.notice(agentId, `${r.agent.name}: ${message}`)
+        this.events.onAttention(r.agent, message)
+        return 'The user was notified.'
+      }
+      case 'report_progress': {
+        if (!text('message')) throw new Error('message is required')
+        const percent = Number(args.percent)
+        r.agent.progress = {
+          message: text('message').slice(0, 120),
+          percent: Number.isFinite(percent) ? Math.max(0, Math.min(100, percent)) : undefined
+        }
+        this.emitChanged()
+        return 'Progress shown.'
+      }
+      case 'run_list':
+      case 'run_output':
+      case 'run_start':
+      case 'run_stop': {
+        const project = getState().projects.find((p) => p.id === r.agent.projectId)
+        if (!project) throw new Error('Project not found')
+        return this.events.runTool(project, name, args)
+      }
+    }
     if (name === 'show_code') return this.handleShowCode(agentId, args as unknown as ShowCodeArgs)
     if (name === 'team_members') return this.handleTeamMembers(agentId)
     if (name === 'answer_permission')
@@ -828,37 +1439,103 @@ export class AgentManager {
     signal: AbortSignal
   ): Promise<PermissionDecision | null> {
     const worker = this.running.get(workerId)
-    if (!worker || !isTeamWorker(worker.agent)) return Promise.resolve(null)
-    const lead = this.leadOf(worker.agent)
-    if (!lead) {
+    if (!worker) return Promise.resolve(null)
+    const tool = String(ev.tool_name ?? '?')
+    const toolInput = (ev.tool_input ?? {}) as Record<string, unknown>
+    const project = getState().projects.find((p) => p.id === worker.agent.projectId)
+    // Regeln des Projekts („Immer erlauben“) entscheiden sofort – für alle Agents
+    if ((project?.permissionRules ?? []).some((rule) => matchesRule(rule, tool, toolInput))) {
+      this.addActivity(worker, `Automatisch erlaubt: ${describeTool(tool, toolInput)}`)
+      return Promise.resolve({ behavior: 'allow' })
+    }
+    const isWorker = isTeamWorker(worker.agent)
+    const lead = isWorker ? this.leadOf(worker.agent) : undefined
+    if (isWorker && !lead) {
       return Promise.resolve({
         behavior: 'deny',
         message: 'No orchestrator is running for your team, so nobody can approve this.'
       })
     }
+    // Normale Agents: ohne Eingang entscheidet der Nutzer wie gewohnt im Terminal
+    if (!isWorker && !getState().settings.permissionInbox) return Promise.resolve(null)
+
     const id = this.nextPermissionId++
-    const input = JSON.stringify(ev.tool_input ?? {})
+    const input = JSON.stringify(toolInput)
     const summary = input.length > 600 ? input.slice(0, 600) + ' …' : input
-    this.setStatus(workerId, 'needsInput', WAITING_FOR_PERMISSION)
+    const command = typeof toolInput.command === 'string' ? toolInput.command : ''
+    const info: PermissionInfo = {
+      id,
+      agentId: workerId,
+      tool,
+      summary: (command || summary).slice(0, 800),
+      rule: ruleFor(tool, toolInput),
+      at: Date.now()
+    }
+    const waiting = isWorker ? WAITING_FOR_PERMISSION : `Freigabe: ${describeTool(tool, toolInput)}`
     return new Promise((resolve) => {
       const finish = (decision: PermissionDecision | null): void => {
         if (!this.permissions.delete(id)) return
         signal.removeEventListener('abort', onAbort)
-        if (this.running.get(workerId)?.agent.statusMessage === WAITING_FOR_PERMISSION) {
+        const a = this.running.get(workerId)?.agent
+        const more = [...this.permissions.values()].some((p) => p.workerId === workerId)
+        if (a?.status === 'needsInput' && a.statusMessage === waiting && !more) {
           this.setStatus(workerId, 'working')
         }
+        if (!isWorker) this.emitPermissions()
         resolve(decision)
       }
       const onAbort = (): void => finish(null)
-      this.permissions.set(id, { workerId, finish })
+      this.permissions.set(id, {
+        workerId,
+        kind: isWorker ? 'orchestrator' : 'user',
+        info,
+        finish
+      })
       signal.addEventListener('abort', onAbort)
-      this.deliver(
-        lead,
-        `[Permission request #${id} from ${worker.agent.name}] wants to use the tool ` +
-          `${String(ev.tool_name ?? '?')} with input ${summary}. ` +
-          `It is blocked until you answer with the answer_permission tool (request_id ${id}).`
-      )
+      this.setStatus(workerId, 'needsInput', waiting)
+      if (isWorker) {
+        this.deliver(
+          lead!,
+          `[Permission request #${id} from ${worker.agent.name}] wants to use the tool ` +
+            `${tool} with input ${summary}. ` +
+            `It is blocked until you answer with the answer_permission tool (request_id ${id}).`
+        )
+      } else this.emitPermissions()
     })
+  }
+
+  /** Offene Freigaben, die der Nutzer im Eingang entscheidet */
+  userPermissions(): PermissionInfo[] {
+    return [...this.permissions.values()].filter((p) => p.kind === 'user').map((p) => p.info)
+  }
+
+  private emitPermissions(): void {
+    this.events.onPermissions(this.userPermissions())
+  }
+
+  /**
+   * Entscheidung des Nutzers: erlauben, ablehnen (mit Begründung), immer erlauben (Regel fürs
+   * Projekt speichern) oder im Terminal entscheiden (claude zeigt seinen normalen Dialog).
+   */
+  answerUserPermission(id: number, answer: PermissionAnswer, message?: string): void {
+    const req = this.permissions.get(id)
+    if (!req || req.kind !== 'user') throw new Error('Diese Freigabe ist nicht mehr offen')
+    if (answer === 'terminal') return req.finish(null)
+    if (answer === 'deny') {
+      return req.finish({
+        behavior: 'deny',
+        message: `Denied by the user: ${message?.trim() || 'not allowed'}`
+      })
+    }
+    if (answer === 'always' && req.info.rule) {
+      const projectId = this.running.get(req.workerId)?.agent.projectId
+      updateState((s) => {
+        const p = s.projects.find((x) => x.id === projectId)
+        if (p && !(p.permissionRules ?? []).includes(req.info.rule))
+          p.permissionRules = [...(p.permissionRules ?? []), req.info.rule]
+      })
+    }
+    req.finish({ behavior: 'allow' })
   }
 
   private handleAnswerPermission(agentId: string, args: AnswerPermissionArgs): string {
@@ -867,7 +1544,8 @@ export class AgentManager {
     const id = Math.floor(Number(args.request_id))
     const req = this.permissions.get(id)
     const worker = req && this.running.get(req.workerId)?.agent
-    if (!req || !worker) throw new Error(`No open permission request #${id}`)
+    if (!req || !worker || req.kind !== 'orchestrator')
+      throw new Error(`No open permission request #${id}`)
     if (worker.teamId !== me.teamId) throw new Error('This request is not from your team')
     if (args.decision === 'allow') {
       req.finish({ behavior: 'allow' })
@@ -894,7 +1572,8 @@ export class AgentManager {
     return (
       r.agent.status === 'starting' ||
       !!r.agent.editing ||
-      (r.agent.status === 'needsInput' && r.agent.statusMessage === 'Stellt eine Frage')
+      r.asking ||
+      Date.now() - r.draftAt < DRAFT_HOLD_MS
     )
   }
 
@@ -996,7 +1675,16 @@ export class AgentManager {
       state.templates.find((t) => t.id === templateId)?.name ?? 'general agent'
     const lead = teamLead(members, team.id)
     const orchestrated = lead?.teamRole === 'orchestrator'
+    // Projekt mit Worktrees: jeder Worker hat einen eigenen Branch (Name steht vor dem Anlegen fest)
+    const project = state.projects.find((p) => p.id === agent.projectId)
+    const branches = project?.useWorktrees
+      ? members
+          .filter((a) => a.teamRole === 'worker')
+          .map((a) => ({ name: a.name, branch: worktreeBranch(a.name, a.id) }))
+      : []
     return {
+      branches,
+      ownBranch: agent.worktree?.branch,
       name: team.name,
       lead: lead?.name ?? agent.name,
       orchestrated,
@@ -1012,8 +1700,9 @@ export class AgentManager {
     if (!r) throw new Error('Unknown agent')
     if (!args.file_path || !args.start_line)
       throw new Error('file_path and start_line are required')
-    const cwd = getState().projects.find((p) => p.id === r.agent.projectId)?.agentPath ?? ''
-    const filePath = isAbsolute(args.file_path) ? args.file_path : resolvePath(cwd, args.file_path)
+    const filePath = isAbsolute(args.file_path)
+      ? args.file_path
+      : resolvePath(r.cwd, args.file_path)
     if (!existsSync(filePath)) throw new Error(`File not found: ${filePath}`)
 
     const start = Math.max(1, Math.floor(args.start_line))
@@ -1035,6 +1724,10 @@ export class AgentManager {
     if (r.agent.status === status && r.agent.statusMessage === message) return
     r.agent.status = status
     r.agent.statusMessage = message
+    // Wartet auf den Nutzer → ggf. Windows-Benachrichtigung (Worker warten nie auf ihn)
+    if (status === 'needsInput' && !isTeamWorker(r.agent)) {
+      this.events.onAttention(r.agent, message || 'Benötigt Eingabe')
+    }
     // Wartezustand speichern, damit er nach einem App-Neustart wieder angezeigt wird
     // (nur schreiben, wenn er sich ändert – working/idle wechseln häufig)
     const needsInput = status === 'needsInput' ? (message ?? '') : undefined
@@ -1056,13 +1749,55 @@ export class AgentManager {
     })()
   }
 
-  private forget(id: string): void {
+  /**
+   * Agent aus dem Zustand entfernen. `r` (regulär beendeter Agent): Sitzung in den Verlauf
+   * übernehmen. Aufgaben gehen zurück ins Board, ein unbenutzter Worktree wird entfernt.
+   */
+  private forget(id: string, r?: RunningAgent): void {
+    const saved = getState().agents.find((a) => a.id === id)
+    const agent = r?.agent
+    // Teammitglieder sind ohne ihr Team nicht sinnvoll fortsetzbar
+    if (r && agent && !agent.engineId && !agent.teamId && sessionExists(agent.sessionId)) {
+      const entry: ArchivedSession = {
+        id: agent.id,
+        projectId: agent.projectId,
+        name: agent.name,
+        sessionId: agent.sessionId,
+        cwd: r.cwd,
+        createdAt: agent.createdAt,
+        endedAt: Date.now(),
+        title: r.title,
+        model: agent.model,
+        templateId: agent.templateId,
+        worktree: agent.worktree,
+        usage: agent.usage
+      }
+      updateState((s) => {
+        s.archive = [entry, ...s.archive.filter((x) => x.sessionId !== entry.sessionId)].slice(
+          0,
+          MAX_ARCHIVE
+        )
+      })
+    }
+    // Laufende bzw. eingereihte Aufgaben dieses Agents wieder freigeben
+    const taskIds = [
+      agent?.currentTaskId ?? saved?.currentTaskId,
+      ...(agent?.queue ?? saved?.queue ?? []).map((q) => q.taskId)
+    ].filter((t): t is string => !!t)
+    for (const taskId of taskIds) {
+      this.updateTask(taskId, { status: 'open', agentId: undefined, agentName: undefined })
+    }
     updateState((s) => (s.agents = s.agents.filter((a) => a.id !== id)))
     try {
       rmSync(join(dataDir('agents'), id), { recursive: true, force: true })
     } catch {
       // ignorieren
     }
+    // Worktree ohne Änderungen und ohne eigene Commits aufräumen (sonst bleibt er zum Prüfen stehen;
+    // beim Fortsetzen aus dem Verlauf wird ein entfernter wieder angelegt)
+    const wt = agent?.worktree ?? saved?.worktree
+    const shared = wt && this.list().some((a) => a.worktree?.path === wt.path)
+    if (wt && !shared) void removeWorktreeIfUnused(wt).catch(noop)
     this.removeEmptyTeams()
     this.emitChanged()
   }
@@ -1121,6 +1856,10 @@ interface TeamContext {
   /** Übrige Mitglieder (ohne den Agent selbst, bei Teams mit Orchestrator ohne diesen) */
   teammates: string[]
   instructions?: string
+  /** Projekt mit Worktrees: Branch je Worker (leer = alle teilen sich ein Verzeichnis) */
+  branches: { name: string; branch: string }[]
+  /** Branch des Agents selbst, falls er in einem Worktree arbeitet */
+  ownBranch?: string
 }
 
 function persisted(a: Agent): PersistedAgent {
@@ -1134,8 +1873,57 @@ function persisted(a: Agent): PersistedAgent {
     model: a.model,
     templateId: a.templateId,
     teamId: a.teamId,
-    teamRole: a.teamRole
+    teamRole: a.teamRole,
+    worktree: a.worktree,
+    engineId: a.engineId,
+    forkFrom: a.forkFrom,
+    queue: a.queue?.length ? a.queue : undefined,
+    currentTaskId: a.currentTaskId
   }
+}
+
+/** Prüfbefehle eines Projekts: einer je Zeile, `#` = Kommentar */
+function parseChecks(text: string | undefined): string[] {
+  return (text ?? '')
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter((l) => l && !l.startsWith('#'))
+}
+
+interface CheckFailure {
+  command: string
+  /** null = Zeitüberschreitung oder nicht startbar */
+  code: number | null
+  output: string
+}
+
+/** Führt die Befehle nacheinander im Arbeitsverzeichnis aus; liefert den ersten Fehlschlag. */
+async function runChecks(
+  commands: string[],
+  cwd: string,
+  onStart: (command: string) => void
+): Promise<CheckFailure | null> {
+  for (const command of commands) {
+    onStart(command)
+    const failure = await new Promise<CheckFailure | null>((done) => {
+      // Befehlszeile des Nutzers aus den Projekt-Einstellungen → über die Shell
+      exec(
+        command,
+        { cwd, windowsHide: true, timeout: CHECK_TIMEOUT_MS, maxBuffer: 32 * 1024 * 1024 },
+        (err, stdout, stderr) => {
+          if (!err) return done(null)
+          const out = `${stdout}\n${stderr}`.replace(ANSI, '').trim()
+          done({
+            command,
+            code: typeof err.code === 'number' ? err.code : null,
+            output: out.length > 6000 ? '…' + out.slice(-6000) : out || err.message
+          })
+        }
+      )
+    })
+    if (failure) return failure
+  }
+  return null
 }
 
 /** DevHub-Hinweis + ggf. Rolle/Richtlinien aus der Vorlage + ggf. Team-Kontext. */
@@ -1197,7 +1985,13 @@ function orchestratedTeamPrompt(agentName: string, team: TeamContext): string {
       'Permission requests: a worker that needs approval for a tool call is blocked, and you receive "[Permission request #<id> from <name>]". ' +
         'Answer every request promptly with `answer_permission`. Allow it if it is clearly needed for the work package you gave and stays within the project; ' +
         'if it is destructive, irreversible, touches things outside the project, or you are unsure, ask the user first (AskUserQuestion), then answer.',
-      'You all share one working directory: give workers separate files or areas so they do not edit the same files at the same time.',
+      team.branches.length
+        ? 'Each worker works in its own git worktree (a separate checkout) on its own branch: ' +
+          team.branches.map((b) => `${b.name} → ${b.branch}`).join(', ') +
+          '. You work in the main checkout. Workers commit on their branch before reporting; integrate their work ' +
+          'with `git merge <branch>` (resolve conflicts yourself or send them back), and tell workers to ' +
+          '`git merge` your branch when they need changes from others.'
+        : 'You all share one working directory: give workers separate files or areas so they do not edit the same files at the same time.',
       guidelines
     ]
       .filter(Boolean)
@@ -1211,7 +2005,10 @@ function orchestratedTeamPrompt(agentName: string, team: TeamContext): string {
     `When you finish a work package, send ${team.lead} a concise, self-contained report with \`send_team_message\` (what you changed, which files, how you verified it, open issues). ` +
       'Do not send pure acknowledgements.',
     `Tool permissions are decided by ${team.lead}; if a request is denied, follow the given reason instead of retrying the same action.`,
-    'You share one working directory with the other workers: only edit the files/areas assigned to you.',
+    team.ownBranch
+      ? `You work in your own git worktree on the branch \`${team.ownBranch}\` (a separate checkout; other workers do not see your files). ` +
+        `Commit your work on this branch before you report – ${team.lead} merges it. Do not switch branches or push.`
+      : 'You share one working directory with the other workers: only edit the files/areas assigned to you.',
     guidelines
   ]
     .filter(Boolean)
