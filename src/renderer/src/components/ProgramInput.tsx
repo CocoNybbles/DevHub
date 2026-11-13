@@ -1,13 +1,13 @@
 interface Props {
   value: string
   onChange: (value: string) => void
-  /** Wird beim Verlassen des Feldes bzw. nach Auswahl/Zurücksetzen aufgerufen (z. B. speichern) */
+  /** Called when leaving the field or after picking/resetting (e.g. to save) */
   onCommit?: (value: string) => void
-  /** Platzhalter, wenn leer – beschreibt, was dann verwendet wird */
+  /** Placeholder when empty – describes what is used instead */
   placeholder: string
 }
 
-/** Pfad zu einem Programm (.exe) mit Dateiauswahl; leer = Standard (siehe Platzhalter). */
+/** Path to a program (.exe) with file picker; empty = default (see placeholder). */
 function ProgramInput({ value, onChange, onCommit, placeholder }: Props): React.JSX.Element {
   const set = (v: string): void => {
     onChange(v)

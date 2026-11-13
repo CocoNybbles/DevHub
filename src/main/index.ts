@@ -1,4 +1,4 @@
-import './dataPath' // muss zuerst laufen: legt den Datenordner neben der .exe fest
+import './dataPath' // must run first: sets the data folder next to the .exe
 import {
   app,
   shell,
@@ -43,8 +43,8 @@ import { isValidModelName, validateAgentArgs } from '../shared/agentArgs'
 
 let mainWindow: BrowserWindow | null = null
 
-// Nur eine Instanz: zwei würden dieselben Agents (Sessions) wiederherstellen und denselben
-// Datenordner beschreiben. Ein zweiter Start holt stattdessen das vorhandene Fenster nach vorn.
+// Single instance only: two would restore the same agents (sessions) and write to the same
+// data folder. A second launch brings the existing window to the front instead.
 if (!app.requestSingleInstanceLock()) {
   app.exit(0)
 } else {
@@ -56,7 +56,7 @@ if (!app.requestSingleInstanceLock()) {
   })
 }
 
-/** Sendet ein Ereignis an die Oberfläche (falls das Fenster existiert). */
+/** Sends an event to the UI (if the window exists). */
 function send(channel: string, ...args: unknown[]): void {
   if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(channel, ...args)
 }
@@ -70,13 +70,13 @@ const agents = new AgentManager({
   onStartFailed: (name, output) => send('agents:startFailed', name, output),
   onEditorOpened: (id, text) => {
     send('editor:opened', id, text)
-    // Fenster nach vorn holen: Strg+G kommt aus dem Terminal, der Tab soll sofort sichtbar sein
+    // Bring the window to the front: Ctrl+G comes from the terminal, the tab should be visible immediately
     if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.isFocused()) mainWindow.show()
   },
   onEditorAppend: (id, text) => send('editor:append', id, text)
 })
 
-/** Dateiendungen, die im Editor-Tab als Bild-Vorschau gezeigt werden */
+/** File extensions shown as image previews in the editor tab */
 const IMAGE_TYPES: Record<string, string> = {
   png: 'image/png',
   jpg: 'image/jpeg',
@@ -104,14 +104,14 @@ function createWindow(): void {
 
   mainWindow.on('ready-to-show', () => mainWindow?.show())
 
-  // Entwicklungshilfe: DEVHUB_SCREENSHOT=<datei.png> speichert nach DEVHUB_SCREENSHOT_DELAY ms (Standard 8000) ein Bild des Fensters
+  // Dev aid: DEVHUB_SCREENSHOT=<file.png> saves an image of the window after DEVHUB_SCREENSHOT_DELAY ms (default 8000)
   const shot = process.env.DEVHUB_SCREENSHOT
   if (shot) {
     mainWindow.webContents.once('did-finish-load', () =>
       setTimeout(
         async () => {
           if (!mainWindow) return
-          // Fenster nach vorn holen, sonst liefert Chromium ggf. ein veraltetes Bild
+          // Bring the window to the front, otherwise Chromium may return a stale image
           mainWindow.show()
           mainWindow.focus()
           mainWindow.webContents.invalidate()
@@ -144,7 +144,7 @@ function createWindow(): void {
   }
 }
 
-/** Aktuell registriertes globales Kürzel (Sprachbefehl), null = keins. */
+/** Currently registered global shortcut (voice command), null = none. */
 let globalHotkey: string | null = null
 
 function unregisterGlobalHotkey(): void {
@@ -152,19 +152,19 @@ function unregisterGlobalHotkey(): void {
   globalHotkey = null
 }
 
-/** Ersetzt das globale Kürzel. false, wenn es ungültig oder bereits systemweit belegt ist. */
+/** Replaces the global shortcut. false if it is invalid or already taken system-wide. */
 function registerGlobalHotkey(accelerator: string): boolean {
   unregisterGlobalHotkey()
   try {
     if (!globalShortcut.register(accelerator, () => send('voice:globalHotkey'))) return false
   } catch {
-    return false // ungültiger Accelerator
+    return false // invalid accelerator
   }
   globalHotkey = accelerator
   return true
 }
 
-/** Grobe Formprüfung einer Ansicht aus dem Renderer, bevor sie gespeichert wird. */
+/** Rough shape check of a view from the renderer before it is saved. */
 function isSelection(v: unknown): v is NonNullable<Selection> {
   if (!v || typeof v !== 'object') return false
   const s = v as Record<string, unknown>
@@ -188,10 +188,10 @@ function registerIpc(): void {
   ipcMain.handle('claude:checkAuth', () => checkClaudeAuth())
   ipcMain.handle('claude:startLogin', () => startClaudeLogin())
 
-  // --- Werkzeuge ---
+  // --- Tools ---
   ipcMain.handle('tools:vscodeInstalled', () => isVSCodeInstalled())
 
-  // --- Projekte ---
+  // --- Projects ---
   ipcMain.handle('projects:list', () => getState().projects)
   ipcMain.handle('projects:save', async (_, input: ProjectInput) => {
     const name = input.name?.trim()
@@ -240,7 +240,7 @@ function registerIpc(): void {
     const p = project(id)
     if (!p.projectFile) return
     if (!existsSync(p.projectFile)) throw new Error(`Projektdatei nicht gefunden: ${p.projectFile}`)
-    // Programm: Projekt → global → Windows-Standardprogramm für die Dateiendung
+    // Program: project → global → Windows default program for the file extension
     const program = p.projectFileApp || getState().settings.projectFileApp
     if (program) return openWithProgram(program, p.projectFile)
     const err = await shell.openPath(p.projectFile)
@@ -261,7 +261,7 @@ function registerIpc(): void {
     const p = project(id)
     if (!p.folderPath) return
     if (!existsSync(p.folderPath)) throw new Error(`Ordner nicht gefunden: ${p.folderPath}`)
-    // Programm: Projekt → global → VS Code (falls installiert) → Windows-Explorer
+    // Program: project → global → VS Code (if installed) → Windows Explorer
     const program = p.folderApp || getState().settings.folderApp
     if (program) return openWithProgram(program, p.folderPath)
     if (await isVSCodeInstalled()) return openInVSCode(p.folderPath)
@@ -269,8 +269,8 @@ function registerIpc(): void {
     if (err) throw new Error(err)
   })
   ipcMain.handle('projects:pickFolder', async (_, defaultPath?: string) => {
-    // Ohne Vorgabe (neues Projekt): dort weitermachen, wo zuletzt gewählt wurde – im
-    // übergeordneten Ordner, damit das nächste Projekt daneben gleich sichtbar ist
+    // No default (new project): continue where the last pick was – in the parent
+    // folder, so the next project next to it is visible right away
     const last = getState().lastPickDir
     const r = await dialog.showOpenDialog(mainWindow!, {
       properties: ['openDirectory'],
@@ -281,7 +281,7 @@ function registerIpc(): void {
     if (parent !== last) updateState((s) => (s.lastPickDir = parent))
     return r.filePaths[0]
   })
-  // Import: mehrere Ordner (Strg+Klick) – z. B. ein ganzer „Dev“-Ordner oder einzelne Projekte
+  // Import: multiple folders (Ctrl+click) – e.g. a whole "Dev" folder or individual projects
   ipcMain.handle('projects:pickFolders', async () => {
     const last = getState().lastPickDir
     const r = await dialog.showOpenDialog(mainWindow!, {
@@ -339,12 +339,12 @@ function registerIpc(): void {
     return r.canceled ? null : r.filePaths[0]
   })
 
-  // --- Vorlagen (vordefinierte Agents) ---
+  // --- Templates (predefined agents) ---
   ipcMain.handle('templates:list', () => getState().templates)
   ipcMain.handle('templates:save', (_, input: AgentTemplateInput) => {
     const name = input.name?.trim().replace(/\s+/g, ' ')
     if (!name) throw new Error('Name fehlt')
-    // „Agent 3“ o. Ä. kollidiert mit den automatisch vergebenen Namen
+    // "Agent 3" or similar collides with the automatically assigned names
     if (/^agent \d+$/i.test(name)) throw new Error('„Agent N“ ist für normale Agents reserviert')
     if (/ \d+$/.test(name))
       throw new Error('Name darf nicht auf eine Zahl enden (wird für „Name 2“, „Name 3“ verwendet)')
@@ -373,7 +373,7 @@ function registerIpc(): void {
     )
     if (usedBy.length)
       throw new Error(`Wird in Team ${usedBy.map((t) => `„${t.name}“`).join(', ')} verwendet`)
-    // Laufende Agents behalten ihren Namen, starten danach aber ohne Vorlage
+    // Running agents keep their name but start without a template from then on
     updateState((s) => (s.templates = s.templates.filter((t) => t.id !== id)))
   })
 
@@ -410,7 +410,7 @@ function registerIpc(): void {
     return saved
   })
   ipcMain.handle('teamTemplates:remove', (_, id: string) => {
-    // Laufende Teams bleiben bestehen, verlieren aber die gemeinsamen Richtlinien
+    // Running teams remain but lose the shared guidelines
     updateState((s) => (s.teamTemplates = s.teamTemplates.filter((t) => t.id !== id)))
   })
   ipcMain.handle('teams:list', () => agents.teams())
@@ -439,7 +439,7 @@ function registerIpc(): void {
     agents.resize(id, cols, rows)
   )
 
-  // --- Code-Ansicht ---
+  // --- Code view ---
   ipcMain.handle('code:readFile', (_, path: string) => {
     try {
       if (statSync(path).size > 5_000_000) return { ok: false, error: 'Datei ist zu groß (> 5 MB)' }
@@ -452,13 +452,13 @@ function registerIpc(): void {
   ipcMain.handle('code:snippets', () => agents.snippets())
   ipcMain.handle('code:edits', () => agents.edits())
   ipcMain.handle('clipboard:writeText', (_, text: string) => clipboard.writeText(String(text)))
-  // Electron 44: Zwischenablage ist asynchron (W3C-Stil); Bilder liegen als image/png vor
+  // Electron 44: clipboard is asynchronous (W3C style); images are available as image/png
   ipcMain.handle('clipboard:read', async () => ({
     text: await clipboard.readText(),
     hasImage: await clipboard.has('image/png')
   }))
 
-  // --- Strg+G-Editor-Tab ---
+  // --- Ctrl+G editor tab ---
   ipcMain.handle('editor:text', (_, id: string) => agents.editorText(id))
   ipcMain.handle('editor:finish', (_, id: string, text: string | null, submit: boolean) =>
     agents.finishEditor(id, typeof text === 'string' ? text : null, submit === true)
@@ -477,7 +477,7 @@ function registerIpc(): void {
     })
     return r.canceled ? [] : r.filePaths
   })
-  // Vorschaubild als data:-URL (nur Bilddateien, begrenzte Größe)
+  // Preview image as data: URL (image files only, limited size)
   ipcMain.handle('editor:imagePreview', (_, path: string) => {
     const type = IMAGE_TYPES[String(path).split('.').pop()?.toLowerCase() ?? '']
     try {
@@ -488,7 +488,7 @@ function registerIpc(): void {
     }
   })
 
-  // --- Sprache ---
+  // --- Voice ---
   ipcMain.handle('voice:status', () => voiceStatus())
   ipcMain.handle('voice:download', (_, model: WhisperModelId) =>
     downloadVoice(model, (p) => send('voice:progress', p))
@@ -511,7 +511,7 @@ function registerIpc(): void {
     return result
   })
 
-  // --- Ansicht (wird beim nächsten Start wiederhergestellt) ---
+  // --- View (restored on next start) ---
   ipcMain.handle('view:get', () => getState().view)
   ipcMain.handle('view:set', (_, selection: Selection) => {
     const next = isSelection(selection) ? selection : null
@@ -520,12 +520,12 @@ function registerIpc(): void {
     }
   })
 
-  // --- Einstellungen ---
+  // --- Settings ---
   ipcMain.handle('settings:get', () => getState().settings)
   ipcMain.handle('settings:update', (_, patch: Partial<Settings>) => {
     const current = getState().settings
     const next = { ...current, ...patch }
-    if (patch.voiceRememberLanguage === false) next.voiceLanguage = null // ausschalten = vergessen
+    if (patch.voiceRememberLanguage === false) next.voiceLanguage = null // turning off = forget
     if (patch.agentArgs !== undefined) {
       const argsError = validateAgentArgs(patch.agentArgs)
       if (argsError) throw new Error(`Start-Flags: ${argsError}`)
@@ -571,10 +571,10 @@ function registerIpc(): void {
 app.whenReady().then(async () => {
   electronApp.setAppUserModelId('com.devhub.app')
 
-  // F12 öffnet DevTools im Dev-Modus, Strg+R ist im Produktivbuild deaktiviert
+  // F12 opens DevTools in dev mode, Ctrl+R is disabled in the production build
   app.on('browser-window-created', (_, window) => optimizer.watchWindowShortcuts(window))
 
-  // Mikrofon für die Sprachsteuerung erlauben, sonst nichts
+  // Allow the microphone for voice control, nothing else
   session.defaultSession.setPermissionRequestHandler((_, permission, cb) =>
     cb(permission === 'media')
   )
@@ -584,14 +584,14 @@ app.whenReady().then(async () => {
   registerIpc()
   createWindow()
 
-  // Systemweiter Hotkey für globale Sprachbefehle (einstellbar)
+  // System-wide hotkey for global voice commands (configurable)
   const hotkey = getState().settings.hotkeyGlobalVoice
   if (!registerGlobalHotkey(hotkey)) {
     console.warn(`[DevHub] Globaler Hotkey ${hotkey} ist ungültig oder bereits belegt.`)
   }
 })
 
-// Agents beenden, aber gespeichert lassen → Wiederherstellung beim nächsten Start
+// Stop agents but keep them saved → restored on next start
 app.on('before-quit', () => agents.shutdown())
 app.on('will-quit', () => globalShortcut.unregisterAll())
 app.on('window-all-closed', () => app.quit())

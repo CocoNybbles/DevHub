@@ -4,9 +4,9 @@ export interface MenuItem {
   label: string
   action: () => void
   danger?: boolean
-  /** Auswahl-Häkchen (undefined = kein Auswahl-Eintrag) */
+  /** Check mark (undefined = not a checkable entry) */
   checked?: boolean
-  /** Nicht klickbare Zwischenüberschrift (action wird ignoriert) */
+  /** Non-clickable subheading (action is ignored) */
   heading?: boolean
 }
 
@@ -16,7 +16,7 @@ export interface MenuState {
   items: MenuItem[]
 }
 
-/** Einfaches Kontextmenü an der Mausposition; schließt bei Klick daneben oder Esc. */
+/** Simple context menu at the mouse position; closes on click outside or Esc. */
 function ContextMenu({
   x,
   y,

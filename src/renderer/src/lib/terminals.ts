@@ -4,10 +4,10 @@ import '@xterm/xterm/css/xterm.css'
 import { matchesAccelerator } from '../../../shared/hotkeys'
 
 /**
- * Ein xterm-Terminal pro Agent, unabhängig von React.
- * Die Terminals leben so lange wie der Agent und sammeln Ausgabe auch dann,
- * wenn sie gerade nicht angezeigt werden. Beim Anzeigen wird ihr DOM-Element
- * in den jeweiligen Container (Einzelansicht oder Raster-Zelle) verschoben.
+ * One xterm terminal per agent, independent of React.
+ * The terminals live as long as the agent and keep collecting output even
+ * while they are not displayed. When shown, their DOM element is moved
+ * into the respective container (single view or grid cell).
  */
 
 interface Entry {
@@ -15,31 +15,31 @@ interface Entry {
   fit: FitAddon
   host: HTMLDivElement
   opened: boolean
-  /** Größe (px) beim letzten Anpassen – so groß kennt claude das Terminal */
+  /** Size (px) at the last fit – the size claude knows the terminal to have */
   lastSize: { w: number; h: number } | null
   /**
-   * Gesperrt (Editor-Tab offen): claude wartet blockierend auf den Editor und kann nicht neu
-   * zeichnen. Eine Größenänderung würde den Inhalt abschneiden → Größe bleibt fest, in kleineren
-   * Containern wird das Terminal stattdessen verkleinert dargestellt (CSS-Skalierung).
+   * Locked (editor tab open): claude blocks waiting for the editor and cannot redraw.
+   * A resize would cut off the content → the size stays fixed; in smaller containers
+   * the terminal is shown scaled down instead (CSS scaling).
    */
   lockedSize: { w: number; h: number } | null
-  /** Team-Worker: nur beobachten (keine Eingaben, unabhängig von der Editor-Sperre) */
+  /** Team worker: observe only (no input, independent of the editor lock) */
   readOnly: boolean
-  /** Editor-Tab offen */
+  /** Editor tab open */
   locked: boolean
 }
 
 const entries = new Map<string, Entry>()
 
 /**
- * Strg+G an claude schicken: „Prompt im Editor bearbeiten“. claude startet dann seinen Editor
- * (= DevHubs Editor-Tab, s. AgentManager) und zeigt „Save and close editor to continue…“.
+ * Send Ctrl+G to claude: "edit prompt in editor". claude then starts its editor
+ * (= DevHub's editor tab, see AgentManager) and shows "Save and close editor to continue…".
  */
 export function sendEditorKey(id: string): void {
   window.api.agents.write(id, '\x07')
 }
 
-/** App-Kürzel, die das Terminal nicht verschlucken darf (z. B. Sprach-Aufnahme). */
+/** App hotkeys the terminal must not swallow (e.g. voice recording). */
 let appHotkeys: string[] = []
 
 export function setAppHotkeys(accelerators: string[]): void {
@@ -69,11 +69,11 @@ function ensure(id: string): Entry {
   term.loadAddon(fit)
   term.onData((data) => window.api.agents.write(id, data))
 
-  // Kopieren/Einfügen wie im Windows-Terminal (xterm.js selbst schickt bei Strg+V nur ^V)
+  // Copy/paste like in Windows Terminal (xterm.js itself only sends ^V on Ctrl+V)
   term.attachCustomKeyEventHandler((ev) => {
     const key = clipboardKey(ev)
     if (key === 'copy' && term.hasSelection()) {
-      // Strg+C mit Auswahl = Kopieren; ohne Auswahl bleibt es „Abbrechen“ für den Agent
+      // Ctrl+C with a selection = copy; without a selection it stays "interrupt" for the agent
       ev.preventDefault()
       if (ev.type === 'keydown') {
         window.api.clipboard.writeText(term.getSelection()).catch(() => {})
@@ -82,12 +82,12 @@ function ensure(id: string): Entry {
       return false
     }
     if (key === 'paste') {
-      // Standard-Einfügen des Browsers unterdrücken, sonst käme der Text doppelt an
+      // Suppress the browser's default paste, otherwise the text would arrive twice
       ev.preventDefault()
       if (ev.type === 'keydown') pasteInto(id, term)
       return false
     }
-    // App-Kürzel (Sprache) nicht ans Terminal weitergeben
+    // Do not pass app hotkeys (voice) to the terminal
     if (appHotkeys.some((h) => matchesAccelerator(ev, h))) return false
     return true
   })
@@ -108,7 +108,7 @@ function ensure(id: string): Entry {
   return e
 }
 
-/** Strg+C / Strg+Shift+C / Strg+Einfg = kopieren, Strg+V / Strg+Shift+V / Shift+Einfg = einfügen */
+/** Ctrl+C / Ctrl+Shift+C / Ctrl+Insert = copy, Ctrl+V / Ctrl+Shift+V / Shift+Insert = paste */
 function clipboardKey(ev: KeyboardEvent): 'copy' | 'paste' | null {
   if (ev.altKey || ev.metaKey) return null
   if (ev.ctrlKey && ev.code === 'KeyC') return 'copy'
@@ -119,12 +119,12 @@ function clipboardKey(ev: KeyboardEvent): 'copy' | 'paste' | null {
 }
 
 /**
- * Zwischenablage ins Terminal: Text per `term.paste` (Bracketed Paste, mehrzeilig = ein Block).
- * Nur ein Bild → Alt+V an claude, das unter Windows damit selbst ein Bild aus der Zwischenablage
- * anhängt (Strg+V ist dort für das Terminal reserviert).
+ * Clipboard into the terminal: text via `term.paste` (bracketed paste, multi-line = one block).
+ * Only an image → Alt+V to claude, which on Windows uses it to attach an image from the clipboard
+ * itself (Ctrl+V is reserved for the terminal there).
  */
 function pasteInto(id: string, term: Terminal): void {
-  if (term.options.disableStdin) return // gesperrt bzw. nur beobachten
+  if (term.options.disableStdin) return // locked or observe-only
   window.api.clipboard
     .read()
     .then(({ text, hasImage }) => {
@@ -149,11 +149,11 @@ function fitAndReport(id: string, e: Entry): void {
     e.lastSize = { w: e.host.clientWidth, h: e.host.clientHeight }
     window.api.agents.resize(id, e.term.cols, e.term.rows)
   } catch {
-    // Container noch nicht gelayoutet
+    // container not laid out yet
   }
 }
 
-/** Größe anpassen – bzw. bei gesperrtem Terminal feste Größe, passend skaliert */
+/** Fit the size – or, for a locked terminal, keep the fixed size, scaled to fit */
 function layout(id: string, e: Entry): void {
   const container = e.host.parentElement
   if (!e.lockedSize || !container) return fitAndReport(id, e)
@@ -167,7 +167,7 @@ function layout(id: string, e: Entry): void {
   })
 }
 
-/** Zeigt das Terminal des Agents im Container an; liefert eine Funktion zum Lösen. */
+/** Shows the agent's terminal in the container; returns a function to detach it. */
 export function attachTerminal(id: string, container: HTMLElement): () => void {
   const e = ensure(id)
   container.appendChild(e.host)
@@ -186,10 +186,10 @@ export function attachTerminal(id: string, container: HTMLElement): () => void {
 }
 
 /**
- * Standbilder für die Agents-Ansicht, solange der Editor-Tab offen ist: claude kann nur in einer
- * Größe zeichnen, und das live-Terminal hängt dann (schmaler) im Tab. Vor dem Umhängen wird die
- * Ansicht in voller Breite als DOM-Kopie festgehalten (xterm zeichnet per DOM; Farben/Maße hängen
- * an der Klasse am Wurzelelement, die Kopie sieht daher gleich aus).
+ * Still images for the agents view while the editor tab is open: claude can only draw at one
+ * size, and the live terminal then sits (narrower) in the tab. Before moving it, the full-width
+ * view is captured as a DOM copy (xterm renders via DOM; colors/dimensions hang off the class
+ * on the root element, so the copy looks identical).
  */
 const snapshots = new Map<string, { node: HTMLElement; w: number; h: number }>()
 
@@ -198,7 +198,7 @@ export function snapshotTerminal(id: string): void {
   const root = e?.host.querySelector<HTMLElement>('.xterm')
   if (!e || !root || !e.host.isConnected || e.host.clientWidth === 0) return
   const node = root.cloneNode(true) as HTMLElement
-  node.querySelectorAll('textarea').forEach((t) => t.remove()) // keine Eingabe/Fokus
+  node.querySelectorAll('textarea').forEach((t) => t.remove()) // no input/focus
   node.setAttribute('inert', '')
   snapshots.set(id, { node, w: e.host.clientWidth, h: e.host.clientHeight })
 }
@@ -212,7 +212,7 @@ export function dropSnapshot(id: string): void {
   snapshots.delete(id)
 }
 
-/** Standbild im Container zeigen (in Originalgröße, in kleineren Containern verkleinert). */
+/** Show the still image in the container (at original size, scaled down in smaller containers). */
 export function attachSnapshot(id: string, container: HTMLElement): () => void {
   const s = snapshots.get(id)
   if (!s) return () => {}
@@ -239,9 +239,9 @@ export function attachSnapshot(id: string, container: HTMLElement): () => void {
 }
 
 /**
- * Editor-Tab offen: Eingaben sperren und Größe einfrieren (s. `lockedSize`); beim Entsperren
- * wieder an den Container anpassen – claude zeichnet dann in der neuen Größe neu.
- * Muss gesperrt werden, bevor sich die Ansicht ändert (Workspace: beim Ereignis `editor:opened`).
+ * Editor tab open: block input and freeze the size (see `lockedSize`); on unlock, fit to the
+ * container again – claude then redraws at the new size.
+ * Must be locked before the view changes (Workspace: on the `editor:opened` event).
  */
 export function setTerminalLocked(id: string, locked: boolean): void {
   const e = entries.get(id)
@@ -259,7 +259,7 @@ export function setTerminalLocked(id: string, locked: boolean): void {
   }
 }
 
-/** Team-Worker: Terminal nur zum Beobachten (Auswahl/Kopieren geht weiter, Tippen nicht) */
+/** Team worker: terminal for observing only (selecting/copying still works, typing does not) */
 export function setTerminalReadOnly(id: string, readOnly: boolean): void {
   const e = ensure(id)
   e.readOnly = readOnly

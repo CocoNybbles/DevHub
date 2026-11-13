@@ -6,20 +6,20 @@ import { setCapturingHotkey } from '../lib/hotkeyCapture'
 interface Props {
   value: string
   defaultValue: string
-  /** Globales Kürzel: während der Aufnahme systemweit freigeben, damit es neu gedrückt werden kann */
+  /** Global shortcut: release it system-wide while capturing so it can be pressed again */
   global?: boolean
-  /** Speichert das neue Kürzel; Fehler werden unter dem Feld angezeigt */
+  /** Saves the new shortcut; errors are shown below the field */
   onChange: (accelerator: string) => Promise<void>
 }
 
 const MODIFIER_CODES = /^(Control|Shift|Alt|Meta|OS)(Left|Right)?$/
 
-/** Kürzel-Feld: Klick auf „Ändern“, dann Tastenkombination drücken (Esc bricht ab). */
+/** Shortcut field: click "Ändern", then press the key combination (Esc cancels). */
 function HotkeyInput({ value, defaultValue, global, onChange }: Props): React.JSX.Element {
   const [recording, setRecording] = useState(false)
   const [hint, setHint] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
-  // Aktuelle Werte per Ref: Re-Render des Elternteils darf die laufende Aufnahme nicht neu starten
+  // Current values via ref: a parent re-render must not restart the running capture
   const latest = useRef({ value, onChange })
   useEffect(() => {
     latest.current = { value, onChange }
@@ -55,7 +55,7 @@ function HotkeyInput({ value, defaultValue, global, onChange }: Props): React.JS
       if (acc) finish(acc)
       else setHint('Mit Strg, Alt oder Win kombinieren (oder eine F-Taste verwenden)')
     }
-    // Capture-Phase: vor Modal (Esc schließt sonst den Dialog) und allen anderen Hotkeys
+    // Capture phase: before Modal (Esc would otherwise close the dialog) and all other hotkeys
     window.addEventListener('keydown', onKey, true)
     window.addEventListener('keyup', onKey, true)
     const onBlur = (): void => void finish(null)
@@ -65,7 +65,7 @@ function HotkeyInput({ value, defaultValue, global, onChange }: Props): React.JS
       window.removeEventListener('keyup', onKey, true)
       window.removeEventListener('blur', onBlur)
       setCapturingHotkey(false)
-      // nach dem Speichern bzw. Abbruch wieder das (ggf. neue) gespeicherte Kürzel registrieren
+      // after saving or cancelling, re-register the (possibly new) saved shortcut
       if (global) window.api.settings.suspendGlobalHotkey(false)
     }
   }, [recording, global])

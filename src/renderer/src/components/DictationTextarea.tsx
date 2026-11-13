@@ -5,15 +5,15 @@ interface Props {
   value: string
   onChange: (value: string) => void
   placeholder?: string
-  /** Mindesthöhe in px (Standard aus CSS: 180) */
+  /** Minimum height in px (CSS default: 180) */
   minHeight?: number
 }
 
-/** Mehrzeiliges Textfeld mit Mikrofon-Button: diktierter Text wird an der Cursorposition eingefügt. */
+/** Multi-line text field with microphone button: dictated text is inserted at the cursor position. */
 function DictationTextarea({ value, onChange, placeholder, minHeight }: Props): React.JSX.Element {
   const [status, setStatus] = useState<{ text: string; error?: boolean } | null>(null)
   const textarea = useRef<HTMLTextAreaElement>(null)
-  /** Letzte Cursorposition (der Klick aufs Mikrofon nimmt der Textarea den Fokus); null = Ende */
+  /** Last cursor position (clicking the microphone takes focus from the textarea); null = end */
   const caret = useRef<number | null>(null)
 
   const insertText = (text: string): void => {

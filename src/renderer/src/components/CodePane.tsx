@@ -6,30 +6,30 @@ import { CloseIcon, CodeIcon } from './Icons'
 import SnippetList from './SnippetList'
 
 interface Props {
-  /** Code-Stelle aus `show_code` (null = keine); geschlossene Reiter filtert der Workspace heraus */
+  /** Code location from `show_code` (null = none); the Workspace filters out closed tabs */
   focus: CodeFocus | null
-  /** Code-Blöcke aus den Antworten des aktiven Agents, neueste zuerst */
+  /** Code blocks from the active agent's replies, newest first */
   snippets: CodeSnippet[]
-  /** Vom aktiven Agent bearbeitete Dateien (Reihenfolge = erste Bearbeitung) */
+  /** Files edited by the active agent (order = first edit) */
   edits: EditedFile[]
-  /** Name des Agents, von dem der Fokus stammt */
+  /** Name of the agent the focus came from */
   agentName?: string
-  /** Name des aktiven Agents (Snippets, bearbeitete Dateien) */
+  /** Name of the active agent (snippets, edited files) */
   editsAgentName?: string
   vscodeInstalled: boolean
-  /** Reiter schließen (Schlüssel aus lib/codeTabs, Stand); erscheint mit neueren Inhalten wieder */
+  /** Close a tab (key from lib/codeTabs, version); reappears with newer content */
   onCloseTab: (key: string, at: number) => void
-  /** Schlüssel des Snippets-Reiters (pro Agent) */
+  /** Key of the snippets tab (per agent) */
   snippetsKey: string
 }
 
-/** Ein Datei-Reiter: bearbeitete Datei und/oder Stelle aus `show_code` */
+/** A file tab: edited file and/or location from `show_code` */
 interface FileTab {
   key: string
   filePath: string
   at: number
   ranges: LineRange[]
-  /** Hinweis aus `show_code` (nur, wenn der Fokus die neueste Information zur Datei ist) */
+  /** Note from `show_code` (only if the focus is the newest information about the file) */
   focus?: CodeFocus
   edit?: EditedFile
 }
@@ -38,11 +38,11 @@ const SNIPPETS = 'snippets'
 const fileKey = fileTabKey
 const baseName = (path: string): string => path.split(/[\\/]/).pop() ?? path
 
-/** Breite der Code-Spalte (Splitter), gemerkt pro Rechner im Datenordner (localStorage) */
+/** Width of the code column (splitter), remembered per machine in the data folder (localStorage) */
 const WIDTH_KEY = 'devhub.codePaneWidth'
 const DEFAULT_WIDTH = 420
 const MIN_WIDTH = 240
-/** So viel Platz bleibt mindestens für Liste + Terminal */
+/** Minimum space kept for list + terminal */
 const MIN_REST = 260 + 320
 
 function loadWidth(): number {
@@ -58,15 +58,15 @@ function saveWidth(w: number): void {
   try {
     localStorage.setItem(WIDTH_KEY, String(Math.round(w)))
   } catch {
-    // nicht wichtig
+    // not important
   }
 }
 
 /**
- * Rechte Spalte (nur sichtbar, solange es etwas zu zeigen gibt): je bearbeitete Datei bzw. Datei aus
- * `show_code` ein Reiter (geänderte Zeilen hervorgehoben), dazu „Snippets“ = Code-Blöcke aus den
- * Antworten. Gezeigt wird der zuletzt aktualisierte Reiter, bis der Nutzer selbst wechselt.
- * Links ein Splitter zum Anpassen der Breite.
+ * Right column (only visible while there is something to show): one tab per edited file or file from
+ * `show_code` (changed lines highlighted), plus "Snippets" = code blocks from the replies.
+ * The most recently updated tab is shown until the user switches manually.
+ * A splitter on the left adjusts the width.
  */
 function CodePane({
   focus,
@@ -78,7 +78,7 @@ function CodePane({
   onCloseTab,
   snippetsKey
 }: Props): React.JSX.Element {
-  // ---- Reiter zusammenstellen
+  // ---- Assemble tabs
   const files: FileTab[] = edits.map((e) => ({
     key: fileKey(e.filePath),
     filePath: e.filePath,
@@ -90,7 +90,7 @@ function CodePane({
     const tab = files.find((f) => f.key === fileKey(focus.filePath))
     const range = { start: focus.startLine, end: focus.endLine }
     if (!tab) {
-      // Gezeigte Stelle zuerst (wie früher der Reiter „Datei“)
+      // Shown location first (like the former "Datei" tab)
       files.unshift({
         key: fileKey(focus.filePath),
         filePath: focus.filePath,
@@ -116,7 +116,7 @@ function CodePane({
     null
   )?.key
 
-  /** Vom Nutzer gewählter Reiter – gilt, bis danach etwas Neues ankommt */
+  /** Tab chosen by the user – applies until something new arrives afterwards */
   const [chosen, setChosen] = useState<{ key: string; at: number } | null>(null)
   let tab =
     chosen && chosen.at >= latest && all.some((t) => t.key === chosen.key) ? chosen.key : newest
@@ -124,10 +124,10 @@ function CodePane({
   const choose = (key: string): void => setChosen({ key, at: latest })
   const current = visible.find((f) => f.key === tab)
 
-  /** Reiter schließen; war es der letzte, blendet der Workspace die Spalte aus */
+  /** Close a tab; if it was the last one, the Workspace hides the column */
   const closeTab = (key: string, at: number): void => {
     if (tab === key) {
-      // Nachbarreiter wählen
+      // Select the neighboring tab
       const i = all.findIndex((t) => t.key === key)
       const next = all[i + 1] ?? all[i - 1]
       if (next) setChosen({ key: next.key, at: latest })
@@ -136,7 +136,7 @@ function CodePane({
   }
   const close = (f: FileTab): void => closeTab(f.key, f.at)
 
-  // Aktiven Reiter in der Leiste sichtbar halten
+  // Keep the active tab visible in the tab bar
   const tabsRef = useRef<HTMLDivElement>(null)
   useEffect(() => {
     tabsRef.current
@@ -183,7 +183,7 @@ function CodePane({
   return (
     <aside
       className={`pane code ${dragging ? 'resizing' : ''}`}
-      // Bei kleinem Fenster nie breiter, als neben Liste + Terminal Platz ist
+      // In a small window, never wider than the space left beside list + terminal
       style={{ width: `min(${width}px, calc(100vw - ${MIN_REST}px))` }}
     >
       <div
@@ -253,7 +253,7 @@ function CodePane({
       </header>
 
       {visible.length > 0 && (
-        // Bleibt beim Reiterwechsel erhalten (Editor nicht neu aufbauen)
+        // Kept when switching tabs (don't rebuild the editor)
         <div className="code-file-view" style={current ? undefined : { display: 'none' }}>
           {current && (
             <div className="code-note">
@@ -287,7 +287,7 @@ function linesText(ranges: LineRange[]): string {
   return `Z. ${parts.join(', ')}${ranges.length > 4 ? ' …' : ''}`
 }
 
-/** Zeile unter dem Pfad: wer, was, wann */
+/** Line below the path: who, what, when */
 function describe(f: FileTab, name?: string): React.ReactNode {
   const who = name ? <strong>{name}: </strong> : null
   if (f.focus) {
@@ -310,7 +310,7 @@ function describe(f: FileTab, name?: string): React.ReactNode {
   )
 }
 
-/** Monaco (schreibgeschützt) mit hervorgehobenen Zeilen; lädt neu, wenn sich `at` ändert */
+/** Monaco (read-only) with highlighted lines; reloads when `at` changes */
 function FileView({
   filePath,
   ranges,
@@ -324,7 +324,7 @@ function FileView({
   const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null)
   const decoRef = useRef<monaco.editor.IEditorDecorationsCollection | null>(null)
   const [error, setError] = useState<string | null>(null)
-  // Bereiche nur als Wert vergleichen (Array wird bei jedem Rendern neu gebaut)
+  // Compare ranges by value only (the array is rebuilt on every render)
   const rangesKey = JSON.stringify(ranges)
 
   useEffect(() => {

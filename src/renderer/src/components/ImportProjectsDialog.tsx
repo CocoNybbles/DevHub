@@ -7,7 +7,7 @@ import Modal from './Modal'
 
 interface Props {
   onClose: () => void
-  /** Nach dem Import: neu angelegte Projekte */
+  /** After the import: newly created projects */
   onImported: (projects: Project[]) => void
 }
 
@@ -16,9 +16,9 @@ interface Row extends ScannedProject {
 }
 
 /**
- * Projekte importieren: einen oder mehrere Ordner wählen (Strg+Klick), z. B. einen ganzen
- * „Dev“-Ordner. Er wird nach Projekten durchsucht (Git, .sln, package.json … – auch in
- * Unterordnern), die Projektdatei wird jeweils automatisch gesucht. Start-Flags gelten für alle.
+ * Import projects: pick one or more folders (Ctrl+click), e.g. a whole "Dev" folder.
+ * It is scanned for projects (Git, .sln, package.json … – also in subfolders), and the
+ * project file is looked up automatically for each. Start flags apply to all of them.
  */
 function ImportProjectsDialog({ onClose, onImported }: Props): React.JSX.Element {
   const [rows, setRows] = useState<Row[]>([])
@@ -36,7 +36,7 @@ function ImportProjectsDialog({ onClose, onImported }: Props): React.JSX.Element
     try {
       const found = await window.api.projects.scan(dirs)
       setRoots((r) => [...new Set([...r, ...dirs])])
-      // Zu bisherigen Treffern hinzufügen (gleicher Pfad nur einmal)
+      // Add to previous results (same path only once)
       setRows((prev) => {
         const known = new Set(prev.map((r) => r.path.toLowerCase()))
         const added = found
@@ -81,7 +81,7 @@ function ImportProjectsDialog({ onClose, onImported }: Props): React.JSX.Element
     }
     setBusy(null)
     if (failed.length) {
-      // Erfolgreiche nicht erneut anbieten
+      // Don't offer successful ones again
       const ok = new Set(saved.map((p) => p.agentPath))
       setRows((rs) =>
         rs.map((r) => (ok.has(r.path) ? { ...r, registered: true, checked: false } : r))

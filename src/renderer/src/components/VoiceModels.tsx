@@ -4,15 +4,15 @@ import { errorText } from '../lib/errors'
 
 interface Props {
   status: VoiceStatus
-  /** Nach Download/Löschen/Aktivieren neu laden */
+  /** Reload after download/delete/activate */
   onChanged: () => void
-  /** Wird nach erfolgreichem Download aufgerufen */
+  /** Called after a successful download */
   onDownloaded?: (model: WhisperModelId) => void
 }
 
 const ENGINE_MB = 9
 
-/** Modellauswahl + Download mit Fortschritt; genutzt im Einrichtungsdialog und in den Einstellungen. */
+/** Model selection + download with progress; used in the setup dialog and in the settings. */
 function VoiceModels({ status, onChanged, onDownloaded }: Props): React.JSX.Element {
   const [selected, setSelected] = useState<WhisperModelId>(status.activeModel ?? 'small')
   const [progress, setProgress] = useState<DownloadProgress | null>(null)

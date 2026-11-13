@@ -86,7 +86,7 @@ button.icon {
   color: var(--error);
 }
 
-/* ---------- Layout: links | Mitte | rechts ---------- */
+/* ---------- Layout: left | center | right ---------- */
 .layout {
   display: grid;
   grid-template-columns: 260px 1fr;
@@ -95,7 +95,7 @@ button.icon {
   background: var(--border);
 }
 
-/* Code-Spalte nur, solange es etwas zu zeigen gibt; Breite setzt der Splitter (CodePane) */
+/* Code column only while there is something to show; width is set by the splitter (CodePane) */
 .layout.with-code {
   grid-template-columns: 260px minmax(0, 1fr) auto;
 }
@@ -131,7 +131,7 @@ button.icon {
   text-align: center;
 }
 
-/* ---------- Anmelde-Startbildschirm ---------- */
+/* ---------- Login start screen ---------- */
 .gate {
   height: 100%;
   display: flex;

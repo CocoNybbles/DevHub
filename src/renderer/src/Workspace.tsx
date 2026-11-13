@@ -48,28 +48,28 @@ import { canRememberLanguage } from '../../shared/voiceLanguage'
 
 type VoiceTarget = { kind: 'agent'; agentId: string } | { kind: 'global' }
 
-/** Zeit für claude, sich nach dem Umhängen in den Editor-Tab in neuer Größe zu zeichnen */
+/** Time for claude to redraw at the new size after the terminal moves into the editor tab */
 const EDITOR_REDRAW_MS = 400
-/** Öffnet claude danach so lange keinen Editor, wird der Tab wieder geschlossen */
+/** If claude does not open an editor within this time afterwards, the tab is closed again */
 const EDITOR_OPEN_TIMEOUT_MS = 4000
 
 function Workspace(): React.JSX.Element {
   const [projects, setProjects] = useState<Project[]>([])
   const [agents, setAgents] = useState<Agent[]>([])
   const [rawSelection, setSelection] = useState<Selection>(null)
-  /** Gespeicherte Ansicht ist geladen → Änderungen dürfen gespeichert werden */
+  /** Saved view has been loaded → changes may be saved */
   const viewLoaded = useRef(false)
   const [focusByAgent, setFocusByAgent] = useState<Record<string, CodeFocus>>({})
-  /** Code-Blöcke aus den Antworten je Agent (neueste zuerst) */
+  /** Code blocks from the replies, per agent (newest first) */
   const [snippetsByAgent, setSnippetsByAgent] = useState<Record<string, CodeSnippet[]>>({})
-  /** Vom Agent bearbeitete Dateien (rechts je ein Reiter) */
+  /** Files edited by the agent (one tab each on the right) */
   const [editsByAgent, setEditsByAgent] = useState<Record<string, EditedFile[]>>({})
-  /** Strg+G-Editor-Tabs: gewählter Tab in der Mitte (Agent-Id, null = Agents-Ansicht) + Entwürfe */
+  /** Ctrl+G editor tabs: selected tab in the center (agent id, null = agents view) + drafts */
   const [editorTab, setEditorTab] = useState<string | null>(null)
-  /** Tab wird geöffnet, claude hat den Editor aber noch nicht gestartet (s. openEditor) */
+  /** Tab is opening, but claude has not started the editor yet (see openEditor) */
   const [preparing, setPreparing] = useState<string | null>(null)
   const prepareTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({})
-  /** Aktuelle Agents für Timer-Rückrufe */
+  /** Current agents for timer callbacks */
   const agentsRef = useRef<Agent[]>([])
   const [drafts, setDrafts] = useState<Record<string, string>>({})
   const [vscodeInstalled, setVscodeInstalled] = useState(false)
@@ -94,13 +94,13 @@ function Workspace(): React.JSX.Element {
   const [importOpen, setImportOpen] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [templates, setTemplates] = useState<AgentTemplate[]>([])
-  /** Vorlage bearbeiten (template null = neu); öffnet sich aus den Einstellungen heraus */
+  /** Edit template (template null = new); opened from within the settings */
   const [templateDialog, setTemplateDialog] = useState<{ template: AgentTemplate | null } | null>(
     null
   )
   const [teamTemplates, setTeamTemplates] = useState<TeamTemplate[]>([])
   const [teamDialog, setTeamDialog] = useState<{ team: TeamTemplate | null } | null>(null)
-  /** Laufende Teams */
+  /** Running teams */
   const [teams, setTeams] = useState<Team[]>([])
   const [voiceSetupOpen, setVoiceSetupOpen] = useState(false)
   const [recording, setRecording] = useState<VoiceRecording | null>(null)
@@ -109,7 +109,7 @@ function Workspace(): React.JSX.Element {
   const showError = useCallback((e: unknown) => setToast(errorText(e)), [])
   const refreshVoice = useCallback(() => window.api.voice.status().then(setVoiceStatus), [])
 
-  // ---------------------------------------------------------------- Laden & Ereignisse
+  // ---------------------------------------------------------------- Loading & events
   useEffect(() => {
     const offData = window.api.agents.onData((id, data) => writeToTerminal(id, data))
     const offChanged = window.api.agents.onChanged((list, teamList) => {
@@ -128,19 +128,19 @@ function Workspace(): React.JSX.Element {
     const offEdits = window.api.code.onEdits((id, list) =>
       setEditsByAgent((m) => ({ ...m, [id]: list }))
     )
-    // Strg+G im Agent → Editor-Tab öffnen und dorthin wechseln
+    // Ctrl+G in the agent → open the editor tab and switch to it
     const offEditorOpened = window.api.editor.onOpened((id, text) => {
-      // Sofort sperren, bevor der Tab das Terminal in einen anderen Container hängt
-      // (sonst ändert sich die Größe, und claude kann gerade nicht neu zeichnen)
+      // Lock immediately, before the tab moves the terminal into another container
+      // (otherwise the size changes, and claude cannot redraw right now)
       setTerminalLocked(id, true)
       setDrafts((d) => ({ ...d, [id]: text }))
       setEditorTab(id)
     })
-    // Sprachtext für einen gesperrten Agent landet im Entwurf
+    // Voice text for a locked agent goes into the draft
     const offEditorAppend = window.api.editor.onAppend((id, text) =>
       setDrafts((d) => ({ ...d, [id]: appendToDraft(d[id] ?? '', text) }))
     )
-    // Nach Neuladen der Oberfläche: bisher gesammelte Snippets der laufenden Agents
+    // After a UI reload: snippets collected so far for the running agents
     window.api.code.snippets().then((all) => setSnippetsByAgent((m) => ({ ...all, ...m })))
     window.api.code.edits().then((all) => setEditsByAgent((m) => ({ ...all, ...m })))
 
@@ -155,10 +155,10 @@ function Workspace(): React.JSX.Element {
 
       const running = await window.api.agents.list()
       if (running.length > 0) {
-        // Oberfläche wurde neu geladen, Agents laufen noch → bisherige Ausgabe nachladen
+        // UI was reloaded, agents are still running → load previous output
         for (const a of running) {
           if (!hasTerminal(a.id)) writeToTerminal(a.id, await window.api.agents.buffer(a.id))
-          // Offene Editor-Tabs wieder anzeigen
+          // Show open editor tabs again
           if (a.editing) {
             const text = await window.api.editor.text(a.id)
             if (text !== null) setDrafts((d) => ({ ...d, [a.id]: d[a.id] ?? text }))
@@ -166,17 +166,17 @@ function Workspace(): React.JSX.Element {
         }
         setAgents(running)
       } else {
-        // Frischer App-Start → Agents der letzten Sitzung wiederherstellen
+        // Fresh app start → restore the agents of the last session
         await window.api.agents.restore().catch(showError)
       }
 
-      // Zuletzt gezeigte Ansicht wiederherstellen (nicht mehr laufende Agents fallen über
-      // `selection` weg), sonst das erste Projekt mit Agents (Raster)
+      // Restore the last shown view (agents no longer running are dropped via
+      // `selection`), otherwise the first project with agents (grid)
       const [agentsNow, savedView] = await Promise.all([
         window.api.agents.list(),
         window.api.view.get().catch(() => null)
       ])
-      // Agents im selben Render-Durchlauf setzen, sonst verwirft `selection` die Ansicht
+      // Set agents in the same render pass, otherwise `selection` discards the view
       setAgents(agentsNow)
       const first = agentsNow[0]?.projectId
       setSelection((s) => s ?? savedView ?? (first ? { kind: 'project', projectId: first } : null))
@@ -195,13 +195,13 @@ function Workspace(): React.JSX.Element {
     }
   }, [refreshVoice, showError])
 
-  // Beendete Agents: Terminal freigeben
+  // Exited agents: release the terminal
   useEffect(() => {
     const ids = new Set(agents.map((a) => a.id))
     for (const id of terminalIds()) if (!ids.has(id)) disposeTerminal(id)
   }, [agents])
 
-  // Auswahl auf noch laufende Agents/Projekte beschränken → Ansicht eines beendeten Agents schließt sich
+  // Restrict the selection to agents/projects that still exist → the view of an exited agent closes
   const selection = useMemo<Selection>(() => {
     const sel = rawSelection
     if (sel?.kind === 'agent' && !agents.some((a) => a.id === sel.agentId)) return null
@@ -223,7 +223,7 @@ function Workspace(): React.JSX.Element {
     return sel
   }, [rawSelection, agents, projects])
 
-  // Ansicht speichern – erst nachdem die gespeicherte geladen wurde (sonst überschreibt der Startwert sie)
+  // Save the view – only after the saved one has been loaded (otherwise the initial value overwrites it)
   useEffect(() => {
     if (viewLoaded.current) window.api.view.set(selection).catch(() => {})
   }, [selection])
@@ -234,18 +234,18 @@ function Workspace(): React.JSX.Element {
     return () => clearTimeout(t)
   }, [toast])
 
-  // ---------------------------------------------------------------- Abgeleitete Werte
-  /** Agents, deren Anweisung gerade in einem Editor-Tab geschrieben wird (gesperrt) */
-  /** Tabs: gesperrte Agents + ggf. ein Tab, der sich gerade öffnet (`preparing`) */
+  // ---------------------------------------------------------------- Derived values
+  /** Agents whose instruction is currently being written in an editor tab (locked) */
+  /** Tabs: locked agents + possibly a tab that is currently opening (`preparing`) */
   const tabAgents = useMemo(
     () => agents.filter((a) => a.editing || a.id === preparing),
     [agents, preparing]
   )
-  /** Sichtbarer Editor-Tab (null = Agents-Ansicht); geschlossene Tabs fallen weg */
+  /** Visible editor tab (null = agents view); closed tabs drop out */
   const activeEditor = tabAgents.find((a) => a.id === editorTab) ?? null
 
   const activeAgentId = useMemo(() => {
-    // Im Editor-Tab: Sprach-Kürzel diktiert in diesen Entwurf
+    // In the editor tab: the voice hotkey dictates into this draft
     if (activeEditor) return activeEditor.id
     if (selection?.kind === 'agent') return selection.agentId
     if (selection?.kind === 'project') {
@@ -259,22 +259,22 @@ function Workspace(): React.JSX.Element {
     return null
   }, [selection, agents, activeEditor])
 
-  // Terminals gesperrter Agents nehmen keine Eingaben an
+  // Terminals of locked agents accept no input
   useEffect(() => {
     agentsRef.current = agents
     for (const a of agents) {
-      setTerminalReadOnly(a.id, isTeamWorker(a)) // Team-Worker: nur beobachten
+      setTerminalReadOnly(a.id, isTeamWorker(a)) // team worker: observe only
       setTerminalLocked(a.id, !!a.editing)
     }
   }, [agents])
 
-  /** Editor-Tab schließen und den Text an claude zurückgeben */
+  /** Close the editor tab and hand the text back to claude */
   const finishEditor = useCallback(
     (agentId: string, text: string | null, submit: boolean) => {
-      // Tab war noch im Aufbau (Editor nicht offen) → nur abbrechen
+      // Tab was still being set up (editor not open) → just cancel
       clearTimeout(prepareTimers.current[agentId])
       setPreparing((p) => (p === agentId ? null : p))
-      dropSnapshot(agentId) // Agents-Ansicht zeigt wieder das live-Terminal
+      dropSnapshot(agentId) // agents view shows the live terminal again
       if (agents.find((a) => a.id === agentId)?.editing) {
         window.api.editor.finish(agentId, text, submit).catch(showError)
       }
@@ -288,10 +288,10 @@ function Workspace(): React.JSX.Element {
     [agents, showError]
   )
 
-  /** Vom Nutzer geschlossene Reiter rechts (bis neuere Inhalte kommen) */
+  /** Tabs on the right closed by the user (until newer content arrives) */
   const [closedTabs, setClosedTabs] = useState<ClosedTabs>({})
 
-  /** Code-Ansicht: Fokus des aktiven Agents, sonst jüngster Fokus im ausgewählten Projekt. */
+  /** Code view: focus of the active agent, otherwise the most recent focus in the selected project. */
   const shownFocus = useMemo(() => {
     if (activeAgentId && focusByAgent[activeAgentId]) return focusByAgent[activeAgentId]
     if (selection?.kind === 'project' || selection?.kind === 'agents') {
@@ -309,13 +309,13 @@ function Workspace(): React.JSX.Element {
       ? shownFocus
       : null
 
-  /** Snippets des aktiven Agents (rechts, Reiter „Snippets“) – leer, solange der Reiter zu ist */
+  /** Snippets of the active agent (right, "Snippets" tab) – empty while the tab is closed */
   const activeSnippets = useMemo(() => {
     const list = activeAgentId ? (snippetsByAgent[activeAgentId] ?? []) : []
     if (!activeAgentId || !list.length) return list
     return isTabClosed(closedTabs, snippetsTabKey(activeAgentId), list[0].at) ? [] : list
   }, [activeAgentId, snippetsByAgent, closedTabs])
-  /** Vom aktiven Agent bearbeitete Dateien (rechts, je ein Reiter), ohne geschlossene */
+  /** Files edited by the active agent (right, one tab each), excluding closed ones */
   const activeEdits = useMemo(
     () =>
       activeAgentId && settings.showEditedFiles
@@ -325,10 +325,10 @@ function Workspace(): React.JSX.Element {
         : [],
     [activeAgentId, editsByAgent, settings.showEditedFiles, closedTabs]
   )
-  // Spalte nur, solange ein Reiter offen ist – alle geschlossen → Spalte zu
+  // Column only while a tab is open – all closed → column closed
   const showCodePane = !!codeFocus || activeSnippets.length > 0 || activeEdits.length > 0
 
-  // ---------------------------------------------------------------- Aktionen
+  // ---------------------------------------------------------------- Actions
   const startAgent = useCallback(
     async (projectId: string, task?: string, templateId?: string) => {
       try {
@@ -343,7 +343,7 @@ function Workspace(): React.JSX.Element {
     [showError]
   )
 
-  /** Team aus einer Team-Vorlage starten und alle Mitglieder im Raster zeigen. */
+  /** Start a team from a team template and show all members in the grid. */
   const startTeam = useCallback(
     async (projectId: string, teamTemplateId: string) => {
       try {
@@ -394,7 +394,7 @@ function Workspace(): React.JSX.Element {
     [agents, showError]
   )
 
-  // ---------------------------------------------------------------- Sprachsteuerung
+  // ---------------------------------------------------------------- Voice control
   const recorder = useRef<Recorder | null>(null)
   const voiceTarget = useRef<VoiceTarget | null>(null)
 
@@ -407,8 +407,8 @@ function Workspace(): React.JSX.Element {
   )
 
   /**
-   * Beendet die Aufnahme sofort und verarbeitet sie im Hintergrund weiter (Erkennung,
-   * ggf. Zuordnung per Claude). Die App bleibt bedienbar, neue Aufnahmen sind sofort möglich.
+   * Stops the recording immediately and continues processing it in the background (recognition,
+   * routing via Claude if needed). The app stays usable, new recordings are possible right away.
    */
   const finishVoice = useCallback(async () => {
     const rec = recorder.current
@@ -423,7 +423,7 @@ function Workspace(): React.JSX.Element {
       target.kind === 'agent'
         ? (agents.find((a) => a.id === target.agentId)?.name ?? 'Agent')
         : 'Sprachbefehl'
-    // Gemerkte Sprache anzeigen, damit sichtbar ist, dass die automatische Erkennung entfällt
+    // Show the remembered language so it is visible that automatic detection is skipped
     const knownLanguage =
       settings.voiceFixedLanguage ??
       (settings.voiceRememberLanguage && canRememberLanguage(settings.voiceLanguage)
@@ -446,7 +446,7 @@ function Workspace(): React.JSX.Element {
       const wav = await rec.stop()
       if (!wav) return fail('Aufnahme zu kurz.')
       const { text, language, remembered } = await window.api.voice.transcribe(wav)
-      // Automatisch erkannt → Main hat ggf. eine neue Sprache gemerkt; Anzeige aktualisieren
+      // Auto-detected → main may have remembered a new language; refresh the display
       if (!remembered) window.api.settings.get().then(setSettings)
       if (!text) return fail('Nichts verstanden.')
       if (language) updateJob(id, { language })
@@ -465,7 +465,7 @@ function Workspace(): React.JSX.Element {
           message: `→ an ${result.agentName} ${result.sent ? 'gesendet' : 'eingetragen'}`
         })
       } else if (result.kind === 'teamStarted') {
-        // Raster mit allen Teammitgliedern zeigen
+        // Show the grid with all team members
         const names = new Set(result.agentNames)
         const ids = (await window.api.agents.list())
           .filter((a) => names.has(a.name))
@@ -508,9 +508,9 @@ function Workspace(): React.JSX.Element {
     setVoiceJobs((jobs) => [...jobs, { id, state: 'error', target: 'Sprache', message }])
   }, [])
 
-  /** Startet die Aufnahme bzw. beendet sie, wenn bereits aufgenommen wird. */
+  /** Starts recording, or stops it if a recording is already running. */
   const toggleVoice = useCallback(
-    /** agentId: Ziel-Agent (Mikrofon am Agent); sonst der aktive Agent */
+    /** agentId: target agent (microphone on the agent); otherwise the active agent */
     async (kind: 'agent' | 'global', agentId?: string) => {
       if (recorder.current) return finishVoice()
 
@@ -529,14 +529,14 @@ function Workspace(): React.JSX.Element {
           setToast('Kein aktiver Agent ausgewählt.')
           return
         }
-        // Team-Worker sind nur beobachtbar → Anweisung an ihren Orchestrator
+        // Team workers can only be observed → instruction goes to their orchestrator
         const watched = isTeamWorker(agent) ? agent : null
         if (watched) agent = teamLead(agents, watched.teamId!) ?? agent
         if (isTeamWorker(agent)) {
           setToast(`${agent.name} kann nur beobachtet werden – kein Orchestrator läuft.`)
           return
         }
-        // Ziel bleibt der Worker: Main reicht den Text mit Bezug auf ihn an den Orchestrator weiter
+        // Target stays the worker: main forwards the text to the orchestrator, referring to the worker
         target = { kind: 'agent', agentId: (watched ?? agent).id }
         label = watched
           ? `Anweisung an ${agent.name} (zu ${watched.name})`
@@ -567,9 +567,9 @@ function Workspace(): React.JSX.Element {
   )
 
   /**
-   * Editor-Tab für einen Agent: offen → hinwechseln. Sonst zuerst den Tab zeigen, damit claude
-   * sich in der (schmaleren) Terminal-Spalte neu zeichnet, und erst dann Strg+G schicken –
-   * während der Editor offen ist, kann claude nicht mehr neu zeichnen (s. terminals.ts).
+   * Editor tab for an agent: already open → switch to it. Otherwise show the tab first so claude
+   * redraws itself in the (narrower) terminal column, and only then send Ctrl+G –
+   * while the editor is open, claude can no longer redraw (see terminals.ts).
    */
   const openEditor = useCallback(
     (agentId: string) => {
@@ -583,13 +583,13 @@ function Workspace(): React.JSX.Element {
         return
       }
       clearTimeout(prepareTimers.current[agentId])
-      // Ansicht in voller Breite festhalten → Agents-Ansicht zeigt sie, solange der Tab offen ist
+      // Capture the full-width view → the agents view shows it while the tab is open
       snapshotTerminal(agentId)
       setPreparing(agentId)
       setEditorTab(agentId)
       prepareTimers.current[agentId] = setTimeout(() => {
         sendEditorKey(agentId)
-        // Kein Editor? (z. B. offene Rückfrage/Dialog im Agent) → Tab wieder schließen
+        // No editor? (e.g. an open question/dialog in the agent) → close the tab again
         prepareTimers.current[agentId] = setTimeout(() => {
           if (agentsRef.current.find((a) => a.id === agentId)?.editing) return
           dropSnapshot(agentId)
@@ -603,14 +603,14 @@ function Workspace(): React.JSX.Element {
     [agents]
   )
 
-  // Hotkeys: Agent-Aufnahme + Editor-Tab (in der App), globaler Sprachbefehl (vom Hauptprozess), Esc
+  // Hotkeys: agent recording + editor tab (in the app), global voice command (from the main process), Esc
   const agentHotkey = settings.hotkeyAgentVoice
   const editorHotkey = settings.hotkeyEditor
-  // Terminal soll diese Kürzel nicht verschlucken
+  // The terminal must not swallow these hotkeys
   useEffect(() => setAppHotkeys([agentHotkey, editorHotkey]), [agentHotkey, editorHotkey])
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
-      if (isCapturingHotkey()) return // Kürzel wird gerade in den Einstellungen neu belegt
+      if (isCapturingHotkey()) return // hotkey is currently being reassigned in the settings
       if (matchesAccelerator(e, agentHotkey)) {
         e.preventDefault()
         e.stopPropagation()
@@ -618,7 +618,7 @@ function Workspace(): React.JSX.Element {
       } else if (matchesAccelerator(e, editorHotkey)) {
         e.preventDefault()
         e.stopPropagation()
-        // Im Editor-Tab selbst ohne Wirkung; sonst für den aktiven Agent
+        // No effect inside the editor tab itself; otherwise for the active agent
         if (!activeEditor && activeAgentId) openEditor(activeAgentId)
       } else if (e.key === 'Escape' && recorder.current) {
         e.preventDefault()
@@ -633,7 +633,7 @@ function Workspace(): React.JSX.Element {
     }
   }, [toggleVoice, cancelVoice, agentHotkey, editorHotkey, activeEditor, activeAgentId, openEditor])
 
-  // Abgeschlossene Aufträge nach einigen Sekunden ausblenden
+  // Hide finished jobs after a few seconds
   const finishedJobIds = voiceJobs
     .filter((j) => j.state !== 'processing')
     .map((j) => j.id)
@@ -648,7 +648,7 @@ function Workspace(): React.JSX.Element {
   const recordingTarget = recording?.target ?? null
   const recordingAgentId = recording?.agentId ?? null
 
-  /** `/clear` an einen Agent: leert seine Unterhaltung (wie im Terminal getippt) */
+  /** `/clear` to an agent: clears its conversation (as if typed in the terminal) */
   const clearAgent = (id: string): void => {
     window.api.agents.sendLine(id, '/clear').catch(showError)
   }
@@ -671,7 +671,7 @@ function Workspace(): React.JSX.Element {
             )
           }}
           onSelectAgent={(id, multi) => {
-            // Gesperrter Agent → zurück in seinen Editor-Tab
+            // Locked agent → back to its editor tab
             if (!multi && agents.find((a) => a.id === id)?.editing) return setEditorTab(id)
             setEditorTab(null)
             setSelection(
@@ -699,7 +699,7 @@ function Workspace(): React.JSX.Element {
           onEditPrompt={openEditor}
           editorHotkey={editorHotkey}
           onReorderProjects={(ids) => {
-            // sofort anzeigen, dann gespeicherte Liste übernehmen
+            // show immediately, then take over the saved list
             setProjects((list) => ids.map((id) => list.find((p) => p.id === id)!).filter(Boolean))
             window.api.projects.reorder(ids).then(setProjects).catch(showError)
           }}
@@ -719,7 +719,7 @@ function Workspace(): React.JSX.Element {
           onGlobalVoice={() => toggleVoice('global')}
           onOpenSettings={() => {
             refreshVoice()
-            // gemerkte Sprache wird im Main aktualisiert → frisch laden
+            // remembered language is updated in main → reload
             window.api.settings.get().then(setSettings)
             setSettingsOpen(true)
           }}
@@ -843,7 +843,7 @@ function Workspace(): React.JSX.Element {
         />
       )}
 
-      {/* Vorlagen-Dialog ersetzt die Einstellungen, solange er offen ist (keine gestapelten Modals) */}
+      {/* Template dialog replaces the settings while it is open (no stacked modals) */}
       {teamDialog && (
         <TeamTemplateDialog
           team={teamDialog.team}

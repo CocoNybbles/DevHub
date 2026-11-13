@@ -1,4 +1,4 @@
-/** Kleine Inline-SVG-Icons (16px, folgen der Textfarbe). */
+/** Small inline SVG icons (16px, follow the text color). */
 
 type P = { size?: number }
 
@@ -48,7 +48,7 @@ export const GearIcon = ({ size = 14 }: P): React.JSX.Element =>
     </>
   )
 
-/** Projektdatei öffnen (Dokument mit Pfeil nach außen – unabhängig vom Programm) */
+/** Open project file (document with outward arrow – independent of the program) */
 export const OpenFileIcon = ({ size = 14 }: P): React.JSX.Element =>
   svg(
     size,
@@ -58,12 +58,12 @@ export const OpenFileIcon = ({ size = 14 }: P): React.JSX.Element =>
     </>
   )
 
-/** Ordner im Editor öffnen; Code-Stelle in VS Code öffnen */
+/** Open folder in the editor; open code location in VS Code */
 export const CodeIcon = ({ size = 14 }: P): React.JSX.Element =>
   svg(size, <path d="M5.5 4.5L2 8l3.5 3.5M10.5 4.5L14 8l-3.5 3.5" />)
 
-/** Team (zwei Personen) */
-/** A→Z mit Pfeil nach unten: alphabetisch aufsteigend sortieren */
+/** Team (two people) */
+/** A→Z with down arrow: sort alphabetically ascending */
 export const SortIcon = ({ size = 14 }: P): React.JSX.Element =>
   svg(
     size,
@@ -85,7 +85,7 @@ export const CopyIcon = ({ size = 13 }: P): React.JSX.Element =>
 export const CheckIcon = ({ size = 13 }: P): React.JSX.Element =>
   svg(size, <path d="M3 8.5l3.2 3L13 4.5" />)
 
-/** Ordner mit Plus: Projekte aus Ordnern importieren */
+/** Folder with plus: import projects from folders */
 export const FolderImportIcon = ({ size = 14 }: P): React.JSX.Element =>
   svg(
     size,
@@ -95,7 +95,7 @@ export const FolderImportIcon = ({ size = 14 }: P): React.JSX.Element =>
     </>
   )
 
-/** Radiergummi: Unterhaltung des Agents leeren (/clear) */
+/** Eraser: clear the agent's conversation (/clear) */
 export const ClearIcon = ({ size = 13 }: P): React.JSX.Element =>
   svg(
     size,
@@ -105,7 +105,7 @@ export const ClearIcon = ({ size = 13 }: P): React.JSX.Element =>
     </>
   )
 
-/** Stift: Anweisung im Editor-Tab schreiben */
+/** Pencil: write an instruction in the editor tab */
 export const EditIcon = ({ size = 13 }: P): React.JSX.Element =>
   svg(size, <path d="M10.5 2.5l3 3L6 13H3v-3zM9 4l3 3" />)
 
@@ -118,7 +118,7 @@ export const LockIcon = ({ size = 13 }: P): React.JSX.Element =>
     </>
   )
 
-/** Auge: Teammitglied wird nur beobachtet */
+/** Eye: team member can only be observed */
 export const EyeIcon = ({ size = 13 }: P): React.JSX.Element =>
   svg(
     size,
@@ -128,7 +128,7 @@ export const EyeIcon = ({ size = 13 }: P): React.JSX.Element =>
     </>
   )
 
-/** Büroklammer: Bild/Datei anhängen */
+/** Paper clip: attach image/file */
 export const AttachIcon = ({ size = 13 }: P): React.JSX.Element =>
   svg(
     size,

@@ -1,7 +1,7 @@
 /**
- * Geschlossene Reiter der Code-Ansicht (rechts): Schlüssel → Stand (`at`) beim Schließen.
- * Ein Reiter bleibt zu, bis neuere Inhalte kommen (Datei erneut geändert, neues Snippet).
- * Liegt im Workspace, damit die Spalte verschwindet, sobald alle Reiter geschlossen sind.
+ * Closed tabs of the code view (right): key → version (`at`) at the time of closing.
+ * A tab stays closed until newer content arrives (file changed again, new snippet).
+ * Lives in Workspace so the column disappears as soon as all tabs are closed.
  */
 export type ClosedTabs = Record<string, number>
 
