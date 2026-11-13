@@ -66,6 +66,7 @@ const agents = new AgentManager({
   onChanged: (list, teams) => send('agents:changed', list, teams),
   onCodeFocus: (focus) => send('code:focus', focus),
   onSnippets: (id, snippets) => send('code:snippets', id, snippets),
+  onEdits: (id, files) => send('code:edits', id, files),
   onStartFailed: (name, output) => send('agents:startFailed', name, output),
   onEditorOpened: (id, text) => {
     send('editor:opened', id, text)
@@ -449,6 +450,7 @@ function registerIpc(): void {
   })
   ipcMain.handle('code:openInVSCode', (_, path: string, line: number) => openInVSCode(path, line))
   ipcMain.handle('code:snippets', () => agents.snippets())
+  ipcMain.handle('code:edits', () => agents.edits())
   ipcMain.handle('clipboard:writeText', (_, text: string) => clipboard.writeText(String(text)))
 
   // --- Strg+G-Editor-Tab ---

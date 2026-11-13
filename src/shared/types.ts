@@ -130,6 +130,24 @@ export interface CodeSnippet {
   at: number
 }
 
+/** Zeilenbereich (1-basiert, inklusive) */
+export interface LineRange {
+  start: number
+  end: number
+}
+
+/** Vom Agent bearbeitete Datei (Edit/Write/MultiEdit), rechts als eigener Reiter. */
+export interface EditedFile {
+  agentId: string
+  filePath: string
+  /** Zeitpunkt der letzten Änderung (ms) */
+  at: number
+  /** Geänderte Zeilen der letzten Änderung (leer = unbekannt bzw. neu angelegt) */
+  changedLines: LineRange[]
+  /** Letzte Änderung hat die Datei neu angelegt */
+  created?: boolean
+}
+
 export type WhisperModelId = 'base' | 'small' | 'large-v3-turbo'
 
 export interface WhisperModelInfo {
@@ -283,6 +301,10 @@ export interface DevHubApi {
     snippets: () => Promise<Record<string, CodeSnippet[]>>
     /** Snippet-Liste eines Agents hat sich geändert (vollständige Liste, neueste zuerst) */
     onSnippets: (cb: (agentId: string, snippets: CodeSnippet[]) => void) => Unsubscribe
+    /** Bearbeitete Dateien aller laufenden Agents (Reihenfolge = erste Bearbeitung) */
+    edits: () => Promise<Record<string, EditedFile[]>>
+    /** Liste der bearbeiteten Dateien eines Agents hat sich geändert (vollständig) */
+    onEdits: (cb: (agentId: string, files: EditedFile[]) => void) => Unsubscribe
   }
   clipboard: {
     writeText: (text: string) => Promise<void>

@@ -1,5 +1,5 @@
 import { open } from 'fs/promises'
-import type { CodeSnippet } from '../shared/types'
+import type { CodeSnippet, EditedFile, LineRange } from '../shared/types'
 
 /** Höchstens so viele Snippets pro Agent behalten (die neuesten) */
 export const MAX_SNIPPETS = 30
@@ -60,6 +60,98 @@ export function snippetsFromLines(agentId: string, lines: string[]): CodeSnippet
   return out
 }
 
+export interface TranscriptNews {
+  snippets: CodeSnippet[]
+  edits: EditedFile[]
+}
+
+const NOTHING: TranscriptNews = { snippets: [], edits: [] }
+
+/** Höchstens so viele bearbeitete Dateien pro Agent behalten (die zuletzt geänderten) */
+export const MAX_EDITED_FILES = 30
+
+interface PatchHunk {
+  newStart?: number
+  lines?: string[]
+}
+
+/** Geänderte Zeilen (neue Zählung) aus einem `structuredPatch`; Löschungen markieren die Folgezeile. */
+export function changedRanges(patch: PatchHunk[]): LineRange[] {
+  const lines = new Set<number>()
+  for (const hunk of patch) {
+    let n = hunk.newStart ?? 1
+    for (const line of hunk.lines ?? []) {
+      const c = line[0]
+      if (c === '+') lines.add(n++)
+      else if (c === '-') lines.add(Math.max(1, n))
+      else if (c !== '\\') n++ // „\ No newline at end of file“ zählt nicht
+    }
+  }
+  const ranges: LineRange[] = []
+  for (const l of [...lines].sort((a, b) => a - b)) {
+    const last = ranges[ranges.length - 1]
+    if (last && l <= last.end + 1) last.end = Math.max(last.end, l)
+    else ranges.push({ start: l, end: l })
+  }
+  return ranges
+}
+
+/**
+ * Dateiänderung aus dem Ergebnis eines Edit/Write/MultiEdit-Aufrufs – `tool_response` im
+ * PostToolUse-Hook bzw. `toolUseResult` im Transkript (gleiches Format: `filePath` + `structuredPatch`).
+ */
+export function editFromToolResult(
+  agentId: string,
+  result: unknown,
+  at: number
+): EditedFile | null {
+  if (!result || typeof result !== 'object') return null
+  const r = result as { filePath?: unknown; structuredPatch?: unknown; type?: unknown }
+  if (typeof r.filePath !== 'string' || !Array.isArray(r.structuredPatch)) return null
+  return {
+    agentId,
+    filePath: r.filePath,
+    at,
+    changedLines: changedRanges(r.structuredPatch as PatchHunk[]),
+    created: r.type === 'create' || undefined
+  }
+}
+
+/** Dateiänderungen aus JSONL-Zeilen des Transkripts (Tool-Ergebnisse in `user`-Einträgen). */
+export function editsFromLines(agentId: string, lines: string[]): EditedFile[] {
+  const out: EditedFile[] = []
+  for (const line of lines) {
+    if (!line.includes('"structuredPatch"')) continue
+    let entry: { type?: string; timestamp?: string; toolUseResult?: unknown }
+    try {
+      entry = JSON.parse(line)
+    } catch {
+      continue
+    }
+    if (entry.type !== 'user') continue
+    const at = entry.timestamp ? Date.parse(entry.timestamp) || Date.now() : Date.now()
+    const edit = editFromToolResult(agentId, entry.toolUseResult, at)
+    if (edit) out.push(edit)
+  }
+  return out
+}
+
+/**
+ * Bearbeitete Dateien zusammenführen: gleiche Datei (ohne Groß-/Kleinschreibung) behält ihren Platz
+ * und übernimmt die neuere Änderung; neue Dateien hinten. Begrenzt auf die zuletzt geänderten.
+ */
+export function mergeEdits(existing: EditedFile[], added: EditedFile[]): EditedFile[] {
+  const list = [...existing]
+  for (const e of added) {
+    const i = list.findIndex((x) => x.filePath.toLowerCase() === e.filePath.toLowerCase())
+    if (i < 0) list.push(e)
+    else if (e.at >= list[i].at) list[i] = e
+  }
+  if (list.length <= MAX_EDITED_FILES) return list
+  const keep = new Set([...list].sort((a, b) => b.at - a.at).slice(0, MAX_EDITED_FILES))
+  return list.filter((e) => keep.has(e))
+}
+
 /**
  * Liest ein Transkript inkrementell (ab der zuletzt gelesenen Stelle, nur vollständige Zeilen).
  * Beim ersten Lesen wird die ganze Datei ausgewertet – nach einer Wiederherstellung sind so auch
@@ -67,15 +159,15 @@ export function snippetsFromLines(agentId: string, lines: string[]): CodeSnippet
  */
 export class TranscriptReader {
   private offset = 0
-  private queue: Promise<CodeSnippet[]> = Promise.resolve([])
+  private queue: Promise<TranscriptNews> = Promise.resolve(NOTHING)
 
   constructor(
     readonly path: string,
     private agentId: string
   ) {}
 
-  /** Neue Snippets seit dem letzten Aufruf (Aufrufe laufen nacheinander). */
-  read(): Promise<CodeSnippet[]> {
+  /** Neue Snippets/Dateiänderungen seit dem letzten Aufruf (Aufrufe laufen nacheinander). */
+  read(): Promise<TranscriptNews> {
     this.queue = this.queue.then(
       () => this.readNew(),
       () => this.readNew()
@@ -83,24 +175,27 @@ export class TranscriptReader {
     return this.queue
   }
 
-  private async readNew(): Promise<CodeSnippet[]> {
+  private async readNew(): Promise<TranscriptNews> {
     // Bei SessionStart eines neuen Agents gibt es das Transkript noch nicht
     const file = await open(this.path, 'r').catch((e: NodeJS.ErrnoException) => {
       if (e.code === 'ENOENT') return null
       throw e
     })
-    if (!file) return []
+    if (!file) return NOTHING
     try {
       const { size } = await file.stat()
       if (size < this.offset) this.offset = 0 // Datei neu geschrieben
-      if (size === this.offset) return []
+      if (size === this.offset) return NOTHING
       const buf = Buffer.alloc(size - this.offset)
       await file.read(buf, 0, buf.length, this.offset)
       const lastNewline = buf.lastIndexOf(0x0a)
-      if (lastNewline < 0) return []
+      if (lastNewline < 0) return NOTHING
       this.offset += lastNewline + 1
       const lines = buf.subarray(0, lastNewline).toString('utf8').split('\n')
-      return snippetsFromLines(this.agentId, lines)
+      return {
+        snippets: snippetsFromLines(this.agentId, lines),
+        edits: editsFromLines(this.agentId, lines)
+      }
     } finally {
       await file.close()
     }

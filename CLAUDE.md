@@ -36,11 +36,12 @@ Lokale Windows-Desktop-App zum Verwalten von Projekten und den darin laufenden K
   - **Strg+Klick** (projektübergreifend): Agent zum Raster hinzufügen/entfernen; auf ein Projekt = alle seine Agents. Ausgangspunkt ist die aktuelle Ansicht (auch ein Projekt-Raster). Auswahl-Typ `{ kind: 'agents', agentIds }`, Logik in `lib/selection.ts`; 1 Agent → Einzelansicht, 0 → leer
   - Beendet sich ein Agent im Terminal selbst (z. B. `/exit`), wird die Ansicht geschlossen und der Eintrag links entfernt
   - **Strg+G** im Agent öffnet statt eines externen Editors einen weiteren Tab in der Mitte (Terminal + Textfeld mit Diktat und Bildern); der Agent ist bis zum Schließen überall sonst gesperrt (s. Architektur)
-- Rechts: Code-Ansicht (`CodePane`) mit zwei Reitern
-  - „Datei“: bei Analyse/Bugfund wird die betroffene Datei angezeigt und die Stelle hervorgehoben (Fokus des aktiven Agents / jüngster im ausgewählten Projekt)
+- Rechts: Code-Ansicht (`CodePane`) mit Reitern (Leiste waagrecht scrollbar)
+  - **Je Datei ein Reiter:** jede vom **aktiven** Agent bearbeitete Datei (Edit/Write/MultiEdit; Punkt im Reiter, grün = neu angelegt), geänderte Zeilen der letzten Änderung hervorgehoben. Dazu die Datei aus `show_code` (Analyse/Bugfund; Fokus des aktiven Agents / jüngster im ausgewählten Projekt) – gleiche Datei = ein Reiter, die neuere Information zählt. ✕/Mittelklick schließt den Reiter, bis die Datei erneut geändert wird
   - „Snippets“: alle Code-Blöcke (` ``` `/`~~~`) aus den Antworten des **aktiven** Agents, neueste zuerst, je mit Button „Kopieren“ (`SnippetList`, Hervorhebung per `monaco.editor.colorize`, Kopieren über Main `clipboard:writeText`)
   - Gezeigt wird der zuletzt aktualisierte Reiter, bis der Nutzer selbst wechselt
-  - Spalte wird **nur eingeblendet, solange es etwas zu zeigen gibt**, sonst nimmt das Terminal die Breite ein (`.layout.with-code`)
+  - Spalte wird **nur eingeblendet, solange es etwas zu zeigen gibt**, sonst nimmt das Terminal die Breite ein (`.layout.with-code`, Spalte `auto`)
+  - **Splitter** am linken Rand (`.pane-splitter`, absolut über der Fuge): Breite ziehen (min. 240 px, Liste + Terminal behalten ≥ 580 px), Doppelklick = 420 px; gemerkt in `localStorage` (`devhub.codePaneWidth`, liegt im Datenordner)
 
 **Sitzungen**
 
@@ -110,6 +111,8 @@ Lokale Windows-Desktop-App zum Verwalten von Projekten und den darin laufenden K
 - Agent endet bei offenem Tab → `closeEditor` beantwortet die Anfrage (sonst bliebe ein verwaister curl).
 - Auslösen: **DevHub-Kürzel** `settings.hotkeyEditor` (Standard `Strg+G`, Einstellungen → Tastenkürzel) für den aktiven Agent, Stift-Button im Einzelansicht-Kopf, Rechtsklick „Anweisung im Tab schreiben“. Alle über `openEditor` in `Workspace`: Tab offen → hinwechseln, sonst `sendEditorKey` (`lib/terminals.ts`, schickt `\x07` = claudes Strg+G). Strg+G direkt im Terminal funktioniert unabhängig davon weiter (claudes eigene Belegung `chat:externalEditor`).
 - **Warum „notepad“ im Namen:** claude (2.1, aus dem Binary gelesen) stuft `EDITOR` als GUI-Editor ein, wenn der Programmname (erstes Wort ohne `start`/`cmd`/Schalter, Basisname) `code`, `cursor`, `windsurf`, `codium`, `subl`, `atom`, `gedit`, `notepad++` oder `notepad` enthält. GUI → Oberfläche bleibt stehen, Eingabefeld zeigt „Save and close editor to continue...“ (wie nativ). Sonst (z. B. `curl.exe`) = Terminal-Editor → claude wechselt in den Alternate Screen und leert ihn → Terminal wäre leer. Nicht `code` verwenden: dann hängt claude ggf. `-g datei:zeile` an. EDITOR darf keinen Pfad mit Leerzeichen enthalten (claude trennt an Leerzeichen) → Aufruf über `PATH`. Mit echtem claude geprüft (Leerzeichen im bin-Pfad ok).
+
+**Bearbeitete Dateien** (`main/snippets.ts`, `EditedFile`): live aus `PostToolUse` (`tool_response` mit `filePath` + `structuredPatch` → `editFromToolResult`, `changedRanges` = `+`-Zeilen, Löschung markiert die Folgezeile); nach Wiederherstellung aus dem Transkript (`user`-Einträge, `toolUseResult` = gleiches Format, `editsFromLines`). `mergeEdits`: gleiche Datei behält ihren Platz (Reihenfolge = erste Bearbeitung), neuere Änderung gewinnt, max. 30; doppelte Meldung (Hook + Transkript) löst kein Event aus. Event/Abfrage `code:edits`. Format mit echtem claude 2.1 geprüft (Edit, Write `type: "create"`).
 
 **Snippets** (`main/snippets.ts`): Jedes Hook-Ereignis enthält `transcript_path` → `TranscriptReader` pro Agent liest das JSONL-Transkript inkrementell (Byte-Offset, nur vollständige Zeilen; erstes Lesen = ganze Datei, nach Wiederherstellung sind alte Snippets also wieder da). Gelesen bei `SessionStart`, `Stop` (+ erneut nach 1,5 s), `Notification`, `PreToolUse(AskUserQuestion)`. Nur `type: "assistant"`, nicht `isSidechain` (Subagents), Text-Blöcke → Code-Zäune. Pro Agent max. 30, gleicher Code nur einmal. Event `code:snippets` (volle Liste), `code:snippets`-Abfrage nach Renderer-Reload. Kein Mitwirken des Agents nötig (kein MCP-Tool).
 
@@ -191,7 +194,7 @@ electron-builder.yml       Windows-Ziele, asarUnpack node-pty, nur Sprachen de/e
 
 **IPC-Muster:** Kanal `bereich:aktion` (z. B. `agents:start`) → Handler in `main/index.ts`, Methode in `preload/index.ts`,
 Typ in `DevHubApi` (`shared/types.ts`). Alle drei immer zusammen anpassen. Ereignisse Main→Renderer: `agents:data`,
-`agents:changed` (Agents + laufende Teams), `agents:startFailed`, `code:focus`, `code:snippets`, `editor:opened`, `editor:append`, `voice:progress`, `voice:globalHotkey` (Abo liefert Abmelde-Funktion).
+`agents:changed` (Agents + laufende Teams), `agents:startFailed`, `code:focus`, `code:snippets`, `code:edits`, `editor:opened`, `editor:append`, `voice:progress`, `voice:globalHotkey` (Abo liefert Abmelde-Funktion).
 
 ## Stand
 
@@ -201,6 +204,7 @@ Typ in `DevHubApi` (`shared/types.ts`). Alle drei immer zusammen anpassen. Ereig
 - [x] Input-Erkennung via Hooks, Hervorhebung links — **getestet**
 - [x] Code-Ansicht + MCP `show_code` — **Ende-zu-Ende getestet**
 - [x] Snippets mit Kopier-Button — Auswertung an echten Transkripten getestet, `transcript_path` im Stop-Hook per `claude -p` geprüft, Build ok; **Anzeige/Kopieren in der App noch nicht getestet**
+- [x] Datei-Reiter für bearbeitete Dateien + Splitter zur Code-Spalte — Auswertung an echtem Hook-Log/Transkript getestet, Build/Lint ok, App startet; **Reiter/Splitter in der App-UI noch nicht getestet**
 - [x] Strg+G-Editor-Tab — echter `AgentBridge` + echter claude per node-pty getestet (Anfangstext kommt an, neuer Text wird übernommen, Abschicken → Antwort), `@"pfad mit leerzeichen"` hängt Bilder an (`claude -p`); **Tab/Sperre/Bilder in der App-UI noch nicht getestet**
 - [x] Session-Wiederherstellung — Speichern/Neustart getestet; `--resume` mit echtem Transkript noch **nicht** getestet
 - [x] Sprachsteuerung inkl. Download-Dialog — Routing via `claude -p` getestet; **whisper-Download/Transkription + Mikrofon noch nicht getestet**
@@ -228,6 +232,7 @@ Typ in `DevHubApi` (`shared/types.ts`). Alle drei immer zusammen anpassen. Ereig
 
 - **Nur eine Instanz** (`requestSingleInstanceLock` in `main/index.ts`): zwei Instanzen würden dieselben Agents/Sessions wiederherstellen. `npm run dev` beendet sich daher sofort, wenn DevHub schon läuft → vorher das offene Fenster schließen. `electron-vite dev` lädt Main-Änderungen **nicht** neu (kein `-w`) → nach Änderungen in `src/main` App neu starten.
 
+- Tests mit `DEVHUB_SCREENSHOT`: App **nicht hart beenden** (`timeout`/kill): ohne `before-quit` enden die pty-Prozesse als „Agent beendet“ → Agents werden aus dem Zustand gelöscht. Fenster normal schließen.
 - Pakete in `dist/` werden nicht automatisch neu gebaut → vor dem Testen neuer Funktionen mit der .exe `npm run build:unpack` ausführen (sonst läuft ein alter Stand).
 - **Kein Native-Rebuild:** `postinstall` ist nur `install-electron`. `electron-builder install-app-deps` würde node-pty aus dem Quellcode bauen und scheitert ohne C++-Buildtools; die N-API-Prebuilds funktionieren direkt in Electron. Nach fehlgeschlagenem Rebuild: `rm -rf node_modules/node-pty && npm install`.
 - Keinen Installer (NSIS o. ä.) wieder einführen: Er würde beim Deinstallieren/Aktualisieren `data\` mitlöschen, und unter „Programme“ fehlen Schreibrechte.

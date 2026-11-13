@@ -4,6 +4,7 @@ import type {
   AgentTemplate,
   CodeFocus,
   CodeSnippet,
+  EditedFile,
   Project,
   Settings,
   Team,
@@ -58,6 +59,8 @@ function Workspace(): React.JSX.Element {
   const [focusByAgent, setFocusByAgent] = useState<Record<string, CodeFocus>>({})
   /** Code-Blöcke aus den Antworten je Agent (neueste zuerst) */
   const [snippetsByAgent, setSnippetsByAgent] = useState<Record<string, CodeSnippet[]>>({})
+  /** Vom Agent bearbeitete Dateien (rechts je ein Reiter) */
+  const [editsByAgent, setEditsByAgent] = useState<Record<string, EditedFile[]>>({})
   /** Strg+G-Editor-Tabs: gewählter Tab in der Mitte (Agent-Id, null = Agents-Ansicht) + Entwürfe */
   const [editorTab, setEditorTab] = useState<string | null>(null)
   /** Tab wird geöffnet, claude hat den Editor aber noch nicht gestartet (s. openEditor) */
@@ -118,6 +121,9 @@ function Workspace(): React.JSX.Element {
     const offSnippets = window.api.code.onSnippets((id, list) =>
       setSnippetsByAgent((m) => ({ ...m, [id]: list }))
     )
+    const offEdits = window.api.code.onEdits((id, list) =>
+      setEditsByAgent((m) => ({ ...m, [id]: list }))
+    )
     // Strg+G im Agent → Editor-Tab öffnen und dorthin wechseln
     const offEditorOpened = window.api.editor.onOpened((id, text) => {
       // Sofort sperren, bevor der Tab das Terminal in einen anderen Container hängt
@@ -132,6 +138,7 @@ function Workspace(): React.JSX.Element {
     )
     // Nach Neuladen der Oberfläche: bisher gesammelte Snippets der laufenden Agents
     window.api.code.snippets().then((all) => setSnippetsByAgent((m) => ({ ...all, ...m })))
+    window.api.code.edits().then((all) => setEditsByAgent((m) => ({ ...all, ...m })))
 
     ;(async () => {
       setProjects(await window.api.projects.list())
@@ -177,6 +184,7 @@ function Workspace(): React.JSX.Element {
       offChanged()
       offFocus()
       offSnippets()
+      offEdits()
       offEditorOpened()
       offEditorAppend()
       offFailed()
@@ -292,7 +300,12 @@ function Workspace(): React.JSX.Element {
     () => (activeAgentId ? (snippetsByAgent[activeAgentId] ?? []) : []),
     [activeAgentId, snippetsByAgent]
   )
-  const showCodePane = !!codeFocus || activeSnippets.length > 0
+  /** Vom aktiven Agent bearbeitete Dateien (rechts, je ein Reiter) */
+  const activeEdits = useMemo(
+    () => (activeAgentId ? (editsByAgent[activeAgentId] ?? []) : []),
+    [activeAgentId, editsByAgent]
+  )
+  const showCodePane = !!codeFocus || activeSnippets.length > 0 || activeEdits.length > 0
 
   // ---------------------------------------------------------------- Aktionen
   const startAgent = useCallback(
@@ -741,7 +754,9 @@ function Workspace(): React.JSX.Element {
           <CodePane
             focus={codeFocus}
             snippets={activeSnippets}
+            edits={activeEdits}
             agentName={agents.find((a) => a.id === codeFocus?.agentId)?.name}
+            editsAgentName={agents.find((a) => a.id === activeAgentId)?.name}
             vscodeInstalled={vscodeInstalled}
           />
         )}

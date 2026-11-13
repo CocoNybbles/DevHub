@@ -568,11 +568,91 @@ input.rename {
   flex: 1;
   min-height: 0;
 }
-/* Reiter „Datei“ / „Snippets“ im Spaltenkopf */
+/* Code-Spalte: Splitter am linken Rand (über der 1-px-Fuge, verkleinert nichts) */
+.pane.code {
+  position: relative;
+  min-width: 240px;
+}
+.pane-splitter {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -4px;
+  width: 7px;
+  z-index: 5;
+  cursor: col-resize;
+  touch-action: none;
+}
+.pane-splitter:hover,
+.pane.code.resizing .pane-splitter {
+  background: linear-gradient(
+    to right,
+    transparent 3px,
+    var(--accent) 3px,
+    var(--accent) 4px,
+    transparent 4px
+  );
+}
+/* Beim Ziehen keine Textauswahl, Monaco/Terminal fangen die Maus nicht ab */
+.pane.code.resizing,
+.pane.code.resizing * {
+  user-select: none;
+}
+.layout:has(.pane.code.resizing) {
+  cursor: col-resize;
+}
+.layout:has(.pane.code.resizing) .center-column {
+  pointer-events: none;
+}
+/* Reiter (Dateien / „Snippets“) im Spaltenkopf, bei vielen Dateien waagrecht scrollbar */
+.pane.code .pane-header {
+  gap: 6px;
+  padding-right: 4px;
+}
 .tabs {
   display: flex;
   align-self: stretch;
   gap: 2px;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+.tabs > .tab {
+  flex-shrink: 0;
+}
+.tab.file-tab {
+  gap: 4px;
+  padding: 0 2px 0 8px;
+  max-width: 200px;
+  text-transform: none;
+  letter-spacing: 0;
+  font-weight: 400;
+  font-size: 12px;
+}
+.file-tab-name {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.tab.file-tab button.icon {
+  width: 18px;
+  height: 18px;
+  visibility: hidden;
+}
+.tab.file-tab:hover button.icon,
+.tab.file-tab.active button.icon {
+  visibility: visible;
+}
+/* Punkt = vom Agent bearbeitet (grün = neu angelegt) */
+.edit-dot {
+  flex-shrink: 0;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+.edit-dot.created {
+  background: var(--working);
 }
 .tab {
   display: inline-flex;

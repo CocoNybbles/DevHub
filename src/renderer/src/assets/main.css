@@ -95,9 +95,9 @@ button.icon {
   background: var(--border);
 }
 
-/* Code-Spalte nur, solange ein Agent eine Datei zeigt */
+/* Code-Spalte nur, solange es etwas zu zeigen gibt; Breite setzt der Splitter (CodePane) */
 .layout.with-code {
-  grid-template-columns: 260px 1fr 420px;
+  grid-template-columns: 260px minmax(0, 1fr) auto;
 }
 
 .pane {

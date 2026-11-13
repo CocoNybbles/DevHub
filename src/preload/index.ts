@@ -54,7 +54,9 @@ const api: DevHubApi = {
     openInVSCode: (path, line) => invoke('code:openInVSCode', path, line),
     onFocus: (cb) => subscribe('code:focus', cb),
     snippets: () => invoke('code:snippets'),
-    onSnippets: (cb) => subscribe('code:snippets', cb)
+    onSnippets: (cb) => subscribe('code:snippets', cb),
+    edits: () => invoke('code:edits'),
+    onEdits: (cb) => subscribe('code:edits', cb)
   },
   clipboard: {
     writeText: (text) => invoke('clipboard:writeText', text)

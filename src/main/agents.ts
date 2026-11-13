@@ -3,8 +3,16 @@ import { randomUUID } from 'crypto'
 import { existsSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'fs'
 import { homedir } from 'os'
 import { isAbsolute, join, resolve as resolvePath } from 'path'
-import type { Agent, AgentStatus, CodeFocus, CodeSnippet, Team, TeamMember } from '../shared/types'
-import { mergeSnippets, TranscriptReader } from './snippets'
+import type {
+  Agent,
+  AgentStatus,
+  CodeFocus,
+  CodeSnippet,
+  EditedFile,
+  Team,
+  TeamMember
+} from '../shared/types'
+import { editFromToolResult, mergeEdits, mergeSnippets, TranscriptReader } from './snippets'
 import { AgentBridge, HookEvent, ShowCodeArgs, TeamMessageArgs, ToolName } from './agentBridge'
 import { applyOrder, dataDir, getState, updateState, type PersistedAgent } from './store'
 import { claudeEnv, resolveClaude } from './tools'
@@ -36,6 +44,8 @@ interface RunningAgent {
   transcript?: TranscriptReader
   /** Code-Blöcke aus den Antworten, neueste zuerst */
   snippets: CodeSnippet[]
+  /** Vom Agent bearbeitete Dateien (Reihenfolge = erste Bearbeitung) */
+  edits: EditedFile[]
 }
 
 export interface StartTeamOptions {
@@ -56,6 +66,8 @@ export interface AgentEvents {
   onCodeFocus: (focus: CodeFocus) => void
   /** Snippet-Liste eines Agents hat sich geändert (vollständig, neueste zuerst) */
   onSnippets: (agentId: string, snippets: CodeSnippet[]) => void
+  /** Liste der bearbeiteten Dateien eines Agents hat sich geändert (vollständig) */
+  onEdits: (agentId: string, files: EditedFile[]) => void
   /** Agent hat sich direkt nach dem Start mit Fehler beendet */
   onStartFailed: (agentName: string, output: string) => void
   /** Strg+G: Editor-Tab öffnen, vorbelegt mit dem bisherigen Prompt */
@@ -478,7 +490,8 @@ export class AgentManager {
       startedAt: Date.now(),
       stopping: false,
       pending: [],
-      snippets: []
+      snippets: [],
+      edits: []
     }
     this.running.set(agent.id, r)
 
@@ -574,8 +587,14 @@ export class AgentManager {
           break
         this.setStatus(agentId, 'idle')
         break
+      case 'PostToolUse': {
+        // Edit/Write/MultiEdit: Datei sofort rechts als Reiter zeigen
+        const edit = editFromToolResult(agentId, ev.tool_response, Date.now())
+        if (edit) this.addEdits(agentId, [edit])
+        this.setStatus(agentId, 'working')
+        break
+      }
       case 'UserPromptSubmit':
-      case 'PostToolUse':
         this.setStatus(agentId, 'working')
         break
       case 'PreToolUse':
@@ -600,6 +619,21 @@ export class AgentManager {
     return Object.fromEntries([...this.running].map(([id, r]) => [id, r.snippets]))
   }
 
+  /** Bearbeitete Dateien aller laufenden Agents (für die Oberfläche nach einem Neuladen) */
+  edits(): Record<string, EditedFile[]> {
+    return Object.fromEntries([...this.running].map(([id, r]) => [id, r.edits]))
+  }
+
+  private addEdits(agentId: string, added: EditedFile[]): void {
+    const r = this.running.get(agentId)
+    if (!r || !added.length) return
+    const merged = mergeEdits(r.edits, added)
+    // Transkript wiederholt, was der Hook schon gemeldet hat → nur bei echter Änderung melden
+    if (merged.length === r.edits.length && merged.every((e, i) => e === r.edits[i])) return
+    r.edits = merged
+    this.events.onEdits(agentId, r.edits)
+  }
+
   private useTranscript(agentId: string, path: string): void {
     const r = this.running.get(agentId)
     if (r && r.transcript?.path !== path) r.transcript = new TranscriptReader(path, agentId)
@@ -611,10 +645,13 @@ export class AgentManager {
     if (!reader) return
     reader
       .read()
-      .then((added) => {
+      .then(({ snippets, edits }) => {
         const r = this.running.get(agentId)
-        if (!added.length || !r || r.transcript !== reader) return
-        r.snippets = mergeSnippets(r.snippets, added)
+        if (!r || r.transcript !== reader) return
+        // Nach einer Wiederherstellung kommen die bearbeiteten Dateien aus dem Transkript
+        this.addEdits(agentId, edits)
+        if (!snippets.length) return
+        r.snippets = mergeSnippets(r.snippets, snippets)
         this.events.onSnippets(agentId, r.snippets)
       })
       .catch((e) => console.error('[DevHub] Transkript nicht lesbar:', e))
