@@ -29,8 +29,8 @@ function migrateFromAppData(target: string): void {
 }
 
 /**
- * Entwicklung/Tests: `DEVHUB_DATA_DIR` = eigener Datenordner. Damit startet eine zweite Instanz
- * neben einer laufenden (die Ein-Instanz-Sperre hängt am Datenordner), ohne deren Zustand anzufassen.
+ * Development/tests: `DEVHUB_DATA_DIR` = a separate data folder. This lets a second instance start
+ * next to a running one (the single-instance lock is tied to the data folder) without touching its state.
  */
 const override = process.env.DEVHUB_DATA_DIR?.trim()
 const dir = override || join(exeDir(), 'data')

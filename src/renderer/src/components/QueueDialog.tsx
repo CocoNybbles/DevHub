@@ -8,15 +8,15 @@ import Modal from './Modal'
 interface Props {
   agent: Agent
   prompts: PromptTemplate[]
-  /** Diesen Prompt aus der Bibliothek vorbelegen */
+  /** Prefill this prompt from the library */
   promptId?: string
   onClose: () => void
 }
 
 /**
- * Auftrag für einen Agent: frei geschrieben/diktiert oder aus der Prompt-Bibliothek (Platzhalter
- * `{{name}}` werden abgefragt). Der Auftrag kommt in die Warteschlange – er geht sofort raus, wenn
- * der Agent frei ist, sonst sobald er fertig meldet. Zeigt auch die wartenden Aufträge.
+ * Instruction for an agent: freely written/dictated or from the prompt library (placeholders
+ * `{{name}}` are asked for). The instruction goes into the queue – it is sent immediately if
+ * the agent is free, otherwise as soon as it reports done. Also shows the queued instructions.
  */
 function QueueDialog({ agent, prompts, promptId, onClose }: Props): React.JSX.Element {
   const initial = prompts.find((p) => p.id === promptId)

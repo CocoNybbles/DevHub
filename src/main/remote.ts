@@ -7,10 +7,10 @@ import type { AgentManager } from './agents'
 import { getState } from './store'
 
 /**
- * Fernzugriff fürs Handy (abschaltbar, Standard aus): kleiner HTTP-Server im lokalen Netz.
- * Zeigt die Agents mit Status und letzter Antwort, nimmt Anweisungen entgegen und entscheidet
- * Freigaben. Zugang nur mit dem geheimen Token im Pfad; unverschlüsselt (HTTP) – deshalb nur
- * für vertrauenswürdige Netze bzw. über ein VPN gedacht.
+ * Remote access for the phone (can be turned off, off by default): small HTTP server in the
+ * local network. Shows the agents with status and last reply, accepts instructions and decides
+ * permission requests. Access only with the secret token in the path; unencrypted (HTTP) –
+ * therefore meant only for trusted networks or via a VPN.
  */
 export class RemoteServer {
   private server: Server | null = null
@@ -20,7 +20,7 @@ export class RemoteServer {
 
   constructor(private agents: AgentManager) {}
 
-  /** Startet, stoppt oder startet neu – je nach Einstellungen */
+  /** Starts, stops or restarts – depending on the settings */
   apply(settings: Settings): void {
     const wanted = settings.remoteEnabled && !!settings.remoteToken
     const same =
@@ -154,7 +154,7 @@ function readJson(req: IncomingMessage): Promise<Record<string, unknown>> {
   })
 }
 
-/** Seite fürs Handy: fragt alle 3 s den Zustand ab; Inhalte werden nur als Text eingesetzt. */
+/** Page for the phone: polls the state every 3 s; content is only inserted as text. */
 const PAGE = `<!doctype html>
 <html lang="de">
 <head>
@@ -262,7 +262,7 @@ function render(state) {
     state.agents.length + ' Agents' + (waiting ? ' · ' + waiting + ' warten' : '');
 }
 function load() {
-  // Während getippt wird nicht neu aufbauen (die Bildschirmtastatur bliebe sonst nicht offen)
+  // Do not rebuild while typing (the on-screen keyboard would not stay open otherwise)
   fetch('api/state').then(function (r) { return r.json(); }).then(render).catch(function () {
     document.getElementById('info').textContent = 'keine Verbindung';
   });

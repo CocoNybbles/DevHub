@@ -9,7 +9,7 @@ interface Props {
   onClose: () => void
 }
 
-/** Tagesbericht: Claude (Haiku) fasst zusammen, was die Agents heute getan haben und was offen ist. */
+/** Daily report: Claude (Haiku) summarizes what the agents did today and what is still open. */
 function ReportDialog({ projects, onClose }: Props): React.JSX.Element {
   const [projectId, setProjectId] = useState('')
   const [report, setReport] = useState<string | null>(null)

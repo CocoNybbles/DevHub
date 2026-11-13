@@ -4,11 +4,11 @@ import { homedir } from 'os'
 import { join } from 'path'
 import type { SessionMatch } from '../shared/types'
 
-/** Transkripte liegen unter ~/.claude/projects/<ordner>/<sessionId>.jsonl */
+/** Transcripts live under ~/.claude/projects/<folder>/<sessionId>.jsonl */
 const transcriptsDir = (): string =>
   join(process.env.CLAUDE_CONFIG_DIR || join(homedir(), '.claude'), 'projects')
 
-/** Pfad des Transkripts einer Session (null = keins vorhanden → nicht fortsetzbar) */
+/** Path of a session's transcript (null = none exists → not resumable) */
 export function findSessionFile(sessionId: string): string | null {
   const base = transcriptsDir()
   try {
@@ -17,12 +17,12 @@ export function findSessionFile(sessionId: string): string | null {
       if (existsSync(file)) return file
     }
   } catch {
-    // Ordner fehlt
+    // folder missing
   }
   return null
 }
 
-/** Größere Transkripte werden bei der Suche übersprungen */
+/** Larger transcripts are skipped by the search */
 const MAX_SEARCH_BYTES = 60_000_000
 const MAX_EXCERPTS = 3
 const EXCERPT_RADIUS = 90
@@ -41,7 +41,7 @@ interface Line {
   message?: { content?: string | { type?: string; text?: string }[] }
 }
 
-/** Volltextsuche (ohne Groß-/Kleinschreibung) in Anweisungen und Antworten der Sitzungen. */
+/** Full-text search (case-insensitive) in the sessions' instructions and replies. */
 export async function searchSessions(
   sessions: SearchableSession[],
   query: string
@@ -56,7 +56,7 @@ export async function searchSessions(
       if ((await stat(file)).size > MAX_SEARCH_BYTES) continue
       const excerpts: string[] = []
       for (const raw of (await readFile(file, 'utf8')).split('\n')) {
-        // Vorfilter auf der Rohzeile, bevor JSON geparst wird
+        // Pre-filter on the raw line before JSON is parsed
         if (!raw.toLowerCase().includes(needle)) continue
         let line: Line
         try {
@@ -86,7 +86,7 @@ export async function searchSessions(
       }
       if (excerpts.length) matches.push({ ...s, excerpts })
     } catch {
-      // nicht lesbar → überspringen
+      // not readable → skip
     }
   }
   return matches

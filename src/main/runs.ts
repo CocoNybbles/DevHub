@@ -2,7 +2,7 @@ import { ChildProcess, execFile, spawn } from 'child_process'
 import { existsSync } from 'fs'
 import type { Project, RunInfo } from '../shared/types'
 
-/** Höchstens so viel Ausgabe je Befehl behalten (das Ende) */
+/** Keep at most this much output per command (the end) */
 const MAX_OUTPUT = 300_000
 
 interface Run {
@@ -16,14 +16,14 @@ export interface RunEvents {
   onOutput: (projectId: string, name: string, chunk: string) => void
 }
 
-/** CSI-, OSC- und einfache ESC-Sequenzen (Ausgabe wird als reiner Text gezeigt) */
+/** CSI, OSC and simple ESC sequences (output is shown as plain text) */
 const ANSI =
   // eslint-disable-next-line no-control-regex
   /\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[()][A-Z0-9]|\x1b[=>]/g
 
 /**
- * Projekt-Befehle (Dev-Server, Tests …) als verwaltete Prozesse: starten, stoppen, Ausgabe
- * mitschreiben. Agents lesen die Ausgabe über MCP-Tools (`run_output`).
+ * Project commands (dev server, tests …) as managed processes: start, stop, record the
+ * output. Agents read the output via MCP tools (`run_output`).
  */
 export class RunManager {
   private runs = new Map<string, Run>()
@@ -33,7 +33,7 @@ export class RunManager {
   private key = (projectId: string, name: string): string =>
     `${projectId}\n${name.trim().toLowerCase()}`
 
-  /** Befehle des Projekts mit ihrem Zustand */
+  /** The project's commands with their state */
   list(project: Project): RunInfo[] {
     return (project.runCommands ?? []).map((c) => {
       const run = this.runs.get(this.key(project.id, c.name))
@@ -63,7 +63,7 @@ export class RunManager {
       output: ''
     }
     this.runs.set(key, run)
-    // Befehlszeile des Nutzers → über die Shell (ein String, keine Argumentliste)
+    // The user's command line → via the shell (one string, no argument list)
     const proc = spawn(cmd.command, {
       cwd: project.agentPath,
       shell: true,
@@ -105,7 +105,7 @@ export class RunManager {
   }
 }
 
-/** Beendet den Prozess samt Kindprozessen (die Shell startet das eigentliche Programm). */
+/** Kills the process including child processes (the shell starts the actual program). */
 function killTree(pid: number): void {
   execFile('taskkill', ['/pid', String(pid), '/T', '/F'], { windowsHide: true }, () => {})
 }

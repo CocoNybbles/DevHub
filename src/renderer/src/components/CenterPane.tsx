@@ -7,7 +7,7 @@ import { focusTerminal, hasSnapshot } from '../lib/terminals'
 import { formatAccelerator } from '../../../shared/hotkeys'
 import { formatTokens } from '../lib/format'
 
-/** Gemeldeter Fortschritt (`report_progress`), sonst der aktuelle Schritt des Agents */
+/** Reported progress (`report_progress`), otherwise the agent's current step */
 const activityText = (a: Agent): string =>
   a.progress
     ? `${a.progress.percent !== undefined ? `${Math.round(a.progress.percent)} % · ` : ''}${a.progress.message}`

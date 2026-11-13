@@ -103,24 +103,24 @@ interface Props {
   onOpenFolder: (p: Project) => void
   onGlobalVoice: () => void
   onOpenSettings: () => void
-  /** Weitere Engines (andere Terminal-Programme als Claude Code) → Auswahl beim Start */
+  /** More engines (terminal programs other than Claude Code) → choice when starting */
   engines: Engine[]
   onStartEngine: (projectId: string, engineId: string) => void
-  /** Eingang (Freigaben, wartende Agents, Hinweise) – steht unter der Projektliste */
+  /** Inbox (permission requests, waiting agents, notices) – placed below the project list */
   inbox: React.ReactNode
-  /** projectId: Board dieses Projekts, sonst des gewählten */
+  /** projectId: board of this project, otherwise of the selected one */
   onOpenTasks: (projectId?: string) => void
   onOpenHistory: () => void
   onOpenReport: () => void
   onOpenRun: (projectId: string) => void
-  /** Änderungen prüfen: Hauptordner des Projekts bzw. Arbeitsverzeichnis des Agents */
+  /** Review changes: the project's main folder or the agent's working directory */
   onReview: (projectId: string, agentId?: string) => void
-  /** Auftrag anhängen / Prompt aus der Bibliothek senden */
+  /** Append an instruction / send a prompt from the library */
   onQueue: (agentId: string) => void
   onFork: (agentId: string) => void
-  /** Verbrauch eines Agents für den Tooltip */
+  /** An agent's usage for the tooltip */
   usageText: (agent: Agent) => string
-  /** Zahl offener Aufgaben (Anzeige am Knopf) */
+  /** Number of open tasks (shown on the button) */
   openTaskCount: number
 }
 
@@ -341,7 +341,7 @@ function Sidebar(props: Props): React.JSX.Element {
             {a.status === 'needsInput' && a.statusMessage ? (
               <span className="row-sub">{a.statusMessage}</span>
             ) : (
-              // Arbeitet: gemeldeter Fortschritt, sonst der aktuelle Schritt
+              // Working: reported progress, otherwise the current step
               a.status === 'working' &&
               (a.progress || a.activity) && (
                 <span className="row-sub info">

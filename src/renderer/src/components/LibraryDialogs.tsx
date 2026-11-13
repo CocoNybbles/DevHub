@@ -5,7 +5,7 @@ import { errorText } from '../lib/errors'
 import DictationTextarea from './DictationTextarea'
 import Modal from './Modal'
 
-/** Prompt der Bibliothek anlegen/bearbeiten */
+/** Create/edit a prompt of the library */
 export function PromptDialog({
   prompt,
   onSaved,
@@ -77,7 +77,7 @@ export function PromptDialog({
   )
 }
 
-/** Weitere Engine (anderes Terminal-Programm als Claude Code) anlegen/bearbeiten */
+/** Create/edit another engine (terminal program other than Claude Code) */
 export function EngineDialog({
   engine,
   onSaved,

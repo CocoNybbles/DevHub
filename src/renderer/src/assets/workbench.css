@@ -1,4 +1,4 @@
-/* Workbench: Eingang, Review, Aufgaben, Verlauf, Ausführen, Plan/Aktivität, Markdown */
+/* Workbench: inbox, review, tasks, history, run, plan/activity, Markdown */
 
 button.danger {
   color: var(--error);
@@ -17,7 +17,7 @@ textarea.mono {
   gap: 8px;
 }
 
-/* ---------- Seitenleiste: Aktivität, Fußleiste ---------- */
+/* ---------- Sidebar: activity, footer ---------- */
 .row-sub.info {
   color: var(--muted);
 }
@@ -42,7 +42,7 @@ textarea.mono {
   white-space: nowrap;
 }
 
-/* ---------- Eingang ---------- */
+/* ---------- Inbox ---------- */
 .inbox {
   display: flex;
   flex-direction: column;
@@ -130,7 +130,7 @@ textarea.mono {
   right: 4px;
 }
 
-/* ---------- Änderungen prüfen ---------- */
+/* ---------- Review changes ---------- */
 .review {
   display: flex;
   flex-direction: column;
@@ -264,7 +264,7 @@ textarea.mono {
   user-select: text;
 }
 
-/* ---------- Aufgaben ---------- */
+/* ---------- Tasks ---------- */
 .task-board {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -318,7 +318,7 @@ textarea.mono {
   max-width: 130px;
 }
 
-/* ---------- Verlauf ---------- */
+/* ---------- History ---------- */
 .history-list {
   display: flex;
   flex-direction: column;
@@ -369,7 +369,7 @@ textarea.mono {
   color: var(--muted);
 }
 
-/* ---------- Ausführen ---------- */
+/* ---------- Run ---------- */
 .run-bar {
   display: flex;
   align-items: center;
@@ -426,7 +426,7 @@ textarea.mono {
   user-select: text;
 }
 
-/* ---------- Plan, Aktivität (rechte Spalte) ---------- */
+/* ---------- Plan, activity (right column) ---------- */
 .plan-view,
 .activity-list {
   flex: 1;
@@ -538,7 +538,7 @@ textarea.mono {
   border-radius: 0;
 }
 
-/* ---------- Einstellungen: Fernzugriff ---------- */
+/* ---------- Settings: remote access ---------- */
 .remote-url {
   display: flex;
   align-items: center;

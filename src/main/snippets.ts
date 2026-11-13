@@ -63,11 +63,11 @@ export function snippetsFromLines(agentId: string, lines: string[]): CodeSnippet
 export interface TranscriptNews {
   snippets: CodeSnippet[]
   edits: EditedFile[]
-  /** Verbrauch der ganzen Sitzung – nur gesetzt, wenn er sich geändert hat */
+  /** Usage of the whole session – only set if it has changed */
   usage?: AgentUsage
-  /** Anfang der letzten Antwort des Agents – nur gesetzt, wenn es eine neue gibt */
+  /** Beginning of the agent's last response – only set if there is a new one */
   lastText?: string
-  /** Erste Anweisung des Nutzers (Titel der Sitzung) */
+  /** The user's first instruction (title of the session) */
   firstPrompt?: string
 }
 
@@ -82,7 +82,7 @@ function addTotals(to: TokenTotals, t: TokenTotals, sign = 1): void {
   to.cacheWrite += sign * t.cacheWrite
 }
 
-/** `YYYY-MM-DD` in lokaler Zeit */
+/** `YYYY-MM-DD` in local time */
 export function localDay(ms: number): string {
   const d = new Date(ms)
   const two = (n: number): string => String(n).padStart(2, '0')
@@ -115,12 +115,12 @@ const textOf = (content: NonNullable<UsageLine['message']>['content']): string =
         .map((c) => c.text)
         .join('\n')
 
-/** Länge der gemerkten letzten Antwort */
+/** Length of the remembered last response */
 const LAST_TEXT_CHARS = 1500
 
 /**
- * Token-Verbrauch, letzte Antwort und erste Anweisung aus Transkript-Zeilen. Eine Antwort steht
- * mit derselben `message.id` in mehreren Zeilen (je Inhaltsblock) – gezählt wird sie einmal.
+ * Token usage, last response and first instruction from transcript lines. A response appears
+ * with the same `message.id` in several lines (one per content block) – it is counted once.
  */
 export class UsageTracker {
   private byMessage = new Map<string, { day: string; totals: TokenTotals }>()
@@ -128,7 +128,7 @@ export class UsageTracker {
   lastText?: string
   firstPrompt?: string
 
-  /** Liefert, was sich geändert hat */
+  /** Returns what has changed */
   add(lines: string[]): { usage: boolean; lastText: boolean } {
     const changed = { usage: false, lastText: false }
     for (const line of lines) {
@@ -143,7 +143,7 @@ export class UsageTracker {
       if (entry.type === 'user') {
         if (this.firstPrompt === undefined && !entry.isMeta && !entry.isSidechain) {
           const text = textOf(entry.message?.content).trim()
-          // Befehls-Hüllen (<command-name> …) und Tool-Ergebnisse sind keine Anweisung
+          // Command wrappers (<command-name> …) and tool results are not an instruction
           if (text && !text.startsWith('<')) this.firstPrompt = text.slice(0, 200)
         }
         continue
@@ -182,7 +182,7 @@ export class UsageTracker {
   }
 }
 
-/** Höchstens so viele bearbeitete Dateien pro Agent behalten (die zuletzt geänderten) */
+/** Keep at most this many edited files per agent (the most recently changed) */
 export const MAX_EDITED_FILES = 30
 
 interface PatchHunk {
@@ -301,7 +301,7 @@ export class TranscriptReader {
     try {
       const { size } = await file.stat()
       if (size < this.offset) {
-        // Datei neu geschrieben
+        // File was rewritten
         this.offset = 0
         this.tracker = new UsageTracker()
       }

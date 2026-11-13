@@ -7,9 +7,9 @@ import Modal from './Modal'
 interface Props {
   project: Project
   agents: Agent[]
-  /** Arbeitsverzeichnis dieses Agents vorwählen */
+  /** Preselect this agent's working directory */
   agentId?: string
-  /** Diese Datei vorwählen (absoluter Pfad, z. B. aus `show_diff`) */
+  /** Preselect this file (absolute path, e.g. from `show_diff`) */
   filePath?: string
   onClose: () => void
 }
@@ -34,9 +34,9 @@ const KIND_TITLE: Record<GitFileChange['kind'], string> = {
 }
 
 /**
- * Änderungen eines Arbeitsverzeichnisses (Hauptordner oder Worktree eines Agents) prüfen:
- * Dateiliste, Vergleich nebeneinander (rechte Seite bearbeitbar, Pfeile am Rand nehmen einzelne
- * Änderungen zurück), verwerfen, committen, Worktree zusammenführen, Kommentare an den Agent.
+ * Review the changes of a working directory (main folder or an agent's worktree):
+ * file list, side-by-side diff (right side editable, arrows in the margin revert individual
+ * changes), discard, commit, merge the worktree, comments to the agent.
  */
 function ReviewDialog({ project, agents, agentId, filePath, onClose }: Props): React.JSX.Element {
   const [info, setInfo] = useState<ReviewInfo | null>(null)
@@ -53,7 +53,7 @@ function ReviewDialog({ project, agents, agentId, filePath, onClose }: Props): R
 
   const hostRef = useRef<HTMLDivElement>(null)
   const editorRef = useRef<monaco.editor.IStandaloneDiffEditor | null>(null)
-  /** Datei, die beim nächsten Laden der Liste gewählt werden soll (aus `show_diff`) */
+  /** File to select the next time the list is loaded (from `show_diff`) */
   const wantedFile = useRef(filePath)
 
   const target: ReviewTarget | undefined = info?.targets.find((t) => t.id === targetId)
@@ -87,7 +87,7 @@ function ReviewDialog({ project, agents, agentId, filePath, onClose }: Props): R
     [project.id]
   )
 
-  // Erstes Laden: Ziel des Agents (sonst Hauptordner) und dessen Änderungen
+  // First load: the agent's target (otherwise the main folder) and its changes
   useEffect(() => {
     let cancelled = false
     window.api.git
@@ -106,7 +106,7 @@ function ReviewDialog({ project, agents, agentId, filePath, onClose }: Props): R
     }
   }, [project.id, agentId, loadChanges])
 
-  // Vergleichs-Editor einmal anlegen
+  // Create the diff editor once
   useEffect(() => {
     if (!hostRef.current) return
     const editor = monaco.editor.createDiffEditor(hostRef.current, {
@@ -131,7 +131,7 @@ function ReviewDialog({ project, agents, agentId, filePath, onClose }: Props): R
     }
   }, [])
 
-  // Gewählte Datei laden
+  // Load the selected file
   useEffect(() => {
     const editor = editorRef.current
     if (!editor || !targetId) return
@@ -168,7 +168,7 @@ function ReviewDialog({ project, agents, agentId, filePath, onClose }: Props): R
     }
   }, [project.id, targetId, selected])
 
-  /** Führt eine Aktion aus, zeigt ihr Ergebnis und lädt die Liste neu */
+  /** Runs an action, shows its result and reloads the list */
   const run = async (
     action: () => Promise<string | void>,
     reloadTargets = false

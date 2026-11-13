@@ -30,14 +30,14 @@ interface Props {
   onCloseTab: (key: string, at: number) => void
   /** Key of the snippets tab (per agent) */
   snippetsKey: string
-  /** Vom Agent gezeigter Plan (MCP `show_plan`), null = keiner bzw. geschlossen */
+  /** Plan shown by the agent (MCP `show_plan`), null = none or closed */
   plan: CodePlan | null
   planKey: string
-  /** Aktiver Agent: Reiter „Aktivität“ mit seinen letzten Schritten */
+  /** Active agent: "Aktivität" (activity) tab with its latest steps */
   activityAgent?: Agent
 }
 
-/** Letzte Schritte (Tool-Aufrufe) des Agents; lädt neu, sobald er etwas Neues tut */
+/** The agent's latest steps (tool calls); reloads as soon as it does something new */
 function ActivityList({ agent }: { agent: Agent }): React.JSX.Element {
   const [log, setLog] = useState<ActivityEntry[]>([])
   const stamp = `${agent.id}|${agent.activity ?? ''}|${agent.status}`
@@ -161,7 +161,7 @@ function CodePane({
     ...visible.map((f) => ({ key: f.key, at: f.at })),
     ...(plan ? [{ key: PLAN, at: plan.at }] : []),
     ...(snippets.length ? [{ key: SNIPPETS, at: snippetsAt }] : []),
-    // Aktivität drängt sich nie von selbst vor (at = 0), bleibt aber wählbar
+    // Activity never comes to the front by itself (at = 0), but stays selectable
     ...(activityAgent ? [{ key: ACTIVITY, at: 0 }] : [])
   ]
   const latest = Math.max(0, ...all.map((t) => t.at))

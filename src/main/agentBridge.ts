@@ -56,7 +56,7 @@ export type ToolName =
   | 'send_team_message'
   | 'answer_permission'
 
-/** Tools, die jeder Claude-Agent in DevHub bekommt */
+/** Tools that every Claude agent in DevHub gets */
 export const COMMON_TOOLS: ToolName[] = [
   'show_code',
   'show_plan',
@@ -89,8 +89,8 @@ export interface BridgeHandlers {
     signal: AbortSignal
   ) => Promise<PermissionDecision | null>
   /**
-   * Stop-Hook (Agent meldet fertig): Antwort = Hook-Ausgabe für claude, z. B.
-   * `{decision: "block", reason}` wenn Prüfungen fehlschlagen; null = Agent darf anhalten.
+   * Stop hook (agent reports done): response = hook output for claude, e.g.
+   * `{decision: "block", reason}` if checks fail; null = the agent may stop.
    */
   onStop: (agentId: string, event: HookEvent) => Promise<object | null>
 }
@@ -346,8 +346,8 @@ export class AgentBridge {
       return end(res, 204)
     }
 
-    // Stop-Hook: offen halten, bis die Prüfungen des Projekts gelaufen sind. Leere Antwort =
-    // Agent hält an; `{decision: "block", reason}` = er arbeitet mit dieser Begründung weiter.
+    // Stop hook: keep it open until the project's checks have run. Empty response =
+    // the agent stops; `{decision: "block", reason}` = it keeps working with this reason.
     if (kind === 'stop' && req.method === 'POST') {
       let output: object | null = null
       try {
@@ -361,8 +361,8 @@ export class AgentBridge {
       return
     }
 
-    // Rechte-Abfrage eines Workers: offen halten, bis der Orchestrator entschieden hat.
-    // Antwort = Hook-Ausgabe für claude; leere Antwort → claude zeigt seinen normalen Dialog.
+    // A worker's permission request: keep it open until the orchestrator has decided.
+    // Response = hook output for claude; empty response → claude shows its normal dialog.
     if (kind === 'permission' && req.method === 'POST') {
       const abort = new AbortController()
       res.on('close', () => {

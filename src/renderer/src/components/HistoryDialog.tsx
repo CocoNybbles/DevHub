@@ -23,7 +23,7 @@ interface Props {
   projects: Project[]
   agents: Agent[]
   settings: Settings
-  /** Sitzung wurde als Agent fortgesetzt bzw. laufender Agent gewählt → anzeigen */
+  /** Session was resumed as an agent, or a running agent was selected → show it */
   onShowAgent: (agentId: string) => void
   onClose: () => void
 }
@@ -33,7 +33,7 @@ interface UsageRow {
   total: TokenTotals
 }
 
-/** Verbrauch je Projekt über laufende Agents und beendete Sitzungen */
+/** Usage per project across running agents and ended sessions */
 function usageByProject(
   sessions: { projectId: string; usage?: Agent['usage'] }[],
   today: string
@@ -51,8 +51,8 @@ function usageByProject(
 }
 
 /**
- * Verlauf: beendete Sitzungen fortsetzen oder als Kopie abzweigen, Volltextsuche über alle
- * Transkripte (laufende und beendete) und der Token-Verbrauch je Projekt (heute / gesamt).
+ * History: resume ended sessions or fork them as a copy, full-text search across all
+ * transcripts (running and ended) and the token usage per project (today / total).
  */
 function HistoryDialog(props: Props): React.JSX.Element {
   const [archive, setArchive] = useState<ArchivedSession[]>([])
@@ -91,7 +91,7 @@ function HistoryDialog(props: Props): React.JSX.Element {
     }
   }
 
-  // Verbrauch je Projekt: laufende Agents + beendete Sitzungen
+  // Usage per project: running agents + ended sessions
   const [today] = useState(() => localDay(Date.now()))
   const usage = useMemo(
     () => usageByProject([...props.agents, ...archive], today),

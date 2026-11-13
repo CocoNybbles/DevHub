@@ -1,6 +1,6 @@
 /**
- * Freigabe-Regeln eines Projekts und Kurzbeschreibung von Tool-Aufrufen.
- * Regel = `Tool` (z. B. `Edit`, `mcp__server__tool`) oder `Bash:<Befehlsanfang>` (z. B. `Bash:npm test`).
+ * A project's permission rules and short descriptions of tool calls.
+ * Rule = `Tool` (e.g. `Edit`, `mcp__server__tool`) or `Bash:<command prefix>` (e.g. `Bash:npm test`).
  */
 
 type Input = Record<string, unknown> | undefined
@@ -11,17 +11,17 @@ const short = (text: string, max: number): string =>
   text.length > max ? text.slice(0, max - 1) + '…' : text
 
 /**
- * Verkettete oder umgeleitete Befehle passen nie auf eine `Bash:`-Regel – sonst würde
- * „git status && rm -rf …“ über die Regel „git status“ durchrutschen.
+ * Chained or redirected commands never match a `Bash:` rule – otherwise
+ * "git status && rm -rf …" would slip through via the rule "git status".
  */
 const COMPOUND = /[;&|<>`\n\r]|\$\(/
 
-/** Regel, die „Immer erlauben“ für diesen Aufruf speichert */
+/** Rule that "Immer erlauben" (always allow) saves for this call */
 export function ruleFor(tool: string, input: Input): string {
   if (tool !== 'Bash') return tool
   const command = str(input?.command).trim()
   if (!command || COMPOUND.test(command)) return ''
-  // Programm + erstes Unterkommando, z. B. „npm test“, „git status“, „dotnet build“
+  // Program + first subcommand, e.g. "npm test", "git status", "dotnet build"
   const words = command.split(/\s+/)
   const second = words[1] && /^[a-z][\w:-]*$/i.test(words[1]) ? ` ${words[1]}` : ''
   return `Bash:${words[0]}${second}`
@@ -38,7 +38,7 @@ export function matchesRule(rule: string, tool: string, input: Input): boolean {
   return command === prefix || command.startsWith(prefix + ' ')
 }
 
-/** Fehlermeldung oder null */
+/** Error message or null */
 export function validateRule(rule: string): string | null {
   const r = rule.trim()
   if (!r) return 'Regel ist leer'
@@ -51,7 +51,7 @@ export function validateRule(rule: string): string | null {
   return /^[\w.-]+$/.test(r) ? null : `Ungültiger Tool-Name: ${r}`
 }
 
-/** Was ein Tool-Aufruf tut, in einer Zeile für die Aktivitätsanzeige */
+/** What a tool call does, in one line for the activity display */
 export function describeTool(tool: string, input: Input): string {
   const file = baseName(str(input?.file_path) || str(input?.path) || str(input?.notebook_path))
   switch (tool) {

@@ -1,7 +1,7 @@
 /**
- * Kleiner Markdown-Anzeiger ohne Abhängigkeit (Pläne der Agents, Tagesbericht): Überschriften,
- * Listen mit Kästchen, Code-Blöcke, `Code` und **fett**. Alles andere (Tabellen, Links) bleibt Text.
- * Baut React-Elemente – es wird nie HTML aus dem Text eingesetzt.
+ * Small Markdown renderer without dependencies (agents' plans, daily report): headings,
+ * lists with checkboxes, code blocks, `code` and **bold**. Everything else (tables, links) stays text.
+ * Builds React elements – HTML from the text is never inserted.
  */
 
 function inline(text: string): React.ReactNode[] {
@@ -20,7 +20,7 @@ function inline(text: string): React.ReactNode[] {
 interface Item {
   indent: number
   ordered: boolean
-  /** undefined = kein Kästchen */
+  /** undefined = no checkbox */
   checked?: boolean
   text: string
 }
@@ -106,7 +106,7 @@ function Markdown({ text }: { text: string }): React.JSX.Element {
       continue
     }
     if (/^\s*\|.*\|\s*$/.test(line)) {
-      // Tabellenzeile: unverändert in fester Breite
+      // Table row: unchanged, in monospace
       flush()
       blocks.push(
         <pre key={key++} className="md-table">
@@ -115,7 +115,7 @@ function Markdown({ text }: { text: string }): React.JSX.Element {
       )
       continue
     }
-    // Fortsetzungszeile eines Listenpunkts
+    // Continuation line of a list item
     if (items.length && /^\s+/.test(line)) items[items.length - 1].text += ' ' + line.trim()
     else {
       flushItems()

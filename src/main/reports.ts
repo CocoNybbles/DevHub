@@ -7,9 +7,9 @@ import { askClaude } from './voiceCommands'
 const baseName = (path: string): string => path.split(/[\\/]/).pop() || path
 
 /**
- * Tagesbericht: Was haben die Agents heute je Projekt getan, was ist offen? Die Fakten (Agents,
- * letzte Antworten, geänderte Dateien, Aufgaben, beendete Sitzungen) stellt DevHub zusammen,
- * eine headless Claude-Instanz (Haiku, ohne Tools) formuliert daraus den Bericht.
+ * Daily report: what did the agents do today per project, what is still open? DevHub collects
+ * the facts (agents, last replies, changed files, tasks, ended sessions), a headless Claude
+ * instance (Haiku, without tools) writes the report from them.
  */
 export async function dailyReport(agents: AgentManager, projectId?: string): Promise<string> {
   const state = getState()
@@ -75,7 +75,7 @@ function agentFacts(a: Agent, edits: Record<string, EditedFile[]>): string {
     .join('\n')
 }
 
-/** Kurzfassung einer Antwort zum Vorlesen (ein bis zwei gesprochene Sätze) */
+/** Short summary of a reply for reading aloud (one or two spoken sentences) */
 export async function spokenSummary(agentName: string, lastMessage: string): Promise<string> {
   const prompt = [
     'Summarize the following final answer of an AI coding agent for being read aloud to the user.',

@@ -10,7 +10,7 @@ import { isTeamWorker } from '../../../shared/types'
 import { timeOf } from '../lib/format'
 import { CloseIcon, SendIcon } from './Icons'
 
-/** Zwei Agents haben dieselbe Datei bearbeitet */
+/** Two agents have edited the same file */
 export interface FileConflict {
   key: string
   filePath: string
@@ -25,7 +25,7 @@ interface Props {
   conflicts: FileConflict[]
   onSelectAgent: (id: string) => void
   onAnswer: (id: number, answer: PermissionAnswer, message?: string) => void
-  /** Antwort an einen fertigen Agent (Text + Enter) */
+  /** Reply to a finished agent (text + Enter) */
   onReply: (agentId: string, text: string) => void
   onDismissNotice: (id: number) => void
   onDismissConflict: (key: string) => void
@@ -34,9 +34,9 @@ interface Props {
 const baseName = (path: string): string => path.split(/[\\/]/).pop() ?? path
 
 /**
- * Eingang unten in der Seitenleiste: alles, was auf den Nutzer wartet – Freigaben (mit
- * Entscheidung), wartende Agents (fertige mit Direktantwort), Hinweise der Agents und Warnungen,
- * wenn zwei Agents dieselbe Datei bearbeiten. Leer = unsichtbar.
+ * Inbox at the bottom of the sidebar: everything waiting for the user – permission requests
+ * (with decision), waiting agents (finished ones with direct reply), notices from the agents and
+ * warnings when two agents edit the same file. Empty = invisible.
  */
 function InboxPanel(props: Props): React.JSX.Element | null {
   const [replies, setReplies] = useState<Record<string, string>>({})
@@ -121,8 +121,8 @@ function InboxPanel(props: Props): React.JSX.Element | null {
         ))}
 
         {waiting.map((a) => {
-          // Direktantwort nur, wenn der Agent fertig ist – bei einer offenen Auswahl/Rückfrage
-          // würde getippter Text diese beantworten
+          // Direct reply only when the agent is done – with an open selection/question,
+          // typed text would answer that instead
           const done = (a.statusMessage ?? '').startsWith('Fertig')
           return (
             <div key={a.id} className="inbox-item">

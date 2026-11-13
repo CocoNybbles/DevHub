@@ -53,7 +53,7 @@ export async function runVoiceCommand(
 
   if (decision.action === 'send') {
     const agent = running.find((a) => a.id === decision.agentId)
-    // Gespeicherter Prompt aus der Bibliothek (+ ggf. zusätzlich Gesagtes)
+    // Saved prompt from the library (+ anything said in addition)
     const saved = decision.promptId ? prompts.find((p) => p.id === decision.promptId) : undefined
     const message = [saved?.text, decision.message?.trim()].filter(Boolean).join('\n\n')
     if (!agent || !message) {
@@ -140,7 +140,7 @@ function parseDecision(raw: string): Decision {
   }
 }
 
-/** Ruft `claude -p` ohne Tools auf; der Prompt geht über stdin (kein Quoting nötig). */
+/** Calls `claude -p` without tools; the prompt goes via stdin (no quoting needed). */
 export async function askClaude(prompt: string): Promise<string> {
   const claude = await resolveClaude()
   if (!claude) throw new Error('Claude Code wurde nicht gefunden')

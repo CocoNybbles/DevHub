@@ -8,12 +8,12 @@ import Modal from './Modal'
 
 interface Props {
   projects: Project[]
-  /** Vorgewähltes Projekt */
+  /** Preselected project */
   projectId: string
   agents: Agent[]
   templates: AgentTemplate[]
   tasks: Task[]
-  /** Agent wurde für eine Aufgabe gestartet → anzeigen */
+  /** Agent was started for a task → show it */
   onAgentStarted: (agent: Agent) => void
   onClose: () => void
 }
@@ -25,15 +25,15 @@ const COLUMNS: { status: TaskStatus; title: string }[] = [
 ]
 
 /**
- * Aufgaben-Board je Projekt: Aufgaben sammeln, mit einem neuen Agent starten oder einem
- * laufenden in die Warteschlange legen. „Erledigt“ setzt DevHub, sobald der Agent fertig meldet.
+ * Task board per project: collect tasks, start them with a new agent or put them into a
+ * running agent's queue. DevHub sets "Erledigt" (done) as soon as the agent reports done.
  */
 function TaskBoardDialog(props: Props): React.JSX.Element {
   const [projectId, setProjectId] = useState(props.projectId)
   const [draft, setDraft] = useState('')
   const [error, setError] = useState<string | null>(null)
   const tasks = props.tasks.filter((t) => t.projectId === projectId)
-  // Aufträge nimmt nur an, wer ansprechbar ist (keine Team-Worker)
+  // Only agents that can be addressed accept instructions (no team workers)
   const agents = props.agents.filter((a) => a.projectId === projectId && !isTeamWorker(a))
 
   const guard = (p: Promise<unknown>): void => {

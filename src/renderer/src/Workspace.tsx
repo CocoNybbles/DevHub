@@ -114,16 +114,16 @@ function Workspace(): React.JSX.Element {
   const [voiceStatus, setVoiceStatus] = useState<VoiceStatus | null>(null)
   const [toast, setToast] = useState<string | null>(null)
 
-  // Eingang: offene Freigaben, Hinweise der Agents, ausgeblendete Datei-Konflikte
+  // Inbox: pending permission requests, notices from the agents, dismissed file conflicts
   const [permissions, setPermissions] = useState<PermissionInfo[]>([])
   const [notices, setNotices] = useState<UserNotice[]>([])
   const [dismissedConflicts, setDismissedConflicts] = useState<Set<string>>(new Set())
   const [tasks, setTasks] = useState<Task[]>([])
   const [prompts, setPrompts] = useState<PromptTemplate[]>([])
   const [engines, setEngines] = useState<Engine[]>([])
-  /** Zuletzt gezeigter Plan je Agent (MCP `show_plan`) */
+  /** Most recently shown plan per agent (MCP `show_plan`) */
   const [planByAgent, setPlanByAgent] = useState<Record<string, CodePlan>>({})
-  // Fenster der Workbench
+  // Workbench dialogs
   const [review, setReview] = useState<{
     projectId: string
     agentId?: string
@@ -189,7 +189,7 @@ function Workspace(): React.JSX.Element {
     )
     const offPermissions = window.api.inbox.onPermissions((list) => {
       setPermissions(list)
-      // „Immer“ hat ggf. eine Regel am Projekt gespeichert → Projekte frisch laden
+      // "Immer" (always) may have saved a rule on the project → reload the projects
       window.api.projects.list().then(setProjects)
     })
     const offNotice = window.api.inbox.onNotice((n) =>
@@ -199,17 +199,17 @@ function Workspace(): React.JSX.Element {
     const offPlan = window.api.code.onPlan((plan) =>
       setPlanByAgent((m) => ({ ...m, [plan.agentId]: plan }))
     )
-    // Agent bittet um Durchsicht seiner Änderungen (MCP `show_diff`)
+    // Agent asks for a review of its changes (MCP `show_diff`)
     const offShowDiff = window.api.code.onShowDiff((agentId, filePath) => {
       const agent = agentsRef.current.find((a) => a.id === agentId)
       if (agent) setReview({ projectId: agent.projectId, agentId, filePath })
     })
-    // Windows-Benachrichtigung angeklickt → diesen Agent zeigen
+    // Windows notification clicked → show this agent
     const offFocusRequest = window.api.agents.onFocusRequest((agentId) => {
       setEditorTab(null)
       setSelection({ kind: 'agent', agentId })
     })
-    // Kurzfassung eines fertigen Agents vorlesen (Windows-Sprachausgabe)
+    // Read the short summary of a finished agent aloud (Windows speech synthesis)
     const offSpeak = window.api.voice.onSpeak((text) => {
       const utterance = new SpeechSynthesisUtterance(text)
       utterance.lang = /[äöüß]|\b(der|die|das|und|ist|hat|nicht)\b/i.test(text) ? 'de-DE' : 'en-US'
@@ -219,7 +219,7 @@ function Workspace(): React.JSX.Element {
     window.api.tasks.list().then(setTasks)
     window.api.prompts.list().then(setPrompts)
     window.api.engines.list().then(setEngines)
-    // Nach Neuladen der Oberfläche: bisher gesammelte Snippets der laufenden Agents
+    // After reloading the UI: snippets of the running agents collected so far
     window.api.code.snippets().then((all) => setSnippetsByAgent((m) => ({ ...all, ...m })))
     window.api.code.edits().then((all) => setEditsByAgent((m) => ({ ...all, ...m })))
 
@@ -411,17 +411,17 @@ function Workspace(): React.JSX.Element {
         : [],
     [activeAgentId, editsByAgent, settings.showEditedFiles, closedTabs]
   )
-  /** Plan des aktiven Agents (rechts als Reiter), solange er nicht geschlossen wurde */
+  /** The active agent's plan (as a tab on the right) as long as it has not been closed */
   const planKey = `plan:${activeAgentId ?? ''}`
   const shownPlan = activeAgentId ? planByAgent[activeAgentId] : undefined
   const activePlan = shownPlan && !isTabClosed(closedTabs, planKey, shownPlan.at) ? shownPlan : null
-  // Spalte nur, solange ein Reiter offen ist – alle geschlossen → Spalte zu
+  // Column only while a tab is open – all closed → column hidden
   const showCodePane =
     !!codeFocus || activeSnippets.length > 0 || activeEdits.length > 0 || !!activePlan
 
   /**
-   * Zwei laufende Agents haben dieselbe Datei bearbeitet (gleicher Pfad = gleiches Verzeichnis;
-   * Agents mit eigenem Worktree stoßen so nie zusammen).
+   * Two running agents have edited the same file (same path = same directory;
+   * agents with their own worktree thus never collide).
    */
   const conflicts = useMemo<FileConflict[]>(() => {
     const running = new Set(agents.map((a) => a.id))
@@ -446,7 +446,7 @@ function Workspace(): React.JSX.Element {
     setSelection({ kind: 'agent', agentId })
   }, [])
 
-  /** Projekt der aktuellen Ansicht (für Aufgaben), sonst das erste */
+  /** Project of the current view (for tasks), otherwise the first one */
   const currentProjectId =
     (selection?.kind === 'project'
       ? selection.projectId
@@ -1073,7 +1073,7 @@ function Workspace(): React.JSX.Element {
           onSaved={async (p) => {
             setProjectDialog(null)
             setProjects(await window.api.projects.list())
-            // Aus „Ausführen“ heraus bearbeitet → dorthin zurück, Ansicht bleibt
+            // Edited from within "Ausführen" (run) → back to it, the view stays
             if (!runFor) setSelection({ kind: 'project', projectId: p.id })
           }}
         />

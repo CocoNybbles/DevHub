@@ -5,19 +5,19 @@ import Modal from './Modal'
 
 interface Props {
   project: Project
-  /** Agent, der einen Screenshot der Vorschau bekommt (aktiver Agent des Projekts) */
+  /** Agent that receives a screenshot of the preview (the project's active agent) */
   agent?: Agent
   onEditProject: () => void
   onClose: () => void
 }
 
-/** Höchstens so viel Ausgabe im Fenster halten */
+/** Keep at most this much output in the window */
 const MAX_SHOWN = 200_000
 
 /**
- * Ausführen: Befehle des Projekts (Dev-Server, Tests …) starten/stoppen und ihre Ausgabe sehen.
- * Die Prozesse laufen weiter, wenn das Fenster zu ist; Agents lesen sie per `run_output`.
- * Dazu die Web-Vorschau in einem eigenen Fenster, mit Screenshot an den Agent.
+ * Run: start/stop the project's commands (dev server, tests …) and see their output.
+ * The processes keep running when the window is closed; agents read it via `run_output`.
+ * Plus the web preview in its own window, with a screenshot to the agent.
  */
 function RunDialog({ project, agent, onEditProject, onClose }: Props): React.JSX.Element {
   const [runs, setRuns] = useState<RunInfo[]>([])
@@ -49,7 +49,7 @@ function RunDialog({ project, agent, onEditProject, onClose }: Props): React.JSX
     }
   }, [project.id, refresh])
 
-  // Ausgabe des gewählten Befehls laden
+  // Load the output of the selected command
   useEffect(() => {
     selectedRef.current = selected
     if (!selected) return
@@ -60,7 +60,7 @@ function RunDialog({ project, agent, onEditProject, onClose }: Props): React.JSX
     }
   }, [project.id, selected])
 
-  // Am Ende bleiben
+  // Stay at the end
   useEffect(() => {
     const el = outRef.current
     if (el) el.scrollTop = el.scrollHeight

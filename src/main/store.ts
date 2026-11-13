@@ -16,7 +16,7 @@ import type {
 } from '../shared/types'
 import { DEFAULT_HOTKEYS } from '../shared/hotkeys'
 
-/** Gespeicherter Agent; `needsInput` = Hinweistext, falls er beim Beenden auf Eingabe wartete. */
+/** Saved agent; `needsInput` = hint text if it was waiting for input at shutdown. */
 export type PersistedAgent = Omit<
   Agent,
   'status' | 'statusMessage' | 'editing' | 'activity' | 'progress' | 'usage' | 'lastMessage'
@@ -37,13 +37,13 @@ interface PersistedState {
   teams: Team[]
   /** Location last used in the folder picker (parent folder of the choice) */
   lastPickDir?: string
-  /** Aufgaben-Board */
+  /** Task board */
   tasks: Task[]
-  /** Beendete Sitzungen (Verlauf), neueste zuerst */
+  /** Ended sessions (history), newest first */
   archive: ArchivedSession[]
-  /** Prompt-Bibliothek */
+  /** Prompt library */
   prompts: PromptTemplate[]
-  /** Weitere Engines neben Claude Code */
+  /** Further engines besides Claude Code */
   engines: Engine[]
 }
 

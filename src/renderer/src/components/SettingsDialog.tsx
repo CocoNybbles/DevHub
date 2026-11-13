@@ -44,16 +44,16 @@ interface Props {
   onVoiceChanged: () => void
   onClose: () => void
   prompts: PromptTemplate[]
-  /** null = neuen Prompt anlegen */
+  /** null = create a new prompt */
   onEditPrompt: (p: PromptTemplate | null) => void
   onRemovePrompt: (p: PromptTemplate) => void
   engines: Engine[]
-  /** null = neue Engine anlegen */
+  /** null = create a new engine */
   onEditEngine: (e: Engine | null) => void
   onRemoveEngine: (e: Engine) => void
 }
 
-/** Zahl als Einstellung: Entwurf lokal, gespeichert beim Verlassen des Feldes */
+/** Number as a setting: draft kept locally, saved when leaving the field */
 function NumberSetting(p: {
   label: string
   value: number
@@ -86,7 +86,7 @@ function NumberSetting(p: {
   )
 }
 
-/** Fernzugriff: Schalter, Port und die Adressen fürs Handy */
+/** Remote access: switch, port and the addresses for the phone */
 function RemoteSettings({
   settings,
   update
@@ -99,7 +99,7 @@ function RemoteSettings({
   const { remoteEnabled, remotePort, remoteToken } = settings
   useEffect(() => {
     let cancelled = false
-    // Kurz warten: der Server meldet einen belegten Port erst nach dem Start
+    // Wait briefly: the server reports a port in use only after starting
     const t = setTimeout(() => window.api.remote.info().then((i) => !cancelled && setInfo(i)), 400)
     return () => {
       cancelled = true

@@ -4,14 +4,14 @@ import { dirname, join, relative, resolve, sep } from 'path'
 import type { AgentWorktree, GitDiff, GitFileChange } from '../shared/types'
 
 /**
- * Git-Zugriffe für Worktrees (ein Arbeitsverzeichnis je Agent) und das Prüfen von Änderungen.
- * Ohne Electron-Abhängigkeit, damit es per Skript getestet werden kann. Aufruf immer per
- * `execFile` (keine Shell → Pfade und Meldungen brauchen kein Quoting).
+ * Git access for worktrees (one working directory per agent) and for reviewing changes.
+ * No Electron dependency, so it can be tested by script. Always called via
+ * `execFile` (no shell → paths and messages need no quoting).
  */
 
-/** Hash des leeren Baums: Vergleichsbasis in einem Repository ohne Commit */
+/** Hash of the empty tree: comparison base in a repository without a commit */
 const EMPTY_TREE = '4b825dc642cb6eb9a060e54bf8d69288fbee4904'
-/** Größere Dateien werden im Vergleich nicht geladen */
+/** Larger files are not loaded in the diff */
 const MAX_DIFF_BYTES = 2_000_000
 
 export function git(cwd: string, args: string[]): Promise<string> {
@@ -41,7 +41,7 @@ const ok = (cwd: string, args: string[]): Promise<boolean> =>
     () => false
   )
 
-/** Wurzel des Repositorys, in dem `dir` liegt (null = kein Repository / kein git) */
+/** Root of the repository containing `dir` (null = no repository / no git) */
 export async function repoRoot(dir: string): Promise<string | null> {
   if (!existsSync(dir)) return null
   try {
@@ -51,7 +51,7 @@ export async function repoRoot(dir: string): Promise<string | null> {
   }
 }
 
-/** Aktueller Branch; bei losgelöstem HEAD der Commit */
+/** Current branch; the commit if HEAD is detached */
 async function currentRef(dir: string): Promise<string> {
   const branch = (await git(dir, ['rev-parse', '--abbrev-ref', 'HEAD'])).trim()
   return branch === 'HEAD' ? (await git(dir, ['rev-parse', 'HEAD'])).trim() : branch
@@ -67,25 +67,25 @@ const slug = (name: string): string =>
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '') || 'agent'
 
-/** Branch eines Agents – aus Name und Id berechenbar, bevor der Worktree existiert */
+/** An agent's branch – computable from name and id before the worktree exists */
 export const worktreeBranch = (agentName: string, agentId: string): string =>
   `devhub/${slug(agentName)}-${agentId.slice(0, 8)}`
 
-/** Ordnername des Worktrees unterhalb des Worktree-Ordners eines Projekts */
+/** Folder name of the worktree below a project's worktree folder */
 export const worktreeDirName = (agentName: string, agentId: string): string =>
   `${slug(agentName)}-${agentId.slice(0, 8)}`
 
-/** Ordner im Repository, der DevHub gehört (lokal von Git ausgenommen) */
+/** Folder in the repository that belongs to DevHub (excluded from Git locally) */
 const DEVHUB_DIR = '.devhub'
 
 /**
- * Worktrees liegen **im** Repository (`<repo>/.devhub/worktrees/<name>`), nicht im Datenordner:
- * claude vertraut Unterordnern eines bereits vertrauten Ordners, zeigt für fremde Ordner aber
- * bei jedem Start seinen Vertrauens-Dialog (Vorauswahl „No, exit“) – jeder neue Agent hinge dort.
+ * Worktrees live **inside** the repository (`<repo>/.devhub/worktrees/<name>`), not in the data
+ * folder: claude trusts subfolders of an already trusted folder, but for unknown folders it shows
+ * its trust dialog on every start (preselected "No, exit") – every new agent would get stuck there.
  */
 export const worktreesDir = (repo: string): string => join(repo, DEVHUB_DIR, 'worktrees')
 
-/** `.devhub/` in `.git/info/exclude` eintragen: die Worktrees erscheinen nicht als neue Dateien. */
+/** Add `.devhub/` to `.git/info/exclude`: the worktrees do not show up as new files. */
 async function excludeDevhubDir(repo: string): Promise<void> {
   try {
     const gitDir = resolve(repo, (await git(repo, ['rev-parse', '--git-common-dir'])).trim())
@@ -95,11 +95,11 @@ async function excludeDevhubDir(repo: string): Promise<void> {
     mkdirSync(dirname(file), { recursive: true })
     writeFileSync(file, `${text}${text && !text.endsWith('\n') ? '\n' : ''}${DEVHUB_DIR}/\n`)
   } catch {
-    // ohne Eintrag zeigt `git status` den Ordner als neu – unschön, aber kein Fehler
+    // without the entry `git status` shows the folder as new – not pretty, but not an error
   }
 }
 
-/** Legt für einen Agent einen Worktree mit eigenem Branch an (abgezweigt vom aktuellen Stand). */
+/** Creates a worktree with its own branch for an agent (branched from the current state). */
 export async function createWorktree(
   repo: string,
   path: string,
@@ -115,8 +115,8 @@ export async function createWorktree(
 }
 
 /**
- * Legt einen entfernten Worktree am alten Ort wieder an (Sitzungen lassen sich nur in ihrem
- * Verzeichnis fortsetzen): mit dem alten Branch, falls es ihn noch gibt, sonst neu vom aktuellen Stand.
+ * Recreates a removed worktree at its old location (sessions can only be resumed in their
+ * directory): with the old branch if it still exists, otherwise fresh from the current state.
  */
 export async function restoreWorktree(wt: AgentWorktree): Promise<void> {
   if (existsSync(wt.path)) return
@@ -132,9 +132,9 @@ export async function restoreWorktree(wt: AgentWorktree): Promise<void> {
 }
 
 export interface WorktreeState {
-  /** Nicht committete Änderungen (auch neue Dateien) */
+  /** Uncommitted changes (including new files) */
   dirty: boolean
-  /** Commits, die im Basis-Branch fehlen */
+  /** Commits missing from the base branch */
   ahead: number
 }
 
@@ -144,7 +144,7 @@ export async function worktreeState(wt: AgentWorktree): Promise<WorktreeState> {
   return { dirty: status.trim().length > 0, ahead: Number(ahead.trim()) || 0 }
 }
 
-/** Entfernt Worktree und Branch. Ohne `force` scheitert git bei offenen Änderungen. */
+/** Removes worktree and branch. Without `force` git fails if there are pending changes. */
 export async function removeWorktree(wt: AgentWorktree, force = false): Promise<void> {
   if (existsSync(wt.path)) {
     await git(wt.repo, ['worktree', 'remove', ...(force ? ['--force'] : []), wt.path])
@@ -153,7 +153,7 @@ export async function removeWorktree(wt: AgentWorktree, force = false): Promise<
   await git(wt.repo, ['branch', force ? '-D' : '-d', wt.branch]).catch(() => {})
 }
 
-/** Entfernt den Worktree, wenn nichts darin verloren ginge (sauber, keine eigenen Commits). */
+/** Removes the worktree if nothing in it would be lost (clean, no commits of its own). */
 export async function removeWorktreeIfUnused(wt: AgentWorktree): Promise<boolean> {
   if (!existsSync(wt.path)) return true
   const state = await worktreeState(wt)
@@ -164,7 +164,7 @@ export async function removeWorktreeIfUnused(wt: AgentWorktree): Promise<boolean
 
 export interface WorktreeEntry {
   path: string
-  /** Kurzname des Branches (ohne refs/heads/), leer bei losgelöstem HEAD */
+  /** Short name of the branch (without refs/heads/), empty if HEAD is detached */
   branch: string
 }
 
@@ -181,8 +181,8 @@ export async function listWorktrees(repo: string): Promise<WorktreeEntry[]> {
 }
 
 /**
- * Vergleichsbasis: im Hauptordner der letzte Commit, im Worktree die Stelle, an der abgezweigt
- * wurde (so zählen auch schon committete Änderungen des Agents).
+ * Comparison base: in the main folder the last commit, in a worktree the point it was branched
+ * from (so the agent's already committed changes count as well).
  */
 export async function reviewRef(cwd: string, base?: string): Promise<string> {
   if (base) {
@@ -192,7 +192,7 @@ export async function reviewRef(cwd: string, base?: string): Promise<string> {
   return (await ok(cwd, ['rev-parse', '--verify', 'HEAD'])) ? 'HEAD' : EMPTY_TREE
 }
 
-/** Geänderte Dateien gegenüber `ref`, dazu neue (nicht ignorierte) Dateien */
+/** Files changed compared to `ref`, plus new (not ignored) files */
 export async function changes(cwd: string, ref: string): Promise<GitFileChange[]> {
   const list: GitFileChange[] = []
   const diff = await git(cwd, ['diff', '--name-status', '--no-renames', ref])
@@ -208,7 +208,7 @@ export async function changes(cwd: string, ref: string): Promise<GitFileChange[]
   return list.sort((a, b) => a.path.localeCompare(b.path))
 }
 
-/** Absoluter Pfad einer Datei im Arbeitsverzeichnis; wirft, wenn er hinausführt */
+/** Absolute path of a file in the working directory; throws if it leads outside */
 export function insideWorkdir(cwd: string, path: string): string {
   const full = resolve(cwd, path)
   const rel = relative(resolve(cwd), full)
@@ -236,7 +236,7 @@ export function saveFile(cwd: string, path: string, content: string): void {
   writeFileSync(full, content, 'utf8')
 }
 
-/** Setzt eine Datei auf den Stand von `ref` zurück; gab es sie dort nicht, wird sie gelöscht. */
+/** Resets a file to its state at `ref`; if it did not exist there, it is deleted. */
 export async function discardFile(cwd: string, ref: string, path: string): Promise<void> {
   const full = insideWorkdir(cwd, path)
   if (await ok(cwd, ['cat-file', '-e', `${ref}:${path}`])) {
@@ -247,7 +247,7 @@ export async function discardFile(cwd: string, ref: string, path: string): Promi
   rmSync(full, { force: true })
 }
 
-/** Committet die genannten Dateien (leer = alles); liefert die Ausgabe von git. */
+/** Commits the given files (empty = everything); returns git's output. */
 export async function commit(cwd: string, message: string, paths: string[] = []): Promise<string> {
   const text = message.trim()
   if (!text) throw new Error('Commit-Nachricht fehlt')
@@ -257,8 +257,8 @@ export async function commit(cwd: string, message: string, paths: string[] = [])
 }
 
 /**
- * Führt den Branch eines Worktrees in den Branch zusammen, der im Hauptordner ausgecheckt ist.
- * Bei Konflikten wird abgebrochen (der Hauptordner bleibt unverändert).
+ * Merges a worktree's branch into the branch checked out in the main folder.
+ * Aborts on conflicts (the main folder stays unchanged).
  */
 export async function mergeWorktree(wt: AgentWorktree): Promise<string> {
   const state = await worktreeState(wt)
@@ -284,7 +284,7 @@ export async function mergeWorktree(wt: AgentWorktree): Promise<string> {
   }
 }
 
-/** Arbeitsverzeichnis des Agents im Worktree: gleicher Unterordner wie der Agent-Ordner im Repository */
+/** The agent's working directory in the worktree: same subfolder as the agent folder in the repository */
 export function worktreeCwd(wt: AgentWorktree, agentPath: string): string {
   const rel = relative(wt.repo, resolve(agentPath))
   const cwd = rel && !rel.startsWith('..') ? join(wt.path, rel) : wt.path

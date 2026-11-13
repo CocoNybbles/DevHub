@@ -1,6 +1,6 @@
 import type { AgentUsage, Settings, TokenTotals } from '../../../shared/types'
 
-/** 950 → „950“, 12 345 → „12k“, 1 234 567 → „1,2M“ */
+/** 950 → "950", 12 345 → "12k", 1 234 567 → "1,2M" */
 export function formatTokens(n: number): string {
   if (n < 1000) return String(Math.round(n))
   if (n < 1_000_000) return `${Math.round(n / 1000)}k`
@@ -20,8 +20,8 @@ export function addTotals(a: TokenTotals, b: TokenTotals | undefined): TokenTota
 }
 
 /**
- * Geschätzte Kosten in USD aus den Preisen der Einstellungen (je Million Tokens).
- * Cache-Lesen zählt mit 10 %, Cache-Schreiben mit 125 % des Eingabepreises. null = keine Preise.
+ * Estimated cost in USD from the prices in the settings (per million tokens).
+ * Cache reads count at 10 %, cache writes at 125 % of the input price. null = no prices.
  */
 export function costOf(
   t: TokenTotals,
@@ -35,7 +35,7 @@ export function costOf(
 export const formatCost = (usd: number): string =>
   `${usd.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} $`
 
-/** „Kontext 84k · heute 12k aus“ für Tooltips */
+/** "Kontext 84k · heute 12k aus" for tooltips */
 export function usageLine(
   usage: AgentUsage | undefined,
   s: Pick<Settings, 'priceInput' | 'priceOutput'>
@@ -49,7 +49,7 @@ export function usageLine(
   )
 }
 
-/** `YYYY-MM-DD` in lokaler Zeit (wie im Main) */
+/** `YYYY-MM-DD` in local time (as in main) */
 export function localDay(ms: number): string {
   const d = new Date(ms)
   const two = (n: number): string => String(n).padStart(2, '0')
@@ -67,7 +67,7 @@ export const dateTimeOf = (at: number): string =>
     minute: '2-digit'
   })
 
-/** Platzhalter `{{name}}` eines Prompts in der Reihenfolge ihres Auftretens (ohne Doppelte) */
+/** Placeholders `{{name}}` of a prompt in order of appearance (without duplicates) */
 export function placeholdersOf(text: string): string[] {
   const names: string[] = []
   for (const m of text.matchAll(/\{\{\s*([^{}]+?)\s*\}\}/g)) {

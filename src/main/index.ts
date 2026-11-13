@@ -96,7 +96,7 @@ const runs = new RunManager({
   onOutput: (projectId, name, chunk) => send('runs:output', projectId, name, chunk)
 })
 
-/** MCP-Tools `run_*`: Agents sehen und steuern die Projekt-Befehle des Ausführen-Fensters. */
+/** MCP tools `run_*`: agents see and control the project commands of the Run window. */
 function runTool(
   p: Project,
   tool: 'run_list' | 'run_output' | 'run_start' | 'run_stop',
@@ -136,10 +136,10 @@ function runTool(
   return `${run.name} (${run.running ? 'running' : 'not running'}), last ${count} lines:\n${tail || '(no output yet)'}`
 }
 
-/** Zuletzt gemeldeter Wartegrund je Agent (keine doppelten Benachrichtigungen kurz hintereinander) */
+/** Most recently reported waiting reason per agent (no duplicate notifications in quick succession) */
 const lastAttention = new Map<string, { message: string; at: number }>()
 
-/** Agent wartet auf den Nutzer und DevHub ist im Hintergrund → Windows-Benachrichtigung + Blinken. */
+/** Agent is waiting for the user and DevHub is in the background → Windows notification + flashing. */
 function notifyAttention(agent: Agent, message: string): void {
   if (!getState().settings.notifyOnWaiting) return
   if (!mainWindow || mainWindow.isDestroyed() || mainWindow.isFocused()) return
@@ -196,15 +196,15 @@ const agents = new AgentManager({
 
 const remote = new RemoteServer(agents)
 
-// ------------------------------------------------------------ Änderungen prüfen (Git)
+// ------------------------------------------------------------ Review changes (Git)
 
 interface ResolvedTarget {
   target: ReviewTarget
-  /** Nur bei Worktrees */
+  /** Only for worktrees */
   worktree?: AgentWorktree
 }
 
-/** Prüfbare Arbeitsverzeichnisse eines Projekts: Hauptordner + Worktrees seiner Agents. */
+/** A project's reviewable working directories: main folder + worktrees of its agents. */
 async function reviewTargets(
   projectId: string
 ): Promise<{ info: ReviewInfo; all: ResolvedTarget[] }> {
@@ -258,9 +258,9 @@ async function reviewTarget(projectId: string, targetId: string): Promise<Resolv
   return found
 }
 
-// ------------------------------------------------------------ Web-Vorschau
+// ------------------------------------------------------------ Web preview
 
-/** Vorschau-Fenster je Projekt */
+/** Preview window per project */
 const previews = new Map<string, BrowserWindow>()
 
 function previewUrl(p: Project): string {
@@ -286,7 +286,7 @@ function openPreview(projectId: string): BrowserWindow {
     autoHideMenuBar: true,
     title: `Vorschau · ${p.name}`,
     backgroundColor: '#ffffff',
-    // Fremde Seite: abgeschottet, ohne Preload/Node
+    // Foreign page: sandboxed, without preload/Node
     webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false }
   })
   win.webContents.setWindowOpenHandler((details) => {
@@ -299,7 +299,7 @@ function openPreview(projectId: string): BrowserWindow {
   return win
 }
 
-/** Dateiendungen, die im Editor-Tab als Bild-Vorschau gezeigt werden */
+/** File extensions shown as an image preview in the editor tab */
 const IMAGE_TYPES: Record<string, string> = {
   png: 'image/png',
   jpg: 'image/jpeg',
@@ -326,7 +326,7 @@ function createWindow(): void {
   })
 
   mainWindow.on('ready-to-show', () => mainWindow?.show())
-  // Blinken in der Taskleiste (wartender Agent) endet, sobald das Fenster wieder vorn ist
+  // Flashing in the taskbar (waiting agent) ends as soon as the window is in front again
   mainWindow.on('focus', () => mainWindow?.flashFrame(false))
 
   // Dev aid: DEVHUB_SCREENSHOT=<file.png> saves an image of the window after DEVHUB_SCREENSHOT_DELAY ms (default 8000)
@@ -694,7 +694,7 @@ function registerIpc(): void {
   ipcMain.handle('agents:dequeue', (_, id: string, queueId: string) => agents.dequeue(id, queueId))
   ipcMain.handle('agents:activityLog', (_, id: string) => agents.activityLog(id))
 
-  // --- Eingang: Freigaben ---
+  // --- Inbox: approvals ---
   ipcMain.handle('inbox:permissions', () => agents.userPermissions())
   ipcMain.handle('inbox:answer', (_, id: number, answer: PermissionAnswer, message?: string) => {
     if (!['allow', 'deny', 'always', 'terminal'].includes(answer))
@@ -702,7 +702,7 @@ function registerIpc(): void {
     agents.answerUserPermission(Number(id), answer, message)
   })
 
-  // --- Aufgaben ---
+  // --- Tasks ---
   ipcMain.handle('tasks:list', () => agents.tasks())
   ipcMain.handle('tasks:save', (_, input: { id?: string; projectId: string; text: string }) =>
     agents.saveTask(input)
@@ -720,7 +720,7 @@ function registerIpc(): void {
   )
   ipcMain.handle('tasks:assign', (_, id: string, agentId: string) => agents.assignTask(id, agentId))
 
-  // --- Verlauf ---
+  // --- History ---
   ipcMain.handle('history:list', () => agents.archive())
   ipcMain.handle('history:remove', (_, id: string) => agents.removeArchived(id))
   ipcMain.handle('history:resume', (_, id: string, fork?: boolean) =>
@@ -749,7 +749,7 @@ function registerIpc(): void {
     )
   )
 
-  // --- Änderungen prüfen (Git) ---
+  // --- Review changes (Git) ---
   ipcMain.handle('git:targets', async (_, projectId: string): Promise<ReviewInfo> => {
     try {
       return (await reviewTargets(projectId)).info
@@ -798,7 +798,7 @@ function registerIpc(): void {
     }
   )
 
-  // --- Ausführen: Projekt-Befehle + Web-Vorschau ---
+  // --- Run: project commands + web preview ---
   ipcMain.handle('runs:list', (_, projectId: string) => runs.list(project(projectId)))
   ipcMain.handle('runs:start', (_, projectId: string, name: string) =>
     runs.start(project(projectId), String(name))
@@ -812,7 +812,7 @@ function registerIpc(): void {
   ipcMain.handle('preview:open', (_, projectId: string) => {
     openPreview(projectId)
   })
-  // Bild der Vorschau speichern und als Anhang in den Prompt des Agents eintragen (ohne Abschicken)
+  // Save an image of the preview and insert it as an attachment into the agent's prompt (without submitting)
   ipcMain.handle('preview:screenshot', async (_, projectId: string, agentId: string) => {
     const win = openPreview(projectId)
     if (win.webContents.isLoading())
@@ -824,7 +824,7 @@ function registerIpc(): void {
     return file
   })
 
-  // --- Prompt-Bibliothek ---
+  // --- Prompt library ---
   ipcMain.handle('prompts:list', () => getState().prompts)
   ipcMain.handle('prompts:save', (_, input: PromptTemplateInput) => {
     const name = input.name?.trim().replace(/\s+/g, ' ')
@@ -846,7 +846,7 @@ function registerIpc(): void {
     updateState((s) => (s.prompts = s.prompts.filter((p) => p.id !== id)))
   )
 
-  // --- Weitere Engines ---
+  // --- Further engines ---
   ipcMain.handle('engines:list', () => getState().engines)
   ipcMain.handle('engines:save', (_, input: EngineInput) => {
     const name = input.name?.trim().replace(/\s+/g, ' ')
@@ -873,7 +873,7 @@ function registerIpc(): void {
     updateState((s) => (s.engines = s.engines.filter((e) => e.id !== id)))
   })
 
-  // --- Berichte, Fernzugriff ---
+  // --- Reports, remote access ---
   ipcMain.handle('reports:daily', (_, projectId?: string) =>
     dailyReport(agents, projectId || undefined)
   )
@@ -1024,7 +1024,7 @@ function registerIpc(): void {
     next.priceInput = number(next.priceInput, 0, 10_000, 'Preis Eingabe')
     next.priceOutput = number(next.priceOutput, 0, 10_000, 'Preis Ausgabe')
     next.remotePort = Math.round(number(next.remotePort, 1024, 65535, 'Port'))
-    // Geheimer Adressteil entsteht beim ersten Einschalten; leeren = neu erzeugen (alte Links verfallen)
+    // The secret part of the address is created when first switched on; clearing it = regenerate (old links expire)
     if (next.remoteEnabled && !next.remoteToken)
       next.remoteToken = randomBytes(18).toString('base64url')
     updateState((s) => (s.settings = next))
@@ -1061,7 +1061,7 @@ app.whenReady().then(async () => {
   }
 })
 
-// Agents beenden, aber gespeichert lassen → Wiederherstellung beim nächsten Start
+// Stop the agents but keep them saved → restore on the next start
 app.on('before-quit', () => {
   agents.shutdown()
   runs.stopAll()
