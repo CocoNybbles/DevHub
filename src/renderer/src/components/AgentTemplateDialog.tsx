@@ -6,16 +6,16 @@ import DictationTextarea from './DictationTextarea'
 import Modal from './Modal'
 
 interface Props {
-  /** null = neue Vorlage */
+  /** null = new template */
   template: AgentTemplate | null
   onSaved: (t: AgentTemplate) => void
   onClose: () => void
 }
 
-/** Vorschläge für das Modellfeld (Aliase von Claude Code); freie Eingabe bleibt möglich. */
+/** Suggestions for the model field (Claude Code aliases); free input is still possible. */
 const MODEL_SUGGESTIONS = ['fable', 'opus', 'sonnet', 'haiku']
 
-/** Vordefinierten Agent anlegen/bearbeiten: Name, Modell, Rolle/Richtlinien (auch per Diktat). */
+/** Create/edit a predefined agent: name, model, role/guidelines (dictation supported). */
 function AgentTemplateDialog({ template, onSaved, onClose }: Props): React.JSX.Element {
   const [name, setName] = useState(template?.name ?? '')
   const [model, setModel] = useState(template?.model ?? '')

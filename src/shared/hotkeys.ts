@@ -1,15 +1,15 @@
 /**
- * Tastenkürzel im Electron-Accelerator-Format (z. B. "Control+Shift+Space").
- * Dasselbe Format nutzt der Hauptprozess für `globalShortcut` und der Renderer
- * für die In-App-Erkennung – daher hier gemeinsam.
+ * Keyboard shortcuts in Electron accelerator format (e.g. "Control+Shift+Space").
+ * The main process uses the same format for `globalShortcut` and the renderer
+ * for in-app detection – hence shared here.
  */
 
 export const DEFAULT_HOTKEYS = {
-  /** In der App: Sprach-Anweisung an den aktiven Agent */
+  /** In the app: voice instruction to the active agent */
   agentVoice: 'Control+Shift+Space',
-  /** Systemweit: Agent per Name ansprechen / neuen Agent starten */
+  /** System-wide: address an agent by name / start a new agent */
   globalVoice: 'Control+Alt+Space',
-  /** In der App: Anweisung für den aktiven Agent im Editor-Tab schreiben */
+  /** In the app: write an instruction for the active agent in the editor tab */
   editor: 'Control+G'
 } as const
 
@@ -35,7 +35,7 @@ const NAMED_KEYS: Record<string, string> = {
   PrintScreen: 'PrintScreen'
 }
 
-/** Taste (ohne Modifier) aus `KeyboardEvent.code` – layoutunabhängig. */
+/** Key (without modifiers) from `KeyboardEvent.code` – layout-independent. */
 function keyFromCode(code: string): string | null {
   if (/^Key[A-Z]$/.test(code)) return code.slice(3)
   if (/^Digit\d$/.test(code)) return code.slice(5)
@@ -47,8 +47,8 @@ function keyFromCode(code: string): string | null {
 type KeyLike = Pick<KeyboardEvent, 'code' | 'ctrlKey' | 'altKey' | 'shiftKey' | 'metaKey'>
 
 /**
- * Accelerator aus einem Tastendruck, oder null, wenn er (noch) kein gültiges Kürzel ist:
- * reine Modifier-Taste, unbekannte Taste, oder ohne Strg/Alt/Win (außer F-Tasten).
+ * Accelerator from a key press, or null if it is not (yet) a valid shortcut:
+ * modifier key only, unknown key, or without Ctrl/Alt/Win (except F keys).
  */
 export function acceleratorFromEvent(e: KeyLike): string | null {
   const key = keyFromCode(e.code)
@@ -63,7 +63,7 @@ export function acceleratorFromEvent(e: KeyLike): string | null {
   return [...mods, key].join('+')
 }
 
-/** Vergleicht einen Tastendruck mit einem Accelerator (Reihenfolge der Modifier egal). */
+/** Compares a key press with an accelerator (modifier order doesn't matter). */
 export function matchesAccelerator(e: KeyLike, accelerator: string): boolean {
   const pressed = acceleratorFromEvent(e)
   return pressed !== null && normalize(pressed) === normalize(accelerator)
@@ -94,7 +94,7 @@ const LABELS: Record<string, string> = {
   Backspace: 'Rück'
 }
 
-/** Anzeigeform, z. B. "Strg+Shift+Leertaste". */
+/** Display form, e.g. "Strg+Shift+Leertaste". */
 export function formatAccelerator(accelerator: string): string {
   return accelerator
     .split('+')

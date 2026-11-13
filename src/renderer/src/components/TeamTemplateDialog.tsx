@@ -5,9 +5,9 @@ import DictationTextarea from './DictationTextarea'
 import Modal from './Modal'
 
 interface Props {
-  /** null = neues Team */
+  /** null = new team */
   team: TeamTemplate | null
-  /** Vordefinierte Agents zur Auswahl */
+  /** Predefined agents to choose from */
   templates: AgentTemplate[]
   onSaved: (t: TeamTemplate) => void
   onClose: () => void
@@ -15,10 +15,10 @@ interface Props {
 
 const MAX_MEMBERS = 8
 
-/** Team aus vordefinierten Agents zusammenstellen: Name, Mitglieder (+ automatischer Orchestrator), Richtlinien. */
+/** Assemble a team from predefined agents: name, members (+ automatic orchestrator), guidelines. */
 function TeamTemplateDialog({ team, templates, onSaved, onClose }: Props): React.JSX.Element {
   const [name, setName] = useState(team?.name ?? '')
-  // Neues Team: mit den ersten beiden vordefinierten Agents vorbelegen
+  // New team: prefill with the first two predefined agents
   const [members, setMembers] = useState<TeamMember[]>(
     team?.members ?? [{ templateId: templates[0]?.id }, { templateId: templates[1]?.id }]
   )

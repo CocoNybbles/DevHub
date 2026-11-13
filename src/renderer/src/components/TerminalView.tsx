@@ -2,8 +2,8 @@ import { useEffect, useRef } from 'react'
 import { attachSnapshot, attachTerminal, focusTerminal } from '../lib/terminals'
 
 /**
- * Zeigt das (dauerhaft lebende) xterm-Terminal eines Agents in diesem Container an.
- * `snapshot`: stattdessen das Standbild von vor dem Editor-Tab (s. terminals.ts).
+ * Shows an agent's (long-lived) xterm terminal in this container.
+ * `snapshot`: show the snapshot taken before the editor tab instead (see terminals.ts).
  */
 function TerminalView({
   agentId,

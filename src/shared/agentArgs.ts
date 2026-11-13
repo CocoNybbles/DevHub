@@ -1,10 +1,10 @@
 /**
- * Zusätzliche Start-Flags für Agents (global in den Einstellungen + pro Projekt).
- * Eingabe als Text wie in einer Shell, z. B. `--permission-mode auto --model "opus"`.
- * Die Argumente gehen ohne Shell direkt an claude.exe.
+ * Extra start flags for agents (global in settings + per project).
+ * Entered as text like in a shell, e.g. `--permission-mode auto --model "opus"`.
+ * The arguments go straight to claude.exe without a shell.
  */
 
-/** Flags, die DevHub selbst setzt bzw. die Wiederherstellung/Status/Terminal kaputt machen würden. */
+/** Flags that DevHub sets itself or that would break restore/status/terminal. */
 const RESERVED: Record<string, string> = {
   '--session-id': 'setzt DevHub für die Wiederherstellung selbst',
   '--resume': 'setzt DevHub für die Wiederherstellung selbst',
@@ -27,33 +27,33 @@ const ALIASES: Record<string, string> = {
   '-v': '--version'
 }
 
-/** Zerlegt Text in Argumente; "…" und '…' gruppieren, Backslashes bleiben erhalten (Windows-Pfade). */
+/** Splits text into arguments; "…" and '…' group, backslashes are kept (Windows paths). */
 export function tokenize(text: string): string[] {
-  // Ein Token = Folge aus unquotierten Zeichen und quotierten Abschnitten (z. B. --model="opus 4")
+  // A token = sequence of unquoted characters and quoted sections (e.g. --model="opus 4")
   const tokens = text.match(/(?:[^\s"']+|"[^"]*"|'[^']*')+/g) ?? []
   return tokens.map((t) => t.replace(/"([^"]*)"|'([^']*)'/g, (_, d, s) => d ?? s))
 }
 
 const isFlag = (t: string): boolean => /^-[A-Za-z-]/.test(t)
 
-/** Normierter Flag-Name: `--model=opus` → `--model`, `-r` → `--resume`. */
+/** Normalized flag name: `--model=opus` → `--model`, `-r` → `--resume`. */
 function flagName(token: string): string {
   const name = token.split('=')[0]
   return ALIASES[name] ?? name
 }
 
-/** Gruppen aus Flag + zugehörigen Werten. */
+/** Groups of flag + its values. */
 function groups(tokens: string[]): string[][] {
   const result: string[][] = []
   for (const t of tokens) {
     if (isFlag(t)) result.push([t])
     else if (result.length) result[result.length - 1].push(t)
-    else result.push([t]) // freier Text am Anfang → Fehler in validate
+    else result.push([t]) // free text at the start → error in validate
   }
   return result
 }
 
-/** Fehlermeldung oder null, wenn die Flags verwendbar sind. */
+/** Error message, or null if the flags are usable. */
 export function validateAgentArgs(text: string | undefined): string | null {
   const quotes = (text ?? '').replace(/"[^"]*"|'[^']*'/g, '')
   if (/["']/.test(quotes)) return 'Anführungszeichen nicht geschlossen'
@@ -70,13 +70,13 @@ export function validateAgentArgs(text: string | undefined): string | null {
 }
 
 /**
- * Effektive Argumente: globale Flags, ergänzt um die Projekt-Flags.
- * Gibt es ein Flag in beiden, gewinnt das Projekt (die globale Angabe entfällt).
+ * Effective arguments: global flags, extended by the project flags.
+ * If a flag is in both, the project wins (the global one is dropped).
  */
 export function mergeAgentArgs(
   globalArgs: string | undefined,
   projectArgs: string | undefined,
-  /** Bereits zerlegte Flags mit höchstem Vorrang (z. B. per Sprache genanntes `--model`) */
+  /** Already split flags with the highest precedence (e.g. `--model` named by voice) */
   agentArgs: string[] = []
 ): string[] {
   let merged: string[][] = []
@@ -88,7 +88,7 @@ export function mergeAgentArgs(
   return merged.flat()
 }
 
-/** Gültiger Wert für `--model`: Alias (fable, opus, sonnet, haiku …) oder voller Modellname. */
+/** Valid value for `--model`: alias (fable, opus, sonnet, haiku …) or full model name. */
 export function isValidModelName(model: string): boolean {
   return /^[A-Za-z0-9][A-Za-z0-9._:\-[\]]{0,79}$/.test(model)
 }

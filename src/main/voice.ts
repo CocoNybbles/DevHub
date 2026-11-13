@@ -16,12 +16,12 @@ import { dataDir, getState, updateState } from './store'
 import { canRememberLanguage } from '../shared/voiceLanguage'
 
 /**
- * Sprache → Text mit whisper.cpp (lokal, offline).
- * Engine und Modell werden NICHT mitgeliefert, sondern beim ersten Nutzen
- * nach %APPDATA%/DevHub/whisper/ heruntergeladen.
+ * Speech → text with whisper.cpp (local, offline).
+ * Engine and model are NOT bundled, but downloaded on first use
+ * to <data>/whisper/ (data folder next to the .exe).
  */
 
-/** Feste Version für reproduzierbare Downloads. */
+/** Pinned version for reproducible downloads. */
 const ENGINE_URL =
   'https://github.com/ggml-org/whisper.cpp/releases/download/b5454/whisper-bin-x64.zip'
 const MODEL_BASE_URL = 'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/'
@@ -74,7 +74,7 @@ export function voiceStatus(): VoiceStatus {
 
 let downloading = false
 
-/** Lädt (falls nötig) die Engine und das gewählte Modell und aktiviert das Modell. */
+/** Downloads the engine and the chosen model (if needed) and activates the model. */
 export async function downloadVoice(
   model: WhisperModelId,
   onProgress: (p: DownloadProgress) => void
@@ -115,11 +115,11 @@ export function deleteModel(model: WhisperModelId): void {
 }
 
 /**
- * Mindest-Durchschnittswahrscheinlichkeit der Tokens, damit ein Ergebnis mit der gemerkten
- * Sprache akzeptiert wird. Gemessen: passende Sprache ≈ 0,8–0,95, falsche oft ≈ 0,5.
+ * Minimum average token probability for a result with the remembered language to be
+ * accepted. Measured: matching language ≈ 0.8–0.95, wrong one often ≈ 0.5.
  */
 const MIN_CONFIDENCE = 0.6
-/** Spätestens jede n-te Aufnahme läuft mit automatischer Spracherkennung. */
+/** At least every n-th recording runs with automatic language detection. */
 const AUTO_DETECT_EVERY = 5
 let sinceAutoDetect = 0
 
@@ -130,11 +130,11 @@ interface WhisperResult {
 }
 
 /**
- * WAV (16 kHz, mono, 16 bit) → Text.
- * `voiceFixedLanguage` gesetzt: immer diese Sprache (keine Erkennung).
- * Sonst mit `voiceRememberLanguage`: zuerst die zuletzt erkannte Sprache vorgeben (spart die
- * Spracherkennung, ≈ halbe Laufzeit). Ist das Ergebnis leer oder unsicher, folgt ein Durchlauf
- * mit automatischer Erkennung, dessen Sprache dann gespeichert wird (außer Englisch, s. o.).
+ * WAV (16 kHz, mono, 16 bit) → text.
+ * `voiceFixedLanguage` set: always this language (no detection).
+ * Otherwise with `voiceRememberLanguage`: first force the last detected language (skips
+ * language detection, ≈ half the runtime). If the result is empty or uncertain, a run with
+ * automatic detection follows, whose language is then saved (except English, see above).
  */
 export async function transcribe(wav: ArrayBuffer): Promise<TranscribeResult> {
   const status = voiceStatus()
@@ -149,7 +149,7 @@ export async function transcribe(wav: ArrayBuffer): Promise<TranscribeResult> {
       const r = await runWhisper(model, file, voiceFixedLanguage)
       return { text: r.text, language: voiceFixedLanguage, remembered: true }
     }
-    // Jede n-te Aufnahme trotzdem automatisch erkennen (falls whisper doch einmal übersetzt)
+    // Still auto-detect every n-th recording (in case whisper does translate after all)
     const verify = ++sinceAutoDetect >= AUTO_DETECT_EVERY
     if (voiceRememberLanguage && canRememberLanguage(voiceLanguage) && !verify) {
       const r = await runWhisper(model, file, voiceLanguage)
@@ -172,7 +172,7 @@ export async function transcribe(wav: ArrayBuffer): Promise<TranscribeResult> {
 
 async function runWhisper(model: string, wav: string, language: string): Promise<WhisperResult> {
   const outBase = wav.replace(/\.wav$/i, '')
-  // Höchstens die Hälfte der Kerne, damit App und Agents flüssig bleiben
+  // At most half the cores, so the app and agents stay responsive
   const threads = String(Math.max(1, Math.min(8, Math.floor(cpus().length / 2))))
   const t0 = Date.now()
   await run(
@@ -186,9 +186,9 @@ async function runWhisper(model: string, wav: string, language: string): Promise
       language,
       '-t',
       threads,
-      '-nt', // keine Zeitstempel
-      '-np', // keine Statusausgaben
-      '-ojf', // JSON mit Sprache und Token-Wahrscheinlichkeiten
+      '-nt', // no timestamps
+      '-np', // no status output
+      '-ojf', // JSON with language and token probabilities
       '-of',
       outBase
     ],
@@ -204,7 +204,7 @@ async function runWhisper(model: string, wav: string, language: string): Promise
       .replace(/\[(BLANK_AUDIO|MUSIC|NOISE|SOUND)[^\]]*\]/gi, '')
       .replace(/\s+/g, ' ')
       .trim()
-    // Sondertokens wie [_BEG_] / [_TT_…] zählen nicht
+    // Special tokens like [_BEG_] / [_TT_…] don't count
     const tokens = segments.flatMap((s) => s.tokens ?? []).filter((t) => !t.text.startsWith('[_'))
     const confidence = tokens.length ? tokens.reduce((n, t) => n + t.p, 0) / tokens.length : 0
     const result = { text, language: json.result?.language ?? '', confidence }
@@ -229,8 +229,8 @@ function debug(msg: string): void {
 // -----------------------------------------------------------------------------
 
 /**
- * Startet ein Programm asynchron. lowPriority: Prozesspriorität „niedriger als normal“,
- * damit rechenintensive Arbeit (whisper) die App und das System nicht ausbremst.
+ * Starts a program asynchronously. lowPriority: process priority "below normal",
+ * so compute-heavy work (whisper) doesn't slow down the app and the system.
  */
 function run(
   file: string,
@@ -251,7 +251,7 @@ function run(
       try {
         setPriority(child.pid, constants.priority.PRIORITY_BELOW_NORMAL)
       } catch {
-        // nicht kritisch
+        // not critical
       }
     }
   })

@@ -12,30 +12,30 @@ interface Props {
   agents: Agent[]
   activeAgentId: string | null
   agentVoiceActive: boolean
-  /** Für diesen Agent läuft gerade eine Sprachaufnahme (Mikrofon am Agent rot) */
+  /** A voice recording is running for this agent (agent's microphone red) */
   recordingAgentId: string | null
-  /** Kürzel für die Agent-Aufnahme (Accelerator) */
+  /** Shortcut for agent recording (accelerator) */
   agentHotkey: string
   onActivate: (agentId: string) => void
   onOpenAgent: (agentId: string) => void
   onStartAgent: (projectId: string) => void
   onStopAgent: (agent: Agent) => void
-  /** Sprach-Anweisung an den aktiven Agent */
+  /** Voice instruction to the active agent */
   onAgentVoice: () => void
-  /** Sprach-Anweisung an genau diesen Agent (Mikrofon im Agent-Kopf) */
+  /** Voice instruction to exactly this agent (microphone in the agent header) */
   onAgentVoiceFor: (agentId: string) => void
-  /** `/clear` an den Agent schicken (Unterhaltung leeren) */
+  /** Send `/clear` to the agent (clear the conversation) */
   onClearAgent: (agentId: string) => void
-  /** Gesperrten Agent anklicken → zu seinem Editor-Tab wechseln */
+  /** Click on a locked agent → switch to its editor tab */
   onOpenEditor: (agentId: string) => void
-  /** Anweisung im Editor-Tab schreiben (wie das Kürzel `editorHotkey`) */
+  /** Write an instruction in the editor tab (like the `editorHotkey` shortcut) */
   onEditPrompt: (agentId: string) => void
   editorHotkey: string
 }
 
 /**
- * Mitte: Terminal des ausgewählten Agents, Raster aller Agents eines Projekts
- * oder frei zusammengestelltes Raster (Strg+Klick, projektübergreifend).
+ * Center: terminal of the selected agent, grid of all agents of a project
+ * or a freely assembled grid (Ctrl+click, across projects).
  */
 function CenterPane(props: Props): React.JSX.Element {
   const { selection, projects, agents } = props
@@ -164,7 +164,7 @@ function CenterPane(props: Props): React.JSX.Element {
   )
 }
 
-/** Raster aus Terminals; Klick aktiviert eine Zelle, Doppelklick auf den Kopf öffnet die Einzelansicht. */
+/** Grid of terminals; click activates a cell, double-click on the header opens the single view. */
 function AgentGrid(props: Props & { shown: Agent[]; showProject: boolean }): React.JSX.Element {
   const { shown, projects } = props
   const cols = Math.ceil(Math.sqrt(shown.length || 1))
@@ -222,8 +222,8 @@ function AgentGrid(props: Props & { shown: Agent[]; showProject: boolean }): Rea
 }
 
 /**
- * Agent, dessen Anweisung gerade in einem Editor-Tab geschrieben wird: Terminal unverändert
- * sichtbar (Eingaben gesperrt, Hinweis steht im Kopf); ein Klick darauf wechselt zum Tab.
+ * Agent whose instruction is currently being written in an editor tab: terminal stays visible
+ * unchanged (input locked, notice in the header); clicking it switches to the tab.
  */
 function LockedTerminal({
   agent,
@@ -236,16 +236,16 @@ function LockedTerminal({
     <div
       className="locked-terminal"
       title={`${agent.name} ist gesperrt – Klick wechselt zum Editor-Tab`}
-      // Capture: das Terminal selbst soll den Klick nicht bekommen (keine Auswahl, kein Fokus)
+      // Capture: the terminal itself must not get the click (no selection, no focus)
       onMouseDownCapture={(e) => {
         e.preventDefault()
         e.stopPropagation()
         onOpen()
       }}
     >
-      {/* Standbild in voller Breite; das live-Terminal hängt im (schmaleren) Editor-Tab */}
+      {/* Snapshot at full width; the live terminal is mounted in the (narrower) editor tab */}
       <TerminalView agentId={agent.id} snapshot={hasSnapshot(agent.id)} />
-      {/* Darübergelegt (verkleinert das Terminal nicht): abgedunkelt + Hinweis statt Eingabefeld */}
+      {/* Overlaid (does not shrink the terminal): dimmed + notice instead of the input field */}
       <div className="locked-overlay">
         <span className="locked-pill">
           <LockIcon size={12} /> Eingabe gesperrt – die Anweisung wird im Tab geschrieben
@@ -257,8 +257,8 @@ function LockedTerminal({
 }
 
 /**
- * Rechts im Agent-Kopf: Mikrofon · /clear · Beenden (im Raster aktiviert der Klick nicht die Zelle).
- * Team-Worker: keine Bedienung, nur der Hinweis „beobachten“.
+ * Right side of the agent header: microphone · /clear · stop (in the grid the click does not activate the cell).
+ * Team workers: no controls, only the "beobachten" (observe) notice.
  */
 function AgentButtons(props: Props & { agent: Agent }): React.JSX.Element {
   const a = props.agent
@@ -304,7 +304,7 @@ function AgentButtons(props: Props & { agent: Agent }): React.JSX.Element {
   )
 }
 
-/** Hinweis im Kopf: Anweisung wird im Editor-Tab geschrieben (Klick → Tab) */
+/** Notice in the header: instruction is being written in the editor tab (click → tab) */
 function LockedBadge({ onOpen }: { onOpen: () => void }): React.JSX.Element {
   return (
     <button

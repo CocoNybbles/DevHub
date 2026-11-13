@@ -1,7 +1,7 @@
 import { contextBridge, ipcRenderer, IpcRendererEvent, webUtils } from 'electron'
 import type { DevHubApi } from '../shared/types'
 
-/** Abonniert ein Ereignis aus dem Hauptprozess und liefert eine Abmelde-Funktion. */
+/** Subscribes to an event from the main process and returns an unsubscribe function. */
 function subscribe<T extends unknown[]>(channel: string, cb: (...args: T) => void): () => void {
   const listener = (_: IpcRendererEvent, ...args: unknown[]): void => cb(...(args as T))
   ipcRenderer.on(channel, listener)

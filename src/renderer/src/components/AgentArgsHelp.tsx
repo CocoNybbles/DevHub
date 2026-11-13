@@ -2,7 +2,7 @@ interface Props {
   scope: 'global' | 'project'
 }
 
-/** Kurzhilfe unter den Start-Flag-Feldern (Einstellungen und Projektdialog). */
+/** Short help below the start-flag fields (settings and project dialog). */
 function AgentArgsHelp({ scope }: Props): React.JSX.Element {
   return (
     <p className="muted small args-help">

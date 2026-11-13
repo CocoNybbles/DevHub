@@ -1,4 +1,4 @@
-/** Läuft gerade eine Kürzel-Aufnahme (Einstellungen)? Dann ignoriert Workspace seine eigenen Hotkeys. */
+/** Is a hotkey capture running (settings)? If so, Workspace ignores its own hotkeys. */
 let capturing = false
 
 export function isCapturingHotkey(): boolean {

@@ -3,7 +3,7 @@ import type { CodeSnippet } from '../../../shared/types'
 import { languageForFence, monaco } from '../lib/monaco'
 import { CheckIcon, CopyIcon } from './Icons'
 
-/** Code-Blöcke aus den Antworten des Agents, neueste zuerst, je mit Kopier-Button. */
+/** Code blocks from the agent's replies, newest first, each with a copy button. */
 function SnippetList({ snippets }: { snippets: CodeSnippet[] }): React.JSX.Element {
   return (
     <div className="snippets">
@@ -19,7 +19,7 @@ function SnippetCard({ snippet }: { snippet: CodeSnippet }): React.JSX.Element {
   const [copied, setCopied] = useState(false)
   const lines = snippet.code.split('\n').length
 
-  // Syntax-Hervorhebung über Monaco (ohne Editor-Instanz)
+  // Syntax highlighting via Monaco (without an editor instance)
   useEffect(() => {
     let cancelled = false
     monaco.editor
@@ -37,7 +37,7 @@ function SnippetCard({ snippet }: { snippet: CodeSnippet }): React.JSX.Element {
     return () => clearTimeout(t)
   }, [copied])
 
-  // Über den Main-Prozess: funktioniert unabhängig vom Fokus des Fensters
+  // Via the main process: works regardless of window focus
   const copy = (): void => {
     window.api.clipboard.writeText(snippet.code).then(() => setCopied(true))
   }

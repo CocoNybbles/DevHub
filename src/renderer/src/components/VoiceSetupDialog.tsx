@@ -9,7 +9,7 @@ interface Props {
   onClose: () => void
 }
 
-/** Erscheint beim ersten Versuch, die Sprachsteuerung zu nutzen, solange kein Modell installiert ist. */
+/** Appears on the first attempt to use voice control while no model is installed. */
 function VoiceSetupDialog({ status, onChanged, onReady, onClose }: Props): React.JSX.Element {
   return (
     <Modal

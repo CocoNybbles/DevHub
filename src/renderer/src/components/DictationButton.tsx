@@ -4,21 +4,21 @@ import { errorText } from '../lib/errors'
 import { MicIcon } from './Icons'
 
 interface Props {
-  /** Erkannter Text (wird z. B. an ein Textfeld angehängt) */
+  /** Recognized text (e.g. appended to a text field) */
   onText: (text: string) => void
-  /** Status-/Fehlertext für die Anzeige unter dem Feld; null = nichts anzeigen */
+  /** Status/error text shown below the field; null = show nothing */
   onStatus: (status: { text: string; error?: boolean } | null) => void
 }
 
 /**
- * Mikrofon-Button zum Diktieren in ein Textfeld: Klick startet die Aufnahme, erneuter Klick
- * beendet sie; der Text wird lokal mit whisper erkannt (wie die Sprach-Anweisungen).
+ * Microphone button for dictating into a text field: click starts recording, clicking again
+ * stops it; the text is recognized locally with whisper (like the voice instructions).
  */
 function DictationButton({ onText, onStatus }: Props): React.JSX.Element {
   const [state, setState] = useState<'idle' | 'recording' | 'processing'>('idle')
   const recorder = useRef<Recorder | null>(null)
 
-  // Dialog geschlossen während der Aufnahme → Mikrofon freigeben
+  // Dialog closed during recording → release the microphone
   useEffect(() => () => recorder.current?.cancel(), [])
 
   const toggle = async (): Promise<void> => {

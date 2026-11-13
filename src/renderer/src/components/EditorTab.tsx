@@ -10,31 +10,31 @@ interface Props {
   projectName?: string
   draft: string
   onDraftChange: (text: string) => void
-  /** text = neuer Prompt (null = verwerfen), submit = abschicken */
+  /** text = new prompt (null = discard), submit = send */
   onFinish: (text: string | null, submit: boolean) => void
   onError: (message: string) => void
 }
 
 /**
- * Strg+G im Agent: Tab in der Mitte mit dem (gesperrten) Terminal links und einem Textfeld rechts.
- * Der Agent wartet, bis der Tab geschlossen wird; dann übernimmt claude den Text als Prompt.
- * Bilder/Dateien: einfügen (Strg+V), ablegen (Drag & Drop) oder auswählen → `@"pfad"` im Text.
+ * Ctrl+G in the agent: tab in the center with the (locked) terminal on the left and a text field on the right.
+ * The agent waits until the tab is closed; then claude takes the text as its prompt.
+ * Images/files: paste (Ctrl+V), drop (drag & drop) or pick → `@"pfad"` in the text.
  */
 function EditorTab(props: Props): React.JSX.Element {
   const { agent, draft, onDraftChange } = props
   const textarea = useRef<HTMLTextAreaElement>(null)
-  /** Letzte Cursorposition (Klick auf Buttons nimmt der Textarea den Fokus); null = Ende */
+  /** Last cursor position (clicking buttons takes focus from the textarea); null = end */
   const caret = useRef<number | null>(null)
   const [status, setStatus] = useState<{ text: string; error?: boolean } | null>(null)
   const [dragOver, setDragOver] = useState(false)
-  /** false = Tab ist offen, claude hat den Editor aber noch nicht gestartet */
+  /** false = tab is open, but claude has not started the editor yet */
   const ready = !!agent.editing
 
   useEffect(() => {
     if (ready) textarea.current?.focus()
   }, [agent.id, ready])
 
-  /** Text an der Cursorposition einfügen (mit Leerzeichen zum Nachbartext) */
+  /** Insert text at the cursor position (with a space to the adjacent text) */
   const insert = (text: string): void => {
     const el = textarea.current
     const value = el?.value ?? draft
@@ -81,7 +81,7 @@ function EditorTab(props: Props): React.JSX.Element {
     for (const file of [...e.dataTransfer.files]) {
       const path = window.api.editor.pathForFile(file)
       if (path) insert(attachmentToken(path))
-      else if (file.type.startsWith('image/')) void saveImage(file) // z. B. aus dem Browser
+      else if (file.type.startsWith('image/')) void saveImage(file) // e.g. from the browser
     }
   }
 
@@ -118,7 +118,7 @@ function EditorTab(props: Props): React.JSX.Element {
       </header>
 
       <div className="editor-split">
-        {/* Terminal in Originalgröße, bei Bedarf verkleinert dargestellt (s. terminals.ts) */}
+        {/* Terminal at original size, scaled down if needed (see terminals.ts) */}
         <section className="editor-terminal">
           <TerminalView agentId={agent.id} />
         </section>
@@ -212,7 +212,7 @@ function EditorTab(props: Props): React.JSX.Element {
   )
 }
 
-/** Angehängte Datei: Vorschaubild (bei Bildern) + Name, entfernbar */
+/** Attached file: thumbnail (for images) + name, removable */
 function Attachment({ path, onRemove }: { path: string; onRemove: () => void }): React.JSX.Element {
   const [preview, setPreview] = useState<string | null>(null)
   useEffect(() => {

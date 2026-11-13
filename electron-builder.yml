@@ -9,7 +9,7 @@ files:
   - '!{.eslintcache,eslint.config.mjs,.prettierignore,.prettierrc.yaml,dev-app-update.yml,CHANGELOG.md,README.md,CLAUDE.md}'
   - '!{.env,.env.*,.npmrc,pnpm-lock.yaml}'
   - '!{tsconfig.json,tsconfig.node.json,tsconfig.web.json}'
-  # Entwicklungs-Datenordner (Caches, whisper-Modell, eigener Zustand) nie mitpacken
+  # Never package the development data folder (caches, whisper model, own state)
   - '!data{,/**}'
   - '!{dist,build,.claude,scripts,.github}{,/**}'
   - '!out/THIRD_PARTY_NOTICES.txt'
@@ -20,8 +20,8 @@ asarUnpack:
 electronLanguages:
   - de
   - en-US
-# Programmordner als ZIP (auspacken, DevHub.exe starten): startet sofort, weil nichts
-# bei jedem Start nach %TEMP% entpackt wird (anders als das portable-Ziel)
+# Program folder as ZIP (extract, run DevHub.exe): starts instantly because nothing is
+# extracted to %TEMP% on every start (unlike the portable target)
 win:
   executableName: DevHub
   target:
@@ -30,7 +30,7 @@ win:
 extraFiles:
   - from: build/LIESMICH.txt
     to: LIESMICH.txt
-  # Lizenz von DevHub + Lizenztexte der enthaltenen Bibliotheken (scripts/notices.mjs)
+  # DevHub license + license texts of the included libraries (scripts/notices.mjs)
   - from: LICENSE
     to: LICENSE.txt
   - from: out/THIRD_PARTY_NOTICES.txt

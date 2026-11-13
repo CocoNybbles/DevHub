@@ -1,4 +1,4 @@
-/* Styles der Arbeitsbereich-Komponenten (Basis-Variablen in main.css) */
+/* Styles of the workspace components (base variables in main.css) */
 
 input,
 textarea {
@@ -88,7 +88,7 @@ button.primary {
   color: var(--text);
 }
 
-/* ---------- Status-Punkte ---------- */
+/* ---------- Status dots ---------- */
 .dot {
   flex: none;
   width: 8px;
@@ -116,7 +116,7 @@ button.primary {
   }
 }
 
-/* ---------- Projektbaum ---------- */
+/* ---------- Project tree ---------- */
 .tree {
   flex: 1;
   overflow-y: auto;
@@ -137,7 +137,7 @@ button.primary {
 .row.selected {
   background: var(--bg-selected);
 }
-/* Drag & Drop: Einfügemarke über/unter der Zielzeile */
+/* Drag & drop: insertion marker above/below the target row */
 .row.dragging {
   opacity: 0.4;
 }
@@ -203,7 +203,7 @@ button.primary {
   padding-left: 28px;
   min-height: 26px;
 }
-/* Buttons der Agent-Zeile nur beim Überfahren (laufende Aufnahme bleibt sichtbar) */
+/* Agent row buttons only on hover (a running recording stays visible) */
 .agent-row .stop-agent,
 .agent-row .row-btn {
   display: none;
@@ -213,7 +213,7 @@ button.primary {
 .agent-row .row-btn.recording {
   display: inline-flex;
 }
-/* Agent-Buttons (Liste, Agent-Köpfe in der Mitte): eng beieinander */
+/* Agent buttons (list, agent headers in the center): tightly spaced */
 .agent-actions {
   display: inline-flex;
   align-items: center;
@@ -225,7 +225,7 @@ button.primary {
 .agent-row .stop-agent:hover {
   color: var(--error);
 }
-/* Agent wartet auf Eingabe → deutlich hervorheben */
+/* Agent waiting for input → highlight clearly */
 .agent-row.attention {
   background: var(--attention-bg);
   border-left-color: var(--attention);
@@ -233,7 +233,7 @@ button.primary {
 .agent-row.attention .row-name {
   color: var(--attention-text);
 }
-/* Team: Kopfzeile + eingerückte Mitglieder mit Verbindungslinie */
+/* Team: header row + indented members with a connecting line */
 .team-row {
   padding-left: 22px;
   min-height: 26px;
@@ -267,7 +267,7 @@ button.primary {
 .agent-row.in-team {
   padding-left: 12px;
 }
-/* Team-Worker: nur beobachten */
+/* Team worker: observe only */
 .watch-tag {
   display: inline-flex;
   vertical-align: middle;
@@ -294,7 +294,7 @@ input.rename {
   padding: 2px 6px;
 }
 
-/* ---------- Kontextmenü ---------- */
+/* ---------- Context menu ---------- */
 .context-menu {
   position: fixed;
   z-index: 100;
@@ -331,7 +331,7 @@ input.rename {
   width: 16px;
 }
 
-/* ---------- Terminal & Raster ---------- */
+/* ---------- Terminal & grid ---------- */
 .terminal-container {
   flex: 1;
   min-height: 0;
@@ -343,7 +343,7 @@ input.rename {
 .xterm-host .xterm {
   height: 100%;
 }
-/* ---------- Mitte: Tabs (Agents-Ansicht + Strg+G-Editor-Tabs) ---------- */
+/* ---------- Center: tabs (agents view + Ctrl+G editor tabs) ---------- */
 .center-column {
   display: flex;
   flex-direction: column;
@@ -386,7 +386,7 @@ input.rename {
 .center-tab .icon {
   padding: 2px;
 }
-/* Gesperrter Agent (Editor-Tab offen) in Einzelansicht/Raster */
+/* Locked agent (editor tab open) in single view/grid */
 .locked-terminal {
   flex: 1;
   min-height: 0;
@@ -396,7 +396,7 @@ input.rename {
   cursor: pointer;
   position: relative;
 }
-/* Über dem Standbild: abgedunkelt, Hinweis unten an der Stelle des Eingabefelds */
+/* Over the still image: dimmed, hint at the bottom where the input field is */
 .locked-overlay {
   position: absolute;
   inset: 0;
@@ -415,7 +415,7 @@ input.rename {
   padding: 6px 14px;
   font-size: 12px;
   color: var(--attention-text);
-  /* deckend, damit der Terminaltext darunter nicht durchscheint */
+  /* opaque so the terminal text underneath does not show through */
   background: color-mix(in srgb, var(--attention) 22%, var(--bg-terminal));
   border: 1px solid var(--attention);
   border-radius: 14px;
@@ -428,7 +428,7 @@ input.rename {
 .locked-terminal .xterm {
   cursor: pointer;
 }
-/* Hinweis im Kopf (Einzelansicht/Raster): Agent ist im Editor-Tab gesperrt */
+/* Hint in the header (single view/grid): agent is locked in the editor tab */
 .locked-badge {
   display: inline-flex;
   align-items: center;
@@ -457,7 +457,7 @@ input.rename {
 .agent-row.editing .row-name {
   font-style: italic;
 }
-/* Editor-Tab: Terminal links, Textfeld rechts */
+/* Editor tab: terminal on the left, text field on the right */
 .editor-split {
   flex: 1;
   min-height: 0;
@@ -554,7 +554,7 @@ input.rename {
 .grid-cell.active {
   border-color: var(--accent);
 }
-/* Agent wartet auf Eingabe: Rahmen + Kopf wie in der Liste links (hat Vorrang vor „aktiv“) */
+/* Agent waiting for input: border + header as in the list on the left (takes precedence over "active") */
 .grid-cell.attention {
   border-color: var(--attention);
   box-shadow: 0 0 0 1px var(--attention);
@@ -565,12 +565,12 @@ input.rename {
 .grid-cell.attention .cell-header .row-name {
   color: var(--attention-text);
 }
-/* aktiv + wartend: Akzentlinie unter dem Kopf zeigt weiterhin die aktive Zelle */
+/* active + waiting: accent line under the header still marks the active cell */
 .grid-cell.active.attention .cell-header {
   box-shadow: inset 0 -2px 0 var(--accent);
 }
 .cell-header .row-sub {
-  display: inline; /* einzeilig im 26-px-Kopf */
+  display: inline; /* single line in the 26 px header */
   margin-left: 8px;
   font-weight: normal;
 }
@@ -584,12 +584,12 @@ input.rename {
   font-size: 12px;
 }
 
-/* ---------- Code-Ansicht ---------- */
+/* ---------- Code view ---------- */
 .code-editor {
   flex: 1;
   min-height: 0;
 }
-/* Code-Spalte: Splitter am linken Rand (über der 1-px-Fuge, verkleinert nichts) */
+/* Code column: splitter on the left edge (over the 1 px gap, shrinks nothing) */
 .pane.code {
   position: relative;
   min-width: 240px;
@@ -614,7 +614,7 @@ input.rename {
     transparent 4px
   );
 }
-/* Beim Ziehen keine Textauswahl, Monaco/Terminal fangen die Maus nicht ab */
+/* While dragging: no text selection, Monaco/terminal do not capture the mouse */
 .pane.code.resizing,
 .pane.code.resizing * {
   user-select: none;
@@ -625,7 +625,7 @@ input.rename {
 .layout:has(.pane.code.resizing) .center-column {
   pointer-events: none;
 }
-/* Reiter (Dateien / „Snippets“) im Spaltenkopf, bei vielen Dateien waagrecht scrollbar */
+/* Tabs (files / "Snippets") in the column header, horizontally scrollable with many files */
 .pane.code .pane-header {
   gap: 6px;
   padding-right: 4px;
@@ -671,7 +671,7 @@ input.rename {
 .tab.closable-tab.active button.icon {
   visibility: visible;
 }
-/* Punkt = vom Agent bearbeitet (grün = neu angelegt) */
+/* Dot = edited by the agent (green = newly created) */
 .edit-dot {
   flex-shrink: 0;
   width: 6px;
@@ -716,7 +716,7 @@ input.rename {
   white-space: nowrap;
   text-overflow: ellipsis;
 }
-/* Snippets: Karten mit Kopier-Button */
+/* Snippets: cards with a copy button */
 .snippets {
   flex: 1;
   min-height: 0;
@@ -795,7 +795,7 @@ input.rename {
   margin-left: 3px;
 }
 
-/* ---------- Dialoge ---------- */
+/* ---------- Dialogs ---------- */
 .modal-backdrop {
   position: fixed;
   inset: 0;
@@ -884,7 +884,7 @@ input.mono {
   white-space: nowrap;
 }
 
-/* Textfeld mit Diktat-Button (Vorlagen-Anweisung) */
+/* Text field with dictation button (template instructions) */
 .dictation-field {
   position: relative;
   display: flex;
@@ -903,7 +903,7 @@ input.mono {
   min-height: 16px;
 }
 
-/* Projekte importieren */
+/* Import projects */
 .import-pick {
   display: flex;
   flex-direction: column;
@@ -960,7 +960,7 @@ input.mono {
   white-space: pre-line;
 }
 
-/* Mitgliederliste im Team-Dialog */
+/* Member list in the team dialog */
 .member-list {
   display: flex;
   flex-direction: column;
@@ -981,7 +981,7 @@ input.mono {
   font-size: 12px;
 }
 
-/* Vorlagenliste in den Einstellungen */
+/* Template list in the settings */
 .template-list {
   display: flex;
   flex-direction: column;
@@ -1053,7 +1053,7 @@ kbd {
   white-space: nowrap;
 }
 
-/* ---------- Sprachmodelle ---------- */
+/* ---------- Voice models ---------- */
 .voice-models {
   display: flex;
   flex-direction: column;
@@ -1117,8 +1117,8 @@ kbd {
   transition: width 0.2s;
 }
 
-/* ---------- Sprach-Overlay & Toast ---------- */
-/* Stapel aus Aufnahme + Hintergrund-Aufträgen; lässt Klicks daneben durch */
+/* ---------- Voice overlay & toast ---------- */
+/* Stack of recording + background jobs; lets clicks beside it pass through */
 .voice-stack {
   position: fixed;
   left: 50%;

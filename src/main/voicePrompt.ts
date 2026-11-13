@@ -2,8 +2,8 @@ import type { Agent, AgentTemplate, Project, Team, TeamTemplate } from '../share
 import { teamLead } from '../shared/types'
 
 /**
- * Prompt für den Sprachbefehl-Router (`claude -p`). Reine Funktion ohne Electron-Abhängigkeit,
- * damit sie per Skript mit echtem Claude getestet werden kann.
+ * Prompt for the voice command router (`claude -p`). Pure function without Electron dependency,
+ * so it can be tested by script against real Claude.
  */
 export function routerPrompt(
   text: string,
@@ -15,7 +15,7 @@ export function routerPrompt(
 ): string {
   const templateName = (id?: string): string =>
     templates.find((t) => t.id === id)?.name ?? 'general agent'
-  /** Ansprechpartner eines laufenden Teams = Orchestrator (ältere Teams: ältestes Mitglied) */
+  /** Contact of a running team = orchestrator (older teams: oldest member) */
   const lead = (teamId: string): Agent | undefined => teamLead(running, teamId)
   return [
     'You route voice commands inside DevHub, an app that manages AI coding agents per project.',

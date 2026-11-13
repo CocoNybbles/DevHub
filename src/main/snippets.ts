@@ -1,17 +1,17 @@
 import { open } from 'fs/promises'
 import type { CodeSnippet, EditedFile, LineRange } from '../shared/types'
 
-/** Höchstens so viele Snippets pro Agent behalten (die neuesten) */
+/** Keep at most this many snippets per agent (the newest) */
 export const MAX_SNIPPETS = 30
 
-/** Code-Blöcke (```lang … ``` bzw. ~~~) aus Markdown-Text. */
+/** Code blocks (```lang … ``` or ~~~) from Markdown text. */
 export function extractCodeBlocks(markdown: string): { language: string; code: string }[] {
   const blocks: { language: string; code: string }[] = []
-  // Öffnender Zaun (mind. 3 ` oder ~, optional eingerückt), Sprache, Inhalt, gleicher Zaun
+  // Opening fence (at least 3 ` or ~, optionally indented), language, content, same fence
   const re = /^([ \t]*)(`{3,}|~{3,})[ \t]*([^\s`]*)[^\n]*\n([\s\S]*?)\n[ \t]*\2[ \t]*$/gm
   for (const m of markdown.matchAll(re)) {
     const indent = m[1].length
-    // Einrückung des Zauns (z. B. in Listen) auch vom Inhalt entfernen
+    // Also strip the fence's indentation (e.g. in lists) from the content
     const code = m[4]
       .split('\n')
       .map((line) => line.replace(new RegExp(`^[ \\t]{0,${indent}}`), ''))
@@ -30,11 +30,11 @@ interface TranscriptEntry {
   message?: { content?: string | { type?: string; text?: string }[] }
 }
 
-/** Snippets aus JSONL-Zeilen des Claude-Code-Transkripts (nur Antworttext des Agents selbst). */
+/** Snippets from JSONL lines of the Claude Code transcript (only the agent's own reply text). */
 export function snippetsFromLines(agentId: string, lines: string[]): CodeSnippet[] {
   const out: CodeSnippet[] = []
   for (const line of lines) {
-    // Schneller Vorfilter, bevor JSON geparst wird (Transkripte können groß sein)
+    // Quick pre-filter before parsing JSON (transcripts can be large)
     if (!line.includes('"assistant"') || !(line.includes('```') || line.includes('~~~'))) continue
     let entry: TranscriptEntry
     try {
@@ -42,7 +42,7 @@ export function snippetsFromLines(agentId: string, lines: string[]): CodeSnippet
     } catch {
       continue
     }
-    // Subagents (isSidechain) schreiben nicht für den Nutzer
+    // Subagents (isSidechain) don't write for the user
     if (entry.type !== 'assistant' || entry.isSidechain || !entry.uuid) continue
     const content = entry.message?.content
     const texts =
@@ -67,7 +67,7 @@ export interface TranscriptNews {
 
 const NOTHING: TranscriptNews = { snippets: [], edits: [] }
 
-/** Höchstens so viele bearbeitete Dateien pro Agent behalten (die zuletzt geänderten) */
+/** Keep at most this many edited files per agent (the most recently changed) */
 export const MAX_EDITED_FILES = 30
 
 interface PatchHunk {
@@ -75,7 +75,7 @@ interface PatchHunk {
   lines?: string[]
 }
 
-/** Geänderte Zeilen (neue Zählung) aus einem `structuredPatch`; Löschungen markieren die Folgezeile. */
+/** Changed lines (new numbering) from a `structuredPatch`; deletions mark the following line. */
 export function changedRanges(patch: PatchHunk[]): LineRange[] {
   const lines = new Set<number>()
   for (const hunk of patch) {
@@ -84,7 +84,7 @@ export function changedRanges(patch: PatchHunk[]): LineRange[] {
       const c = line[0]
       if (c === '+') lines.add(n++)
       else if (c === '-') lines.add(Math.max(1, n))
-      else if (c !== '\\') n++ // „\ No newline at end of file“ zählt nicht
+      else if (c !== '\\') n++ // "\ No newline at end of file" doesn't count
     }
   }
   const ranges: LineRange[] = []
@@ -97,8 +97,8 @@ export function changedRanges(patch: PatchHunk[]): LineRange[] {
 }
 
 /**
- * Dateiänderung aus dem Ergebnis eines Edit/Write/MultiEdit-Aufrufs – `tool_response` im
- * PostToolUse-Hook bzw. `toolUseResult` im Transkript (gleiches Format: `filePath` + `structuredPatch`).
+ * File change from the result of an Edit/Write/MultiEdit call – `tool_response` in the
+ * PostToolUse hook or `toolUseResult` in the transcript (same format: `filePath` + `structuredPatch`).
  */
 export function editFromToolResult(
   agentId: string,
@@ -117,7 +117,7 @@ export function editFromToolResult(
   }
 }
 
-/** Dateiänderungen aus JSONL-Zeilen des Transkripts (Tool-Ergebnisse in `user`-Einträgen). */
+/** File changes from JSONL lines of the transcript (tool results in `user` entries). */
 export function editsFromLines(agentId: string, lines: string[]): EditedFile[] {
   const out: EditedFile[] = []
   for (const line of lines) {
@@ -137,8 +137,8 @@ export function editsFromLines(agentId: string, lines: string[]): EditedFile[] {
 }
 
 /**
- * Bearbeitete Dateien zusammenführen: gleiche Datei (ohne Groß-/Kleinschreibung) behält ihren Platz
- * und übernimmt die neuere Änderung; neue Dateien hinten. Begrenzt auf die zuletzt geänderten.
+ * Merges edited files: the same file (case-insensitive) keeps its position and takes the
+ * newer change; new files go at the end. Limited to the most recently changed.
  */
 export function mergeEdits(existing: EditedFile[], added: EditedFile[]): EditedFile[] {
   const list = [...existing]
@@ -153,9 +153,9 @@ export function mergeEdits(existing: EditedFile[], added: EditedFile[]): EditedF
 }
 
 /**
- * Liest ein Transkript inkrementell (ab der zuletzt gelesenen Stelle, nur vollständige Zeilen).
- * Beim ersten Lesen wird die ganze Datei ausgewertet – nach einer Wiederherstellung sind so auch
- * die Snippets der früheren Sitzung wieder da.
+ * Reads a transcript incrementally (from the last read position, complete lines only).
+ * The first read processes the whole file – so after a restore the snippets of the
+ * previous session are back too.
  */
 export class TranscriptReader {
   private offset = 0
@@ -166,7 +166,7 @@ export class TranscriptReader {
     private agentId: string
   ) {}
 
-  /** Neue Snippets/Dateiänderungen seit dem letzten Aufruf (Aufrufe laufen nacheinander). */
+  /** New snippets/file changes since the last call (calls run sequentially). */
   read(): Promise<TranscriptNews> {
     this.queue = this.queue.then(
       () => this.readNew(),
@@ -176,7 +176,7 @@ export class TranscriptReader {
   }
 
   private async readNew(): Promise<TranscriptNews> {
-    // Bei SessionStart eines neuen Agents gibt es das Transkript noch nicht
+    // On SessionStart of a new agent the transcript doesn't exist yet
     const file = await open(this.path, 'r').catch((e: NodeJS.ErrnoException) => {
       if (e.code === 'ENOENT') return null
       throw e
@@ -184,7 +184,7 @@ export class TranscriptReader {
     if (!file) return NOTHING
     try {
       const { size } = await file.stat()
-      if (size < this.offset) this.offset = 0 // Datei neu geschrieben
+      if (size < this.offset) this.offset = 0 // file was rewritten
       if (size === this.offset) return NOTHING
       const buf = Buffer.alloc(size - this.offset)
       await file.read(buf, 0, buf.length, this.offset)
@@ -202,9 +202,9 @@ export class TranscriptReader {
   }
 }
 
-/** Neue Snippets einsortieren: neueste zuerst, gleicher Code nur einmal (der neueste), begrenzt. */
+/** Inserts new snippets: newest first, identical code only once (the newest), capped. */
 export function mergeSnippets(existing: CodeSnippet[], added: CodeSnippet[]): CodeSnippet[] {
-  // Neueste Antwort zuerst, innerhalb einer Antwort die Reihenfolge des Textes behalten
+  // Newest reply first; within a reply keep the order of the text
   const newest = added
     .map((s, i) => ({ s, i }))
     .sort((a, b) => b.s.at - a.s.at || a.i - b.i)

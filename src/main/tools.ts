@@ -3,7 +3,7 @@ import { existsSync, statSync } from 'fs'
 import { readdir } from 'fs/promises'
 import { basename, dirname, isAbsolute, join } from 'path'
 
-/** Führt einen Shell-Befehl aus und liefert die erste Ausgabezeile (oder null bei Fehler). */
+/** Runs a shell command and returns the first output line (or null on error). */
 function firstLine(command: string): Promise<string | null> {
   return new Promise((resolve) => {
     exec(command, { windowsHide: true, timeout: 10000 }, (err, stdout) => {
@@ -21,8 +21,8 @@ function firstLine(command: string): Promise<string | null> {
 let claudePath: Promise<string | null> | null = null
 
 /**
- * Pfad zur Claude-CLI. Bevorzugt claude.exe (nativer Installer), damit Argumente
- * ohne Shell-Quoting übergeben werden können; sonst z. B. claude.cmd (npm).
+ * Path to the Claude CLI. Prefers claude.exe (native installer) so arguments can be
+ * passed without shell quoting; otherwise e.g. claude.cmd (npm).
  */
 export function resolveClaude(): Promise<string | null> {
   claudePath ??= new Promise((resolve) => {
@@ -44,9 +44,9 @@ export function resolveClaude(): Promise<string | null> {
 }
 
 /**
- * Umgebungsvariablen, die eine laufende Claude-Code-Session an Kindprozesse vererbt.
- * Wird DevHub aus einem Claude-Terminal gestartet, würden Agents sonst als "Kind-Session"
- * laufen (u. a. ohne Transkript → keine Wiederherstellung möglich).
+ * Environment variables a running Claude Code session passes on to child processes.
+ * If DevHub is started from a Claude terminal, agents would otherwise run as a "child session"
+ * (among other things without a transcript → no restore possible).
  */
 const INHERITED_SESSION_VARS = [
   'CLAUDECODE',
@@ -61,7 +61,7 @@ const INHERITED_SESSION_VARS = [
   'CLAUDE_CODE_SESSION_ID'
 ]
 
-/** Umgebung für gestartete Claude-Prozesse: ohne Session-Marker einer übergeordneten Claude-Instanz. */
+/** Environment for spawned Claude processes: without session markers of a parent Claude instance. */
 export function claudeEnv(extra: Record<string, string> = {}): Record<string, string> {
   const env: Record<string, string> = {}
   for (const [k, v] of Object.entries(process.env)) {
@@ -77,7 +77,7 @@ export function isVSCodeInstalled(): Promise<boolean> {
   return vscode
 }
 
-/** Windows-Pfade dürfen kein " enthalten – Quoting mit " ist damit sicher. */
+/** Windows paths cannot contain " – so quoting with " is safe. */
 function quote(path: string): string {
   if (path.includes('"')) throw new Error('Ungültiger Pfad')
   return `"${path}"`
@@ -89,7 +89,7 @@ export function openInVSCode(path: string, line?: number): void {
   exec(cmd, { windowsHide: true })
 }
 
-/** Prüft einen vom Nutzer angegebenen Programmpfad; liefert eine Fehlermeldung oder null. */
+/** Validates a program path entered by the user; returns an error message or null. */
 export function validateProgram(exe: string | undefined): string | null {
   if (!exe) return null
   if (!isAbsolute(exe)) return 'Programm: bitte den vollständigen Pfad angeben'
@@ -99,18 +99,18 @@ export function validateProgram(exe: string | undefined): string | null {
 }
 
 /**
- * Öffnet eine Datei oder einen Ordner mit einem bestimmten Programm (losgelöst von DevHub, ohne
- * Konsolenfenster). Arbeitsverzeichnis = der Ordner selbst bzw. der Ordner der Datei.
+ * Opens a file or folder with a specific program (detached from DevHub, without a
+ * console window). Working directory = the folder itself or the file's folder.
  */
 export function openWithProgram(exe: string, file: string): Promise<void> {
   const err = validateProgram(exe)
   if (err) return Promise.reject(new Error(err))
   const cwd = statSync(file).isDirectory() ? file : dirname(file)
   return new Promise((resolve, reject) => {
-    // .cmd/.bat brauchen eine Shell; .exe direkt starten (keine Shell → keine Sonderzeichen-Probleme)
+    // .cmd/.bat need a shell; start .exe directly (no shell → no special-character issues)
     const script = /\.(cmd|bat)$/i.test(exe)
     const child = script
-      ? // cmd /s /c ""a b.cmd" "datei"": äußere Quotes werden entfernt, innere bleiben (Leerzeichen)
+      ? // cmd /s /c ""a b.cmd" "file"": outer quotes are stripped, inner ones stay (spaces)
         spawn('cmd.exe', ['/d', '/s', '/c', `""${exe}" "${file}""`], {
           cwd,
           detached: true,
@@ -130,8 +130,8 @@ export function openWithProgram(exe: string, file: string): Promise<void> {
 }
 
 /**
- * Woran ein Projektordner erkannt wird (Datei- bzw. Ordnernamen direkt darin).
- * Erster Treffer wird als Kennzeichen angezeigt.
+ * How a project folder is recognized (file or folder names directly inside it).
+ * The first match is shown as the marker.
  */
 const PROJECT_MARKERS: { label: string; test: (name: string, isDir: boolean) => boolean }[] = [
   { label: 'Git', test: (n) => n === '.git' },
@@ -146,21 +146,21 @@ const PROJECT_MARKERS: { label: string; test: (name: string, isDir: boolean) => 
   { label: 'Claude', test: (n, d) => !d && n === 'CLAUDE.md' }
 ]
 
-/** Wie tief unter einem gewählten Ordner nach Projekten gesucht wird */
+/** How deep below a chosen folder to search for projects */
 const PROJECT_SCAN_DEPTH = 3
 const PROJECT_SCAN_LIMIT = 300
 
 export interface FoundProject {
   path: string
-  /** Kennzeichen, z. B. „Git“ oder „.sln“ */
+  /** Marker, e.g. "Git" or ".sln" */
   marker: string
 }
 
 /**
- * Sucht Projekte: Ein Ordner mit Projekt-Kennzeichen (Git, .sln, package.json …) ist ein Projekt
- * (darunter wird nicht weiter gesucht – Monorepos bleiben ein Projekt). Sonst werden seine
- * Unterordner durchsucht (bis PROJECT_SCAN_DEPTH Ebenen) – so liefert ein „Dev“-Ordner alle
- * Projekte darin.
+ * Finds projects: a folder with a project marker (Git, .sln, package.json …) is one project
+ * (no further search below it – monorepos stay one project). Otherwise its subfolders are
+ * searched (up to PROJECT_SCAN_DEPTH levels) – so a "Dev" folder yields all projects
+ * inside it.
  */
 export async function findProjects(roots: string[]): Promise<FoundProject[]> {
   const found: FoundProject[] = []
@@ -173,7 +173,7 @@ export async function findProjects(roots: string[]): Promise<FoundProject[]> {
     try {
       entries = await readdir(dir, { withFileTypes: true })
     } catch {
-      return // kein Zugriff o. Ä.
+      return // no access or similar
     }
     for (const m of PROJECT_MARKERS) {
       if (entries.some((e) => m.test(e.name, e.isDirectory()))) {
@@ -191,12 +191,12 @@ export async function findProjects(roots: string[]): Promise<FoundProject[]> {
   return found
 }
 
-/** Ordner, die bei der Suche nach Projektmappen übersprungen werden. */
+/** Folders skipped when searching for solution files. */
 const SKIP_DIRS = new Set(['node_modules', 'bin', 'obj', 'out', 'dist', 'build', 'packages'])
 
 /**
- * Sucht im Ordner (und bis zu 3 Ebenen darunter) nach einer `.sln`/`.slnx`.
- * Bevorzugt die flachste Ebene, dort eine Datei mit dem Ordnernamen. null, wenn keine gefunden.
+ * Searches the folder (and up to 3 levels below) for a `.sln`/`.slnx`.
+ * Prefers the shallowest level, and there a file named like the folder. null if none found.
  */
 export async function findSolution(root: string): Promise<string | null> {
   const wanted = basename(root.replace(/[\\/]+$/, '')).toLowerCase()
@@ -209,7 +209,7 @@ export async function findSolution(root: string): Promise<string | null> {
       try {
         entries = await readdir(dir, { withFileTypes: true })
       } catch {
-        continue // kein Zugriff o. Ä.
+        continue // no access or similar
       }
       for (const e of entries) {
         if (e.isFile() && /\.slnx?$/i.test(e.name)) found.push(join(dir, e.name))
@@ -224,7 +224,7 @@ export async function findSolution(root: string): Promise<string | null> {
           .toLowerCase()
       return found.find((f) => stem(f) === wanted) ?? found.sort()[0]
     }
-    level = next.slice(0, 500) // Obergrenze gegen riesige Bäume
+    level = next.slice(0, 500) // cap against huge trees
   }
   return null
 }

@@ -1,7 +1,7 @@
 import type { Agent } from '../../../shared/types'
 import type { Selection } from '../App'
 
-/** Agent-IDs, die die Auswahl in der Mitte zeigt (Einzelansicht, Projekt-Raster oder freies Raster). */
+/** Agent IDs shown by the selection in the center (single view, project grid or free grid). */
 export function shownAgentIds(sel: Selection, agents: Agent[]): string[] {
   if (!sel) return []
   if (sel.kind === 'agent') return [sel.agentId]
@@ -10,7 +10,7 @@ export function shownAgentIds(sel: Selection, agents: Agent[]): string[] {
   return sel.agentIds
 }
 
-/** Baut aus einer Liste von Agent-IDs die passende Auswahl (0 → nichts, 1 → Einzelansicht). */
+/** Builds the matching selection from a list of agent IDs (0 → nothing, 1 → single view). */
 function fromIds(ids: string[], activeAgentId?: string): Selection {
   if (ids.length === 0) return null
   if (ids.length === 1) return { kind: 'agent', agentId: ids[0] }
@@ -22,8 +22,8 @@ function fromIds(ids: string[], activeAgentId?: string): Selection {
 }
 
 /**
- * Strg+Klick auf einen Agent: zur aktuell gezeigten Menge hinzufügen bzw. daraus entfernen.
- * Ausgangspunkt ist, was gerade in der Mitte zu sehen ist (auch ein Projekt-Raster).
+ * Ctrl+click on an agent: add it to or remove it from the currently shown set.
+ * The starting point is whatever is currently visible in the center (including a project grid).
  */
 export function toggleAgent(sel: Selection, agentId: string, agents: Agent[]): Selection {
   const ids = shownAgentIds(sel, agents)
@@ -32,8 +32,8 @@ export function toggleAgent(sel: Selection, agentId: string, agents: Agent[]): S
 }
 
 /**
- * Strg+Klick auf eine Gruppe (Projekt, Team): alle ihre Agents hinzufügen – oder entfernen,
- * wenn alle schon gezeigt werden.
+ * Ctrl+click on a group (project, team): add all its agents – or remove them
+ * if all are already shown.
  */
 export function toggleAgents(sel: Selection, groupIds: string[], agents: Agent[]): Selection {
   const ids = shownAgentIds(sel, agents)
@@ -43,7 +43,7 @@ export function toggleAgents(sel: Selection, groupIds: string[], agents: Agent[]
   return fromIds([...ids, ...groupIds.filter((id) => !ids.includes(id))], groupIds[0])
 }
 
-/** Strg+Klick auf ein Projekt: alle seine Agents hinzufügen bzw. entfernen. */
+/** Ctrl+click on a project: add or remove all its agents. */
 export function toggleProject(sel: Selection, projectId: string, agents: Agent[]): Selection {
   const projectIds = agents.filter((a) => a.projectId === projectId).map((a) => a.id)
   return toggleAgents(sel, projectIds, agents)
