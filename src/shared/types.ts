@@ -63,8 +63,30 @@ export interface Agent {
   templateId?: string
   /** Laufendes Team, zu dem der Agent gehört (Mitglieder dürfen sich Nachrichten schicken) */
   teamId?: string
+  /**
+   * Rolle im Team: `orchestrator` (wird mit jedem Team gestartet, einziger Ansprechpartner des
+   * Nutzers) oder `worker` (nur beobachtbar, keine Eingaben). Fehlt bei Teams aus älteren Ständen.
+   */
+  teamRole?: TeamRole
   /** Strg+G: Anweisung wird gerade im Editor-Tab geschrieben → Agent sonst gesperrt (nicht gespeichert) */
   editing?: boolean
+}
+
+export type TeamRole = 'orchestrator' | 'worker'
+
+/** Teammitglied, das nur beobachtet werden kann (Aufträge kommen ausschließlich vom Orchestrator) */
+export const isTeamWorker = (a: Pick<Agent, 'teamRole'>): boolean => a.teamRole === 'worker'
+
+/** Orchestrator eines Teams; ältere Teams ohne Orchestrator: zuerst gestartetes Mitglied (Leitung) */
+export function teamLead<A extends Pick<Agent, 'teamId' | 'teamRole' | 'createdAt'>>(
+  agents: A[],
+  teamId: string
+): A | undefined {
+  const members = agents.filter((a) => a.teamId === teamId)
+  return (
+    members.find((a) => a.teamRole === 'orchestrator') ??
+    [...members].sort((a, b) => a.createdAt - b.createdAt)[0]
+  )
 }
 
 /** Mitglied einer Team-Vorlage: vordefinierter Agent oder (ohne templateId) normaler Agent. */
@@ -76,7 +98,7 @@ export interface TeamMember {
 export interface TeamTemplate {
   id: string
   name: string
-  /** Reihenfolge zählt: das erste Mitglied leitet das Team und bekommt die Aufgabe */
+  /** Ausführende Agents; dazu startet immer automatisch ein Orchestrator, der sie steuert */
   members: TeamMember[]
   /** Gemeinsame Richtlinien für alle Mitglieder (z. B. Ablauf, Übergaben) */
   instructions?: string
@@ -217,6 +239,8 @@ export interface Settings {
   voiceLanguage: string | null
   /** Feste Sprache der Spracheingabe (whisper-Code), null = automatisch erkennen */
   voiceFixedLanguage: string | null
+  /** Dateivorschau: vom aktiven Agent bearbeitete Dateien rechts als Reiter zeigen */
+  showEditedFiles: boolean
 }
 
 export interface TranscribeResult {
@@ -308,6 +332,8 @@ export interface DevHubApi {
   }
   clipboard: {
     writeText: (text: string) => Promise<void>
+    /** Inhalt der Zwischenablage zum Einfügen ins Terminal: Text und ob ein Bild darin liegt */
+    read: () => Promise<{ text: string; hasImage: boolean }>
   }
   /** Strg+G im Agent → Editor-Tab in der Mitte statt externem Editor */
   editor: {

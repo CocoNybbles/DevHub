@@ -215,6 +215,22 @@ function SettingsDialog(props: Props): React.JSX.Element {
       </section>
 
       <section className="settings-section">
+        <h3>Dateivorschau</h3>
+        <label className="checkbox">
+          <input
+            type="checkbox"
+            checked={settings.showEditedFiles}
+            onChange={(e) => update({ showEditedFiles: e.target.checked })}
+          />
+          Vom Agent bearbeitete Dateien rechts als Reiter anzeigen
+        </label>
+        <small className="muted">
+          Geänderte Zeilen werden hervorgehoben. Stellen, die ein Agent gezielt zeigt, und Snippets
+          erscheinen unabhängig davon.
+        </small>
+      </section>
+
+      <section className="settings-section">
         <h3>Öffnen mit</h3>
         <ProgramSetting
           label="Projektdateien (Pfad 2)"

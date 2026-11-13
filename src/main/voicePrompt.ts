@@ -1,4 +1,5 @@
 import type { Agent, AgentTemplate, Project, Team, TeamTemplate } from '../shared/types'
+import { teamLead } from '../shared/types'
 
 /**
  * Prompt für den Sprachbefehl-Router (`claude -p`). Reine Funktion ohne Electron-Abhängigkeit,
@@ -14,9 +15,8 @@ export function routerPrompt(
 ): string {
   const templateName = (id?: string): string =>
     templates.find((t) => t.id === id)?.name ?? 'general agent'
-  /** Leitung eines laufenden Teams = ältestes Mitglied */
-  const lead = (teamId: string): Agent | undefined =>
-    running.filter((a) => a.teamId === teamId).sort((a, b) => a.createdAt - b.createdAt)[0]
+  /** Ansprechpartner eines laufenden Teams = Orchestrator (ältere Teams: ältestes Mitglied) */
+  const lead = (teamId: string): Agent | undefined => teamLead(running, teamId)
   return [
     'You route voice commands inside DevHub, an app that manages AI coding agents per project.',
     'The command was transcribed by speech recognition and may contain recognition errors.',
@@ -61,7 +61,7 @@ export function routerPrompt(
     '{"action":"start_team","projectId":"<id>","teamTemplateId":"<team template id or empty>","members":["<template id or \'agent\'>", ...],"teamName":"<name or empty>","task":"<task or empty>","model":"<model or empty>"}',
     '  → the user wants several agents started together as a team for a project.',
     '  Predefined team (e.g. "Starte das Team Feature für DevHub"): set "teamTemplateId", "members" = [].',
-    '  Ad-hoc team (e.g. "Starte einen Entwickler und einen Reviewer als Team für DevHub"): "teamTemplateId" = "", list every member in "members" (one entry per agent, repeat for "zwei Entwickler"); use "agent" for a plain agent without template. The first member leads the team, so put the role that should coordinate first (usually the developer/implementer).',
+    '  Ad-hoc team (e.g. "Starte einen Entwickler und einen Reviewer als Team für DevHub"): "teamTemplateId" = "", list every member in "members" (one entry per agent, repeat for "zwei Entwickler"); use "agent" for a plain agent without template. An orchestrator agent is added automatically and coordinates the members, so list only the working members (never an "orchestrator").',
     '  "teamName": only if the user names the ad-hoc team, otherwise "". "task": the task for the whole team. "model": as for "start", applies to all members.',
     '  Use "start_team" only when the user clearly asks for a team or for several agents together; a single agent is "start".',
     '{"action":"start","projectId":"<id>","task":"<task or empty>","model":"<model or empty>","templateId":"<template id or empty>"}',

@@ -6,9 +6,12 @@ import type { AddressInfo } from 'net'
  * Lokaler HTTP-Server (nur 127.0.0.1) als Rückkanal von den Agents zur App:
  *  - POST /hook/<token>/<agentId>  → Claude-Code-Hooks (per curl, Hook-JSON im Body)
  *  - POST /editor/<token>/<agentId> → Strg+G-Editor (Body = Pfad der Prompt-Datei, bleibt offen)
+ *  - POST /permission/<token>/<agentId> → PermissionRequest-Hook eines Team-Workers: bleibt offen,
+ *                                    bis der Orchestrator entschieden hat; Antwort = Hook-JSON
  *  - POST /mcp/<token>/<agentId>   → minimaler MCP-Server (Streamable HTTP, JSON-Antworten)
  *                                    mit `show_code` und – nur für Teammitglieder –
- *                                    `team_members` / `send_team_message`
+ *                                    `team_members` / `send_team_message`, für den Orchestrator
+ *                                    zusätzlich `answer_permission`
  * Das zufällige Token verhindert, dass andere lokale Prozesse Ereignisse einschleusen.
  */
 
@@ -33,7 +36,16 @@ export interface TeamMessageArgs {
   message: string
 }
 
-export type ToolName = 'show_code' | 'team_members' | 'send_team_message'
+export interface AnswerPermissionArgs {
+  request_id: number
+  decision: 'allow' | 'deny'
+  message?: string
+}
+
+export type ToolName = 'show_code' | 'team_members' | 'send_team_message' | 'answer_permission'
+
+/** Entscheidung über eine Rechte-Abfrage eines Workers (null = keine, z. B. Agent beendet) */
+export type PermissionDecision = { behavior: 'allow' } | { behavior: 'deny'; message: string }
 
 export interface BridgeHandlers {
   onHook: (agentId: string, event: HookEvent) => void
@@ -45,6 +57,12 @@ export interface BridgeHandlers {
   onEditor: (agentId: string, filePath: string) => Promise<void>
   /** Editor-Anfrage abgebrochen (z. B. Agent beendet) */
   onEditorAbort: (agentId: string) => void
+  /** PermissionRequest eines Workers; erfüllt, sobald der Orchestrator entschieden hat */
+  onPermission: (
+    agentId: string,
+    event: HookEvent,
+    signal: AbortSignal
+  ) => Promise<PermissionDecision | null>
 }
 
 const SHOW_CODE_TOOL = {
@@ -95,10 +113,31 @@ const SEND_TEAM_MESSAGE_TOOL = {
   }
 }
 
+const ANSWER_PERMISSION_TOOL = {
+  name: 'answer_permission',
+  description:
+    'Answer a permission request from one of your workers (it arrives in your terminal as ' +
+    '"[Permission request #<id> from <name>]"). The worker is blocked until you answer. ' +
+    'Allow it, or deny it with a short reason / alternative the worker should follow instead.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      request_id: { type: 'integer', description: 'The number after "#" in the request' },
+      decision: { type: 'string', enum: ['allow', 'deny'] },
+      message: {
+        type: 'string',
+        description: 'For "deny": why, and what the worker should do instead'
+      }
+    },
+    required: ['request_id', 'decision']
+  }
+}
+
 const TOOLS: Record<ToolName, object> = {
   show_code: SHOW_CODE_TOOL,
   team_members: TEAM_MEMBERS_TOOL,
-  send_team_message: SEND_TEAM_MESSAGE_TOOL
+  send_team_message: SEND_TEAM_MESSAGE_TOOL,
+  answer_permission: ANSWER_PERMISSION_TOOL
 }
 
 type JsonRpcMessage = {
@@ -132,6 +171,10 @@ export class AgentBridge {
     return `http://127.0.0.1:${this.port}/hook/${this.token}/${agentId}`
   }
 
+  permissionUrl(agentId: string): string {
+    return `http://127.0.0.1:${this.port}/permission/${this.token}/${agentId}`
+  }
+
   editorUrl(agentId: string): string {
     return `http://127.0.0.1:${this.port}/editor/${this.token}/${agentId}`
   }
@@ -151,6 +194,30 @@ export class AgentBridge {
         console.error('[DevHub] Hook-Ereignis ungültig:', e)
       }
       return end(res, 204)
+    }
+
+    // Rechte-Abfrage eines Workers: offen halten, bis der Orchestrator entschieden hat.
+    // Antwort = Hook-Ausgabe für claude; leere Antwort → claude zeigt seinen normalen Dialog.
+    if (kind === 'permission' && req.method === 'POST') {
+      const abort = new AbortController()
+      res.on('close', () => {
+        if (!res.writableEnded) abort.abort()
+      })
+      let decision: PermissionDecision | null = null
+      try {
+        const event = JSON.parse((await readBody(req)) || '{}')
+        decision = await this.handlers.onPermission(agentId, event, abort.signal)
+      } catch (e) {
+        console.error('[DevHub] Rechte-Abfrage:', e)
+      }
+      if (!decision || res.writableEnded) return end(res, 200)
+      res.writeHead(200, { 'Content-Type': 'application/json' })
+      res.end(
+        JSON.stringify({
+          hookSpecificOutput: { hookEventName: 'PermissionRequest', decision }
+        })
+      )
+      return
     }
 
     // Strg+G im Agent: claude startet $EDITOR = curl mit dem Pfad der Prompt-Datei als Body.

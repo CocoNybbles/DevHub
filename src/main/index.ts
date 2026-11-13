@@ -452,6 +452,11 @@ function registerIpc(): void {
   ipcMain.handle('code:snippets', () => agents.snippets())
   ipcMain.handle('code:edits', () => agents.edits())
   ipcMain.handle('clipboard:writeText', (_, text: string) => clipboard.writeText(String(text)))
+  // Electron 44: Zwischenablage ist asynchron (W3C-Stil); Bilder liegen als image/png vor
+  ipcMain.handle('clipboard:read', async () => ({
+    text: await clipboard.readText(),
+    hasImage: await clipboard.has('image/png')
+  }))
 
   // --- Strg+G-Editor-Tab ---
   ipcMain.handle('editor:text', (_, id: string) => agents.editorText(id))

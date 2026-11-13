@@ -11,6 +11,7 @@ import type {
   TeamTemplate,
   VoiceStatus
 } from '../../shared/types'
+import { isTeamWorker, teamLead } from '../../shared/types'
 import type { Selection } from './App'
 import Sidebar from './components/Sidebar'
 import CenterPane from './components/CenterPane'
@@ -18,6 +19,7 @@ import CodePane from './components/CodePane'
 import EditorTab from './components/EditorTab'
 import { CloseIcon, EditIcon, GridIcon } from './components/Icons'
 import { appendToDraft } from './lib/editorText'
+import { ClosedTabs, fileTabKey, isTabClosed, snippetsTabKey } from './lib/codeTabs'
 import ProjectDialog from './components/ProjectDialog'
 import ImportProjectsDialog from './components/ImportProjectsDialog'
 import SettingsDialog from './components/SettingsDialog'
@@ -35,6 +37,7 @@ import {
   snapshotTerminal,
   setAppHotkeys,
   setTerminalLocked,
+  setTerminalReadOnly,
   terminalIds,
   writeToTerminal
 } from './lib/terminals'
@@ -81,7 +84,8 @@ function Workspace(): React.JSX.Element {
     folderApp: '',
     voiceRememberLanguage: true,
     voiceLanguage: null,
-    voiceFixedLanguage: null
+    voiceFixedLanguage: null,
+    showEditedFiles: true
   })
   const [voiceStatus, setVoiceStatus] = useState<VoiceStatus | null>(null)
   const [toast, setToast] = useState<string | null>(null)
@@ -258,7 +262,10 @@ function Workspace(): React.JSX.Element {
   // Terminals gesperrter Agents nehmen keine Eingaben an
   useEffect(() => {
     agentsRef.current = agents
-    for (const a of agents) setTerminalLocked(a.id, !!a.editing)
+    for (const a of agents) {
+      setTerminalReadOnly(a.id, isTeamWorker(a)) // Team-Worker: nur beobachten
+      setTerminalLocked(a.id, !!a.editing)
+    }
   }, [agents])
 
   /** Editor-Tab schließen und den Text an claude zurückgeben */
@@ -281,8 +288,11 @@ function Workspace(): React.JSX.Element {
     [agents, showError]
   )
 
+  /** Vom Nutzer geschlossene Reiter rechts (bis neuere Inhalte kommen) */
+  const [closedTabs, setClosedTabs] = useState<ClosedTabs>({})
+
   /** Code-Ansicht: Fokus des aktiven Agents, sonst jüngster Fokus im ausgewählten Projekt. */
-  const codeFocus = useMemo(() => {
+  const shownFocus = useMemo(() => {
     if (activeAgentId && focusByAgent[activeAgentId]) return focusByAgent[activeAgentId]
     if (selection?.kind === 'project' || selection?.kind === 'agents') {
       const ids = new Set(shownAgentIds(selection, agents))
@@ -294,17 +304,28 @@ function Workspace(): React.JSX.Element {
     }
     return null
   }, [activeAgentId, focusByAgent, selection, agents])
+  const codeFocus =
+    shownFocus && !isTabClosed(closedTabs, fileTabKey(shownFocus.filePath), shownFocus.at)
+      ? shownFocus
+      : null
 
-  /** Snippets des aktiven Agents (rechts, Reiter „Snippets“) */
-  const activeSnippets = useMemo(
-    () => (activeAgentId ? (snippetsByAgent[activeAgentId] ?? []) : []),
-    [activeAgentId, snippetsByAgent]
-  )
-  /** Vom aktiven Agent bearbeitete Dateien (rechts, je ein Reiter) */
+  /** Snippets des aktiven Agents (rechts, Reiter „Snippets“) – leer, solange der Reiter zu ist */
+  const activeSnippets = useMemo(() => {
+    const list = activeAgentId ? (snippetsByAgent[activeAgentId] ?? []) : []
+    if (!activeAgentId || !list.length) return list
+    return isTabClosed(closedTabs, snippetsTabKey(activeAgentId), list[0].at) ? [] : list
+  }, [activeAgentId, snippetsByAgent, closedTabs])
+  /** Vom aktiven Agent bearbeitete Dateien (rechts, je ein Reiter), ohne geschlossene */
   const activeEdits = useMemo(
-    () => (activeAgentId ? (editsByAgent[activeAgentId] ?? []) : []),
-    [activeAgentId, editsByAgent]
+    () =>
+      activeAgentId && settings.showEditedFiles
+        ? (editsByAgent[activeAgentId] ?? []).filter(
+            (e) => !isTabClosed(closedTabs, fileTabKey(e.filePath), e.at)
+          )
+        : [],
+    [activeAgentId, editsByAgent, settings.showEditedFiles, closedTabs]
   )
+  // Spalte nur, solange ein Reiter offen ist – alle geschlossen → Spalte zu
   const showCodePane = !!codeFocus || activeSnippets.length > 0 || activeEdits.length > 0
 
   // ---------------------------------------------------------------- Aktionen
@@ -349,7 +370,11 @@ function Workspace(): React.JSX.Element {
 
   const stopAgent = useCallback(
     (agent: Agent) => {
-      if (!confirm(`„${agent.name}“ beenden?`)) return
+      const question =
+        agent.teamRole === 'orchestrator'
+          ? `„${agent.name}“ steuert ein Team – das ganze Team beenden?`
+          : `„${agent.name}“ beenden?`
+      if (!confirm(question)) return
       window.api.agents.stop(agent.id).catch(showError)
     },
     [showError]
@@ -499,13 +524,23 @@ function Workspace(): React.JSX.Element {
       let target: VoiceTarget
       let label: string
       if (kind === 'agent') {
-        const agent = agents.find((a) => a.id === (agentId ?? activeAgentId))
+        let agent = agents.find((a) => a.id === (agentId ?? activeAgentId))
         if (!agent) {
           setToast('Kein aktiver Agent ausgewählt.')
           return
         }
-        target = { kind: 'agent', agentId: agent.id }
-        label = `Anweisung an ${agent.name}`
+        // Team-Worker sind nur beobachtbar → Anweisung an ihren Orchestrator
+        const watched = isTeamWorker(agent) ? agent : null
+        if (watched) agent = teamLead(agents, watched.teamId!) ?? agent
+        if (isTeamWorker(agent)) {
+          setToast(`${agent.name} kann nur beobachtet werden – kein Orchestrator läuft.`)
+          return
+        }
+        // Ziel bleibt der Worker: Main reicht den Text mit Bezug auf ihn an den Orchestrator weiter
+        target = { kind: 'agent', agentId: (watched ?? agent).id }
+        label = watched
+          ? `Anweisung an ${agent.name} (zu ${watched.name})`
+          : `Anweisung an ${agent.name}`
       } else {
         target = { kind: 'global' }
         label =
@@ -541,6 +576,12 @@ function Workspace(): React.JSX.Element {
       const agent = agents.find((a) => a.id === agentId)
       if (!agent) return
       if (agent.editing) return setEditorTab(agentId)
+      if (isTeamWorker(agent)) {
+        setToast(
+          `${agent.name} kann nur beobachtet werden – Anweisungen gehen an den Orchestrator.`
+        )
+        return
+      }
       clearTimeout(prepareTimers.current[agentId])
       // Ansicht in voller Breite festhalten → Agents-Ansicht zeigt sie, solange der Tab offen ist
       snapshotTerminal(agentId)
@@ -758,6 +799,8 @@ function Workspace(): React.JSX.Element {
             agentName={agents.find((a) => a.id === codeFocus?.agentId)?.name}
             editsAgentName={agents.find((a) => a.id === activeAgentId)?.name}
             vscodeInstalled={vscodeInstalled}
+            snippetsKey={snippetsTabKey(activeAgentId ?? '')}
+            onCloseTab={(key, at) => setClosedTabs((c) => ({ ...c, [key]: at }))}
           />
         )}
       </div>

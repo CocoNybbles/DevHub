@@ -12,8 +12,17 @@ import type {
   Team,
   TeamMember
 } from '../shared/types'
+import { isTeamWorker, teamLead } from '../shared/types'
 import { editFromToolResult, mergeEdits, mergeSnippets, TranscriptReader } from './snippets'
-import { AgentBridge, HookEvent, ShowCodeArgs, TeamMessageArgs, ToolName } from './agentBridge'
+import {
+  AgentBridge,
+  AnswerPermissionArgs,
+  HookEvent,
+  PermissionDecision,
+  ShowCodeArgs,
+  TeamMessageArgs,
+  ToolName
+} from './agentBridge'
 import { applyOrder, dataDir, getState, updateState, type PersistedAgent } from './store'
 import { claudeEnv, resolveClaude } from './tools'
 import { isValidModelName, mergeAgentArgs } from '../shared/agentArgs'
@@ -46,7 +55,20 @@ interface RunningAgent {
   snippets: CodeSnippet[]
   /** Vom Agent bearbeitete Dateien (Reihenfolge = erste Bearbeitung) */
   edits: EditedFile[]
+  /** Worker: hat seit dem letzten Prompt dem Orchestrator berichtet */
+  reported: boolean
 }
+
+/** Offene Rechte-Abfrage eines Workers (claude wartet auf die Hook-Antwort) */
+interface PermissionRequest {
+  workerId: string
+  finish: (decision: PermissionDecision | null) => void
+}
+
+/** Name des automatisch gestarteten Orchestrators („Orchestrator“, „Orchestrator 2“ …) */
+const ORCHESTRATOR_NAME = 'Orchestrator'
+/** Statustext eines Workers, solange seine Rechte-Abfrage offen ist */
+const WAITING_FOR_PERMISSION = 'Wartet auf Freigabe durch den Orchestrator'
 
 export interface StartTeamOptions {
   /** Team-Vorlage – oder freie Mitgliederliste (temporäres Team) */
@@ -54,7 +76,7 @@ export interface StartTeamOptions {
   members?: TeamMember[]
   /** Name für temporäre Teams; Standard „Team N“ */
   name?: string
-  /** Aufgabe für das erste Mitglied (Leitung) */
+  /** Aufgabe für den Orchestrator */
   task?: string
   /** Modell für alle Mitglieder (per Sprache genannt), hat Vorrang vor den Vorlagen */
   model?: string
@@ -88,6 +110,8 @@ const EDITOR_NAME = 'devhub-notepad'
 
 /** Wartezeit nach dem Schließen des Editors, bis claude den Prompt neu geladen hat */
 const EDITOR_RELOAD_MS = 500
+/** So lange wartet ein Worker höchstens auf die Entscheidung des Orchestrators (Sekunden) */
+const PERMISSION_TIMEOUT_S = 24 * 60 * 60
 
 export class AgentManager {
   private running = new Map<string, RunningAgent>()
@@ -96,17 +120,22 @@ export class AgentManager {
   /** Wiederherstellung nur einmal pro App-Start */
   private restored = false
   private editors = new Map<string, EditorSession>()
+  private permissions = new Map<number, PermissionRequest>()
+  private nextPermissionId = 1
 
   constructor(private events: AgentEvents) {
     this.bridge = new AgentBridge({
       onHook: (id, ev) => this.handleHook(id, ev),
-      tools: (id) =>
-        this.running.get(id)?.agent.teamId
-          ? ['show_code', 'team_members', 'send_team_message']
-          : ['show_code'],
+      tools: (id) => {
+        const a = this.running.get(id)?.agent
+        if (!a?.teamId) return ['show_code']
+        const team: ToolName[] = ['show_code', 'team_members', 'send_team_message']
+        return a.teamRole === 'orchestrator' ? [...team, 'answer_permission'] : team
+      },
       onToolCall: (id, name, args) => this.handleToolCall(id, name, args),
       onEditor: (id, filePath) => this.openEditor(id, filePath),
-      onEditorAbort: (id) => this.closeEditor(id)
+      onEditorAbort: (id) => this.closeEditor(id),
+      onPermission: (id, ev, signal) => this.requestPermission(id, ev, signal)
     })
   }
 
@@ -226,9 +255,10 @@ export class AgentManager {
   }
 
   /**
-   * Startet ein Team: alle Mitglieder als eigene Agents mit gemeinsamer teamId. Erst werden alle
-   * Agents gespeichert (Namen reserviert, jeder kennt beim Start seine Teamkollegen), dann gestartet.
-   * Die Aufgabe bekommt nur das erste Mitglied (Leitung), das sie per Team-Nachricht verteilt.
+   * Startet ein Team: automatisch einen Orchestrator + die Mitglieder als Worker, alle mit
+   * gemeinsamer teamId. Erst werden alle Agents gespeichert (Namen reserviert, jeder kennt beim Start
+   * seine Kollegen), dann gestartet. Die Aufgabe bekommt der Orchestrator, der sie verteilt; Worker
+   * sind für den Nutzer nur beobachtbar.
    */
   async startTeam(projectId: string, opts: StartTeamOptions): Promise<Team> {
     const state = getState()
@@ -260,8 +290,21 @@ export class AgentManager {
     updateState((s) => s.teams.push(team))
 
     const agents: Agent[] = []
-    // Fortlaufende Zeitstempel: Reihenfolge (erstes = Leitung) bleibt eindeutig, auch nach Neustart
+    // Fortlaufende Zeitstempel: Reihenfolge bleibt eindeutig, auch nach Neustart
     const base = Date.now()
+    const orchestrator: Agent = {
+      id: randomUUID(),
+      projectId,
+      name: this.nextName(ORCHESTRATOR_NAME),
+      sessionId: randomUUID(),
+      status: 'starting',
+      createdAt: base,
+      model,
+      teamId: team.id,
+      teamRole: 'orchestrator'
+    }
+    updateState((s) => s.agents.push(persisted(orchestrator)))
+    agents.push(orchestrator)
     for (const [i, m] of members.entries()) {
       const template = m.templateId ? state.templates.find((t) => t.id === m.templateId) : undefined
       const agent: Agent = {
@@ -270,33 +313,46 @@ export class AgentManager {
         name: this.nextName(template?.name),
         sessionId: randomUUID(),
         status: 'starting',
-        createdAt: base + i,
+        createdAt: base + 1 + i,
         model,
         templateId: template?.id,
-        teamId: team.id
+        teamId: team.id,
+        teamRole: 'worker'
       }
       updateState((s) => s.agents.push(persisted(agent)))
       agents.push(agent)
     }
 
     const failures: string[] = []
-    for (const [i, agent] of agents.entries()) {
+    for (const agent of agents) {
       try {
-        await this.spawn(agent, i === 0 ? opts.task?.trim() || undefined : undefined)
+        await this.spawn(agent, agent === orchestrator ? opts.task?.trim() || undefined : undefined)
       } catch (e) {
         failures.push(`${agent.name}: ${e instanceof Error ? e.message : String(e)}`)
         updateState((s) => (s.agents = s.agents.filter((a) => a.id !== agent.id)))
+        // Ohne Orchestrator ist das Team nicht steuerbar → ganz abbrechen
+        if (agent === orchestrator) {
+          const ids = new Set(agents.map((a) => a.id))
+          updateState((s) => (s.agents = s.agents.filter((a) => !ids.has(a.id))))
+          this.removeEmptyTeams()
+          this.emitChanged()
+          throw new Error(failures.join('\n'), { cause: e })
+        }
       }
     }
     this.removeEmptyTeams()
     this.emitChanged()
-    if (failures.length === agents.length) throw new Error(failures.join('\n'))
+    // Kein einziger Worker läuft → Orchestrator allein ist sinnlos
+    if (failures.length === agents.length - 1) {
+      this.stopTeam(team.id)
+      throw new Error(failures.join('\n'))
+    }
     return team
   }
 
   /** Beendet alle Agents eines Teams (das Team verschwindet mit dem letzten Agent). */
   stopTeam(teamId: string): void {
-    for (const a of getState().agents.filter((x) => x.teamId === teamId)) this.stop(a.id)
+    for (const a of getState().agents.filter((x) => x.teamId === teamId)) this.kill(a.id)
   }
 
   /**
@@ -338,7 +394,19 @@ export class AgentManager {
     return agent
   }
 
+  /** Beenden über die Oberfläche: Worker nur mit dem ganzen Team, Orchestrator beendet das Team. */
   stop(id: string): void {
+    const a = this.running.get(id)?.agent
+    if (a && isTeamWorker(a)) {
+      throw new Error(
+        `${a.name} gehört zu einem Team – beende das Team oder bitte den Orchestrator`
+      )
+    }
+    if (a?.teamId && a.teamRole === 'orchestrator') return this.stopTeam(a.teamId)
+    this.kill(id)
+  }
+
+  private kill(id: string): void {
     const r = this.running.get(id)
     if (!r) return this.forget(id)
     r.stopping = true
@@ -349,6 +417,7 @@ export class AgentManager {
     const r = this.running.get(id)
     const trimmed = name.trim()
     if (!r || !trimmed) return
+    if (isTeamWorker(r.agent)) throw new Error('Teammitglieder können nicht umbenannt werden')
     r.agent.name = trimmed
     updateState((s) => {
       const a = s.agents.find((x) => x.id === id)
@@ -371,26 +440,46 @@ export class AgentManager {
 
   /** Erkannten Sprachtext an den Agent geben – abschicken oder nur eintragen. true = abgeschickt. */
   async sendVoice(id: string, text: string): Promise<boolean> {
-    const r = this.running.get(id)
+    let r = this.running.get(id)
     if (!r) throw new Error('Agent läuft nicht mehr')
+    // Worker sind nur beobachtbar → Anweisung geht an ihren Orchestrator
+    if (isTeamWorker(r.agent)) {
+      const lead = this.leadOf(r.agent)
+      if (!lead) throw new Error(`${r.agent.name} hat keinen laufenden Orchestrator`)
+      text = `[Message from the user about ${r.agent.name}] ${text}`
+      r = lead
+      id = lead.agent.id
+    }
     // Editor-Tab offen: Text dort einfügen (Agent selbst ist gesperrt)
     if (r.agent.editing) {
       this.events.onEditorAppend(id, text)
       return false
     }
     const autoSend = r.agent.voiceAutoSend ?? getState().settings.voiceAutoSend
-    if (autoSend) await this.sendLine(id, text)
+    if (autoSend) await this.typeLine(id, text)
     else r.proc.write(text.replace(/\r?\n/g, ' '))
     return autoSend
   }
 
+  /** Tastatureingaben aus dem Terminal; Editor-Tab offen oder Worker → gesperrt */
   write(id: string, data: string): void {
     const r = this.running.get(id)
-    if (r && !r.agent.editing) r.proc.write(data) // Editor-Tab offen → gesperrt
+    if (r && !r.agent.editing && !isTeamWorker(r.agent)) r.proc.write(data)
+  }
+
+  /** Zeile vom Nutzer (z. B. `/clear`) – nicht an Worker, die sind nur beobachtbar. */
+  async sendLine(id: string, text: string): Promise<void> {
+    const a = this.running.get(id)?.agent
+    if (a && isTeamWorker(a)) {
+      throw new Error(
+        `${a.name} kann nur beobachtet werden – Anweisungen gehen an den Orchestrator`
+      )
+    }
+    return this.typeLine(id, text)
   }
 
   /** Schreibt Text und schickt ihn ab. Enter separat, damit die TUI ihn nicht als Teil eines Paste behandelt. */
-  async sendLine(id: string, text: string): Promise<void> {
+  private async typeLine(id: string, text: string): Promise<void> {
     const r = this.running.get(id)
     if (!r) throw new Error('Agent läuft nicht')
     if (r.agent.editing) throw new Error(`${r.agent.name} wird gerade im Editor-Tab bearbeitet`)
@@ -432,7 +521,7 @@ export class AgentManager {
     const claude = await resolveClaude()
     if (!claude) throw new Error('Claude Code wurde nicht gefunden')
 
-    const { settingsFile, mcpFile, binDir } = this.writeAgentConfig(agent.id)
+    const { settingsFile, mcpFile, binDir } = this.writeAgentConfig(agent)
     // Vorlage bei jedem Start frisch lesen → Änderungen wirken auch bei Wiederherstellung
     const template = agent.templateId
       ? getState().templates.find((t) => t.id === agent.templateId)
@@ -491,7 +580,8 @@ export class AgentManager {
       stopping: false,
       pending: [],
       snippets: [],
-      edits: []
+      edits: [],
+      reported: false
     }
     this.running.set(agent.id, r)
 
@@ -511,15 +601,23 @@ export class AgentManager {
       }
       // Agent wurde im Terminal oder über die Liste beendet → Eintrag entfernen
       this.forget(agent.id)
+      // Ohne Orchestrator ist das Team nicht mehr steuerbar → Worker mit beenden
+      if (agent.teamId && agent.teamRole === 'orchestrator') this.stopTeam(agent.teamId)
     })
   }
 
-  /** Pro Agent: Hooks (Status an die App melden) + MCP-Konfiguration (show_code). */
-  private writeAgentConfig(agentId: string): {
+  /**
+   * Pro Agent: Hooks (Status an die App melden) + MCP-Konfiguration (show_code). Worker zusätzlich:
+   * Rechte-Abfragen gehen an den Orchestrator (PermissionRequest-Hook wartet auf dessen Antwort),
+   * keine Rückfragen an den Nutzer (AskUserQuestion gesperrt – er kann ihnen nicht antworten).
+   */
+  private writeAgentConfig(agent: Agent): {
     settingsFile: string
     mcpFile: string
     binDir: string
   } {
+    const agentId = agent.id
+    const worker = isTeamWorker(agent)
     const dir = dataDir('agents', agentId)
     // curl.exe ist ab Windows 10 enthalten; ".exe" explizit, da "curl" in PowerShell 5.1 ein Alias ist
     const hook = [
@@ -535,14 +633,31 @@ export class AgentManager {
         PreToolUse: [{ matcher: '*', hooks: hook }],
         PostToolUse: [{ matcher: '*', hooks: hook }],
         Notification: [{ hooks: hook }],
-        Stop: [{ hooks: hook }]
+        Stop: [{ hooks: hook }],
+        // Ohne -m: die Anfrage bleibt offen, bis der Orchestrator entschieden hat (Ausgabe = Antwort)
+        ...(worker && {
+          PermissionRequest: [
+            {
+              matcher: '*',
+              hooks: [
+                {
+                  type: 'command',
+                  command: `curl.exe -s -X POST -H "Content-Type: application/json" --data-binary @- ${this.bridge.permissionUrl(agentId)}`,
+                  timeout: PERMISSION_TIMEOUT_S
+                }
+              ]
+            }
+          ]
+        })
       },
       permissions: {
         allow: [
           'mcp__devhub__show_code',
           'mcp__devhub__team_members',
-          'mcp__devhub__send_team_message'
-        ]
+          'mcp__devhub__send_team_message',
+          'mcp__devhub__answer_permission'
+        ],
+        ...(worker && { deny: ['AskUserQuestion'] })
       }
     }
     const mcp = { mcpServers: { devhub: { type: 'http', url: this.bridge.mcpUrl(agentId) } } }
@@ -580,6 +695,32 @@ export class AgentManager {
       // Falls die letzte Antwort beim Hook noch nicht im Transkript steht: kurz danach erneut
       if (ev.hook_event_name === 'Stop') setTimeout(() => this.readSnippets(agentId), 1500)
     }
+    const r = this.running.get(agentId)
+    // Worker warten nie auf den Nutzer (er kann ihnen nicht antworten): fertig = untätig
+    if (r && isTeamWorker(r.agent)) {
+      switch (ev.hook_event_name) {
+        case 'UserPromptSubmit':
+          r.reported = false
+          this.setStatus(agentId, 'working')
+          return
+        case 'Stop':
+          this.setStatus(agentId, 'idle', 'Fertig')
+          if (!r.reported) {
+            const lead = this.leadOf(r.agent)
+            if (lead) {
+              this.deliver(
+                lead,
+                `[Team status] ${r.agent.name} finished its turn without sending you a report. ` +
+                  'Ask it with send_team_message if you need its result.'
+              )
+            }
+            r.reported = true // nur einmal pro Auftrag erinnern
+          }
+          return
+        case 'Notification':
+          return
+      }
+    }
     switch (ev.hook_event_name) {
       case 'SessionStart':
         // Beim Fortsetzen (Wiederherstellung) den gespeicherten Wartezustand behalten
@@ -591,7 +732,8 @@ export class AgentManager {
         // Edit/Write/MultiEdit: Datei sofort rechts als Reiter zeigen
         const edit = editFromToolResult(agentId, ev.tool_response, Date.now())
         if (edit) this.addEdits(agentId, [edit])
-        this.setStatus(agentId, 'working')
+        // Offene Rechte-Abfrage (Worker) bleibt sichtbar, bis der Orchestrator entschieden hat
+        if (r?.agent.statusMessage !== WAITING_FOR_PERMISSION) this.setStatus(agentId, 'working')
         break
       }
       case 'UserPromptSubmit':
@@ -664,7 +806,96 @@ export class AgentManager {
   ): Promise<string> {
     if (name === 'show_code') return this.handleShowCode(agentId, args as unknown as ShowCodeArgs)
     if (name === 'team_members') return this.handleTeamMembers(agentId)
+    if (name === 'answer_permission')
+      return this.handleAnswerPermission(agentId, args as unknown as AnswerPermissionArgs)
     return this.handleTeamMessage(agentId, args as unknown as TeamMessageArgs)
+  }
+
+  /** Orchestrator des Teams (bzw. Leitung älterer Teams), falls er läuft */
+  private leadOf(agent: Agent): RunningAgent | undefined {
+    if (!agent.teamId) return undefined
+    const lead = teamLead(this.list(), agent.teamId)
+    return lead && lead.id !== agent.id ? this.running.get(lead.id) : undefined
+  }
+
+  /**
+   * PermissionRequest eines Workers: an den Orchestrator weiterreichen und auf dessen Entscheidung
+   * (`answer_permission`) warten. Bricht die Verbindung ab (Worker beendet), verfällt die Anfrage.
+   */
+  private requestPermission(
+    workerId: string,
+    ev: HookEvent,
+    signal: AbortSignal
+  ): Promise<PermissionDecision | null> {
+    const worker = this.running.get(workerId)
+    if (!worker || !isTeamWorker(worker.agent)) return Promise.resolve(null)
+    const lead = this.leadOf(worker.agent)
+    if (!lead) {
+      return Promise.resolve({
+        behavior: 'deny',
+        message: 'No orchestrator is running for your team, so nobody can approve this.'
+      })
+    }
+    const id = this.nextPermissionId++
+    const input = JSON.stringify(ev.tool_input ?? {})
+    const summary = input.length > 600 ? input.slice(0, 600) + ' …' : input
+    this.setStatus(workerId, 'needsInput', WAITING_FOR_PERMISSION)
+    return new Promise((resolve) => {
+      const finish = (decision: PermissionDecision | null): void => {
+        if (!this.permissions.delete(id)) return
+        signal.removeEventListener('abort', onAbort)
+        if (this.running.get(workerId)?.agent.statusMessage === WAITING_FOR_PERMISSION) {
+          this.setStatus(workerId, 'working')
+        }
+        resolve(decision)
+      }
+      const onAbort = (): void => finish(null)
+      this.permissions.set(id, { workerId, finish })
+      signal.addEventListener('abort', onAbort)
+      this.deliver(
+        lead,
+        `[Permission request #${id} from ${worker.agent.name}] wants to use the tool ` +
+          `${String(ev.tool_name ?? '?')} with input ${summary}. ` +
+          `It is blocked until you answer with the answer_permission tool (request_id ${id}).`
+      )
+    })
+  }
+
+  private handleAnswerPermission(agentId: string, args: AnswerPermissionArgs): string {
+    const me = this.running.get(agentId)?.agent
+    if (me?.teamRole !== 'orchestrator') throw new Error('Only the team orchestrator can do this')
+    const id = Math.floor(Number(args.request_id))
+    const req = this.permissions.get(id)
+    const worker = req && this.running.get(req.workerId)?.agent
+    if (!req || !worker) throw new Error(`No open permission request #${id}`)
+    if (worker.teamId !== me.teamId) throw new Error('This request is not from your team')
+    if (args.decision === 'allow') {
+      req.finish({ behavior: 'allow' })
+      return `Allowed request #${id} – ${worker.name} continues.`
+    }
+    if (args.decision !== 'deny') throw new Error('decision must be "allow" or "deny"')
+    req.finish({
+      behavior: 'deny',
+      message: `Denied by ${me.name}: ${String(args.message ?? '').trim() || 'not allowed'}`
+    })
+    return `Denied request #${id} – ${worker.name} was told why.`
+  }
+
+  /**
+   * Text als neuen Prompt an einen Agent geben – zurückhalten, solange er nicht bereit ist
+   * (startet, Editor-Tab offen, offene Rückfrage an den Nutzer, die Eingaben beantworten würden).
+   */
+  private deliver(r: RunningAgent, text: string): void {
+    if (this.mustHold(r)) r.pending.push(text)
+    else void this.typeLine(r.agent.id, text).catch(() => r.pending.push(text))
+  }
+
+  private mustHold(r: RunningAgent): boolean {
+    return (
+      r.agent.status === 'starting' ||
+      !!r.agent.editing ||
+      (r.agent.status === 'needsInput' && r.agent.statusMessage === 'Stellt eine Frage')
+    )
   }
 
   /** Teamkollegen eines Agents (ohne ihn selbst), laufend oder noch startend. */
@@ -683,9 +914,13 @@ export class AgentManager {
     const mates = this.teammates(agentId)
     if (mates.length === 0) return `Team "${team.name}": no other members are running.`
     const role = (a: Agent): string =>
-      getState().templates.find((t) => t.id === a.templateId)?.name ?? 'general agent'
+      a.teamRole === 'orchestrator'
+        ? 'orchestrator'
+        : (getState().templates.find((t) => t.id === a.templateId)?.name ?? 'general agent')
+    const lead = isTeamWorker(me.agent) ? this.leadOf(me.agent) : undefined
     return [
       `Team "${team.name}" – your teammates:`,
+      ...(lead ? [`(You can only message your orchestrator ${lead.agent.name}.)`] : []),
       ...mates.map(
         (r) =>
           `- ${r.agent.name} (role: ${role(r.agent)}, status: ${r.agent.status}` +
@@ -705,39 +940,45 @@ export class AgentManager {
     const to = String(args.to ?? '').trim()
     if (!message || !to) throw new Error('"to" and "message" are required')
 
-    const mates = this.teammates(agentId)
+    // Worker sprechen nur mit dem Orchestrator (er verteilt und sammelt alles)
+    const lead = isTeamWorker(me.agent) ? this.leadOf(me.agent) : undefined
+    if (isTeamWorker(me.agent) && !lead) throw new Error('Your orchestrator is not running')
+    const mates = lead ? [lead] : this.teammates(agentId)
     const targets =
       to.toLowerCase() === 'all'
         ? mates
         : mates.filter((r) => r.agent.name.toLowerCase() === to.toLowerCase())
     if (targets.length === 0) {
       const names = mates.map((r) => r.agent.name).join(', ') || '(none)'
-      throw new Error(`No teammate named "${to}". Teammates: ${names}`)
+      throw new Error(
+        lead
+          ? `You can only message your orchestrator ${lead.agent.name}.`
+          : `No teammate named "${to}". Teammates: ${names}`
+      )
     }
+    if (lead) me.reported = true
 
     const text =
       `[Team message from ${me.agent.name}] ${message.replace(/\s*\r?\n\s*/g, ' ')} ` +
       `(Reply with the send_team_message tool if a reply is needed.)`
     const delivered: string[] = []
-    const skipped: string[] = []
+    const held: string[] = []
     for (const r of targets) {
-      // Offene Rückfrage an den Nutzer: Eingabe würde die Auswahl beantworten → nicht zustellen
-      if (r.agent.status === 'needsInput' && r.agent.statusMessage === 'Stellt eine Frage') {
-        skipped.push(r.agent.name)
-        continue
-      }
-      // Noch nicht bereit oder im Editor-Tab gesperrt → später zustellen
-      if (r.agent.status === 'starting' || r.agent.editing) r.pending.push(text)
-      else await this.sendLine(r.agent.id, text)
-      delivered.push(r.agent.name)
+      // Nicht bereit (startet, Editor-Tab, offene Rückfrage) → wird später zugestellt
+      if (this.mustHold(r)) held.push(r.agent.name)
+      else delivered.push(r.agent.name)
+      this.deliver(r, text)
     }
     if (process.env.DEVHUB_DEBUG)
-      console.log('[DevHub] Team-Nachricht', me.agent.name, '→', delivered.join(', '))
+      console.log(
+        '[DevHub] Team-Nachricht',
+        me.agent.name,
+        '→',
+        targets.map((r) => r.agent.name)
+      )
     return [
       delivered.length ? `Delivered to ${delivered.join(', ')}.` : '',
-      skipped.length
-        ? `Not delivered to ${skipped.join(', ')}: waiting for the user to answer a question – try again later.`
-        : ''
+      held.length ? `Queued for ${held.join(', ')} (busy with the user) – delivered later.` : ''
     ]
       .filter(Boolean)
       .join(' ')
@@ -753,11 +994,14 @@ export class AgentManager {
       .sort((a, b) => a.createdAt - b.createdAt)
     const role = (templateId?: string): string =>
       state.templates.find((t) => t.id === templateId)?.name ?? 'general agent'
+    const lead = teamLead(members, team.id)
+    const orchestrated = lead?.teamRole === 'orchestrator'
     return {
       name: team.name,
-      lead: members[0]?.name ?? agent.name,
+      lead: lead?.name ?? agent.name,
+      orchestrated,
       teammates: members
-        .filter((a) => a.id !== agent.id)
+        .filter((a) => a.id !== agent.id && !(orchestrated && a.id === lead?.id))
         .map((a) => `${a.name} (role: ${role(a.templateId)})`),
       instructions: state.teamTemplates.find((t) => t.id === team.teamTemplateId)?.instructions
     }
@@ -805,10 +1049,10 @@ export class AgentManager {
   /** Zurückgehaltene Team-Nachrichten zustellen, sobald die TUI bereit und kein Editor-Tab offen ist */
   private flushPending(id: string): void {
     const r = this.running.get(id)
-    if (!r || r.agent.status === 'starting' || r.agent.editing || !r.pending.length) return
+    if (!r || this.mustHold(r) || !r.pending.length) return
     const queued = r.pending.splice(0)
     void (async () => {
-      for (const text of queued) await this.sendLine(id, text).catch(() => {})
+      for (const text of queued) await this.typeLine(id, text).catch(() => {})
     })()
   }
 
@@ -870,9 +1114,11 @@ export class AgentManager {
 
 interface TeamContext {
   name: string
-  /** Name des leitenden Agents (erstes Mitglied) */
+  /** Name des Orchestrators (bzw. bei älteren Teams des leitenden, ersten Mitglieds) */
   lead: string
-  /** „Reviewer (role: Reviewer)“ … */
+  /** Team mit Orchestrator (sonst älteres Team: erstes Mitglied leitet, alle reden miteinander) */
+  orchestrated: boolean
+  /** Übrige Mitglieder (ohne den Agent selbst, bei Teams mit Orchestrator ohne diesen) */
   teammates: string[]
   instructions?: string
 }
@@ -887,7 +1133,8 @@ function persisted(a: Agent): PersistedAgent {
     voiceAutoSend: a.voiceAutoSend,
     model: a.model,
     templateId: a.templateId,
-    teamId: a.teamId
+    teamId: a.teamId,
+    teamRole: a.teamRole
   }
 }
 
@@ -907,7 +1154,8 @@ function systemPrompt(
         text
     )
   }
-  if (team) {
+  if (team?.orchestrated) parts.push(orchestratedTeamPrompt(agentName, team))
+  else if (team) {
     const lead = team.lead === agentName
     parts.push(
       [
@@ -929,6 +1177,45 @@ function systemPrompt(
     )
   }
   return parts.join('\n\n')
+}
+
+/** Team mit Orchestrator: Rolle des Orchestrators bzw. eines Workers. */
+function orchestratedTeamPrompt(agentName: string, team: TeamContext): string {
+  const guidelines = team.instructions?.trim()
+    ? `Team guidelines from the user (follow them):\n\n${team.instructions.trim()}`
+    : ''
+  if (team.lead === agentName) {
+    return [
+      `You are the orchestrator of the DevHub team "${team.name}". Your workers: ${team.teammates.join(', ') || '(none)'}.`,
+      'The user talks only to you; the workers cannot be contacted by the user and only act on your messages.',
+      "Your job: understand the user's task, plan it, split it into self-contained work packages that fit the workers' roles, " +
+        'hand them over with `send_team_message`, track progress (`team_members` shows their status), review and integrate their results, ' +
+        'resolve conflicts between them, and report back to the user. Do not implement larger changes yourself – delegate them; ' +
+        'reading code, checking diffs and running quick checks to review results is fine.',
+      'If the task is unclear, ask the user before delegating. Answer questions from workers yourself, or ask the user if only they can decide.',
+      'Messages from workers arrive in your terminal prefixed with "[Team message from <name>]"; DevHub status notes start with "[Team status]".',
+      'Permission requests: a worker that needs approval for a tool call is blocked, and you receive "[Permission request #<id> from <name>]". ' +
+        'Answer every request promptly with `answer_permission`. Allow it if it is clearly needed for the work package you gave and stays within the project; ' +
+        'if it is destructive, irreversible, touches things outside the project, or you are unsure, ask the user first (AskUserQuestion), then answer.',
+      'You all share one working directory: give workers separate files or areas so they do not edit the same files at the same time.',
+      guidelines
+    ]
+      .filter(Boolean)
+      .join('\n')
+  }
+  return [
+    `You are a worker in the DevHub team "${team.name}", coordinated by the orchestrator ${team.lead}.`,
+    `Other workers: ${team.teammates.join(', ') || '(none)'}.`,
+    `You only receive work from ${team.lead} (messages prefixed with "[Team message from ${team.lead}]"). The user watches your terminal but cannot answer you.`,
+    `Do not ask the user anything; if something is unclear, ask ${team.lead} with \`send_team_message\` and wait for the answer.`,
+    `When you finish a work package, send ${team.lead} a concise, self-contained report with \`send_team_message\` (what you changed, which files, how you verified it, open issues). ` +
+      'Do not send pure acknowledgements.',
+    `Tool permissions are decided by ${team.lead}; if a request is denied, follow the given reason instead of retrying the same action.`,
+    'You share one working directory with the other workers: only edit the files/areas assigned to you.',
+    guidelines
+  ]
+    .filter(Boolean)
+    .join('\n')
 }
 
 /** Letzte Zeilen der Ausgabe ohne Terminal-Steuersequenzen (für Fehlermeldungen). */

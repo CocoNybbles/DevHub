@@ -50,7 +50,8 @@ const DEFAULT_STATE: PersistedState = {
     folderApp: '',
     voiceRememberLanguage: true,
     voiceLanguage: null,
-    voiceFixedLanguage: null
+    voiceFixedLanguage: null,
+    showEditedFiles: true
   }
 }
 

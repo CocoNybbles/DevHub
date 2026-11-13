@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState } from 'react'
 import type { CodeFocus, CodeSnippet, EditedFile, LineRange } from '../../../shared/types'
 import { languageForPath, monaco } from '../lib/monaco'
+import { fileTabKey } from '../lib/codeTabs'
 import { CloseIcon, CodeIcon } from './Icons'
 import SnippetList from './SnippetList'
 
 interface Props {
-  /** Code-Stelle aus `show_code` (null = keine) */
+  /** Code-Stelle aus `show_code` (null = keine); geschlossene Reiter filtert der Workspace heraus */
   focus: CodeFocus | null
   /** Code-Blöcke aus den Antworten des aktiven Agents, neueste zuerst */
   snippets: CodeSnippet[]
@@ -16,6 +17,10 @@ interface Props {
   /** Name des aktiven Agents (Snippets, bearbeitete Dateien) */
   editsAgentName?: string
   vscodeInstalled: boolean
+  /** Reiter schließen (Schlüssel aus lib/codeTabs, Stand); erscheint mit neueren Inhalten wieder */
+  onCloseTab: (key: string, at: number) => void
+  /** Schlüssel des Snippets-Reiters (pro Agent) */
+  snippetsKey: string
 }
 
 /** Ein Datei-Reiter: bearbeitete Datei und/oder Stelle aus `show_code` */
@@ -30,7 +35,7 @@ interface FileTab {
 }
 
 const SNIPPETS = 'snippets'
-const fileKey = (path: string): string => 'file:' + path.toLowerCase()
+const fileKey = fileTabKey
 const baseName = (path: string): string => path.split(/[\\/]/).pop() ?? path
 
 /** Breite der Code-Spalte (Splitter), gemerkt pro Rechner im Datenordner (localStorage) */
@@ -69,7 +74,9 @@ function CodePane({
   edits,
   agentName,
   editsAgentName,
-  vscodeInstalled
+  vscodeInstalled,
+  onCloseTab,
+  snippetsKey
 }: Props): React.JSX.Element {
   // ---- Reiter zusammenstellen
   const files: FileTab[] = edits.map((e) => ({
@@ -96,9 +103,7 @@ function CodePane({
     }
   }
 
-  /** Vom Nutzer geschlossene Reiter (Schlüssel → Stand beim Schließen); neue Änderung → wieder da */
-  const [closed, setClosed] = useState<Record<string, number>>({})
-  const visible = files.filter((f) => !(closed[f.key] >= f.at))
+  const visible = files
 
   const snippetsAt = snippets[0]?.at ?? 0
   const all = [
@@ -119,15 +124,17 @@ function CodePane({
   const choose = (key: string): void => setChosen({ key, at: latest })
   const current = visible.find((f) => f.key === tab)
 
-  const close = (f: FileTab): void => {
-    setClosed((c) => ({ ...c, [f.key]: f.at }))
-    if (tab === f.key) {
+  /** Reiter schließen; war es der letzte, blendet der Workspace die Spalte aus */
+  const closeTab = (key: string, at: number): void => {
+    if (tab === key) {
       // Nachbarreiter wählen
-      const i = all.findIndex((t) => t.key === f.key)
+      const i = all.findIndex((t) => t.key === key)
       const next = all[i + 1] ?? all[i - 1]
       if (next) setChosen({ key: next.key, at: latest })
     }
+    onCloseTab(key === SNIPPETS ? snippetsKey : key, at)
   }
+  const close = (f: FileTab): void => closeTab(f.key, f.at)
 
   // Aktiven Reiter in der Leiste sichtbar halten
   const tabsRef = useRef<HTMLDivElement>(null)
@@ -210,13 +217,24 @@ function CodePane({
             </div>
           ))}
           {snippets.length > 0 && (
-            <button
-              className={`tab ${tab === SNIPPETS ? 'active' : ''}`}
+            <div
+              className={`tab closable-tab ${tab === SNIPPETS ? 'active' : ''}`}
               title="Code-Blöcke aus den Antworten des Agents"
               onClick={() => choose(SNIPPETS)}
+              onAuxClick={(e) => e.button === 1 && closeTab(SNIPPETS, snippetsAt)}
             >
               Snippets <span className="count">{snippets.length}</span>
-            </button>
+              <button
+                className="icon"
+                title="Reiter schließen (erscheint beim nächsten Snippet wieder)"
+                onClick={(e) => {
+                  e.stopPropagation()
+                  closeTab(SNIPPETS, snippetsAt)
+                }}
+              >
+                <CloseIcon size={9} />
+              </button>
+            </div>
           )}
         </div>
         {current && vscodeInstalled && (

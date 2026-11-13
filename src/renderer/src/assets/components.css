@@ -267,6 +267,27 @@ button.primary {
 .agent-row.in-team {
   padding-left: 12px;
 }
+/* Team-Worker: nur beobachten */
+.watch-tag {
+  display: inline-flex;
+  vertical-align: middle;
+  margin-left: 6px;
+  color: var(--muted);
+}
+.watch-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 7px;
+  font-size: 11px;
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  white-space: nowrap;
+}
 input.rename {
   flex: 1;
   min-width: 0;
@@ -634,13 +655,20 @@ input.rename {
   white-space: nowrap;
   text-overflow: ellipsis;
 }
-.tab.file-tab button.icon {
+.tab.closable-tab {
+  gap: 4px;
+  padding-right: 2px;
+}
+.tab.file-tab button.icon,
+.tab.closable-tab button.icon {
   width: 18px;
   height: 18px;
   visibility: hidden;
 }
 .tab.file-tab:hover button.icon,
-.tab.file-tab.active button.icon {
+.tab.file-tab.active button.icon,
+.tab.closable-tab:hover button.icon,
+.tab.closable-tab.active button.icon {
   visibility: visible;
 }
 /* Punkt = vom Agent bearbeitet (grün = neu angelegt) */

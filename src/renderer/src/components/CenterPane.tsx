@@ -1,7 +1,8 @@
 import type { Agent, Project } from '../../../shared/types'
+import { isTeamWorker, teamLead } from '../../../shared/types'
 import type { Selection } from '../App'
 import TerminalView from './TerminalView'
-import { ClearIcon, CloseIcon, EditIcon, LockIcon, MicIcon, PlayIcon } from './Icons'
+import { ClearIcon, CloseIcon, EditIcon, EyeIcon, LockIcon, MicIcon, PlayIcon } from './Icons'
 import { focusTerminal, hasSnapshot } from '../lib/terminals'
 import { formatAccelerator } from '../../../shared/hotkeys'
 
@@ -63,7 +64,7 @@ function CenterPane(props: Props): React.JSX.Element {
               {agent.editing && <LockedBadge onOpen={() => props.onOpenEditor(agent.id)} />}
             </span>
             <div className="header-actions">
-              {!agent.editing && (
+              {!agent.editing && !isTeamWorker(agent) && (
                 <button
                   className="icon"
                   title={`Anweisung in einem Tab schreiben – mit Bildern und Diktat (${formatAccelerator(props.editorHotkey)})`}
@@ -255,9 +256,24 @@ function LockedTerminal({
   )
 }
 
-/** Rechts im Agent-Kopf: Mikrofon · /clear · Beenden (im Raster aktiviert der Klick nicht die Zelle) */
+/**
+ * Rechts im Agent-Kopf: Mikrofon · /clear · Beenden (im Raster aktiviert der Klick nicht die Zelle).
+ * Team-Worker: keine Bedienung, nur der Hinweis „beobachten“.
+ */
 function AgentButtons(props: Props & { agent: Agent }): React.JSX.Element {
   const a = props.agent
+  if (isTeamWorker(a)) {
+    const lead = teamLead(props.agents, a.teamId!)
+    return (
+      <span
+        className="watch-badge"
+        title={`Teammitglied – nur beobachten. Anweisungen gehen an ${lead?.name ?? 'den Orchestrator'}.`}
+      >
+        <EyeIcon size={12} /> beobachten
+      </span>
+    )
+  }
+  const orchestrator = a.teamRole === 'orchestrator'
   return (
     <span className="agent-actions">
       <button
@@ -278,7 +294,7 @@ function AgentButtons(props: Props & { agent: Agent }): React.JSX.Element {
       </button>
       <button
         className="icon"
-        title="Agent beenden"
+        title={orchestrator ? 'Team beenden (Orchestrator und alle Mitglieder)' : 'Agent beenden'}
         onMouseDown={(e) => e.stopPropagation()}
         onClick={() => props.onStopAgent(a)}
       >

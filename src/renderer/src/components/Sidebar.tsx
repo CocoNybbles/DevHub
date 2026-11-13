@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import type { Agent, AgentTemplate, Project, Team, TeamTemplate } from '../../../shared/types'
+import { isTeamWorker, teamLead } from '../../../shared/types'
 import type { Selection } from '../App'
 import { formatAccelerator } from '../../../shared/hotkeys'
 import ContextMenu, { MenuItem, MenuState } from './ContextMenu'
@@ -9,6 +10,7 @@ import {
   CloseIcon,
   CodeIcon,
   EditIcon,
+  EyeIcon,
   FolderImportIcon,
   GearIcon,
   MicIcon,
@@ -36,9 +38,9 @@ function moveId(ids: string[], moved: string, target: string, after: boolean): s
   return rest
 }
 
-/** Leitung eines Teams = zuerst gestartetes Mitglied (unabhängig von der Anzeigereihenfolge) */
+/** Orchestrator eines Teams (ältere Teams ohne Orchestrator: zuerst gestartetes Mitglied) */
 const leadOf = (members: Agent[]): Agent | undefined =>
-  members.reduce<Agent | undefined>((l, a) => (!l || a.createdAt < l.createdAt ? a : l), undefined)
+  members[0]?.teamId ? teamLead(members, members[0].teamId) : undefined
 
 interface Props {
   projects: Project[]
@@ -193,6 +195,11 @@ function Sidebar(props: Props): React.JSX.Element {
     lead = false
   ): React.JSX.Element => {
     const d = dnd(group, a.id, groupIds, props.onReorderAgents, renaming !== a.id)
+    const worker = isTeamWorker(a)
+    const orchestrator = a.teamRole === 'orchestrator'
+    const hint = worker
+      ? 'Teammitglied – nur beobachten; Anweisungen gehen an den Orchestrator\nStrg+Klick: zum Raster hinzufügen/entfernen\nZiehen: Reihenfolge ändern'
+      : 'Strg+Klick: zum Raster hinzufügen/entfernen\nZiehen: Reihenfolge ändern\nRechtsklick: umbenennen, Sprach-Einstellung'
     return (
       <div
         key={a.id}
@@ -203,11 +210,14 @@ function Sidebar(props: Props): React.JSX.Element {
           a.status === 'needsInput' ? 'attention' : '',
           isShown(a.id) ? 'selected' : '',
           a.editing ? 'editing' : '',
+          worker ? 'watch-only' : '',
           d.className
         ].join(' ')}
         onClick={(e) => props.onSelectAgent(a.id, e.ctrlKey || e.metaKey)}
         onContextMenu={(e) => {
           e.preventDefault()
+          // Worker: nur beobachten – kein Umbenennen, keine Anweisungen, kein einzelnes Beenden
+          if (worker) return
           const voice = (label: string, value: boolean | undefined): MenuItem => ({
             label,
             checked: a.voiceAutoSend === value,
@@ -224,7 +234,11 @@ function Sidebar(props: Props): React.JSX.Element {
                   : `Anweisung im Tab schreiben (${formatAccelerator(props.editorHotkey)})`,
                 action: () => props.onEditPrompt(a.id)
               },
-              { label: 'Beenden', danger: true, action: () => props.onStopAgent(a) },
+              {
+                label: orchestrator ? 'Team beenden' : 'Beenden',
+                danger: true,
+                action: () => props.onStopAgent(a)
+              },
               { label: 'Sprach-Anweisungen', heading: true, action: () => {} },
               voice(
                 `Wie global (${props.globalVoiceAutoSend ? 'abschicken' : 'nur eintragen'})`,
@@ -235,7 +249,7 @@ function Sidebar(props: Props): React.JSX.Element {
             ]
           })
         }}
-        title={`${STATUS_LABEL[a.status]}${a.statusMessage ? ` – ${a.statusMessage}` : ''}${a.model ? `\nModell: ${a.model}` : ''}${lead ? '\nLeitet das Team' : ''}\nStrg+Klick: zum Raster hinzufügen/entfernen\nZiehen: Reihenfolge ändern\nRechtsklick: umbenennen, Sprach-Einstellung`}
+        title={`${STATUS_LABEL[a.status]}${a.statusMessage ? ` – ${a.statusMessage}` : ''}${a.model ? `\nModell: ${a.model}` : ''}${orchestrator ? '\nOrchestrator: steuert das Team, einziger Ansprechpartner' : lead ? '\nLeitet das Team' : ''}\n${hint}`}
       >
         <span className={`dot ${a.status}`} />
         {renaming === a.id ? (
@@ -249,7 +263,16 @@ function Sidebar(props: Props): React.JSX.Element {
         ) : (
           <span className="row-name">
             {a.name}
-            {lead && <span className="team-tag">Leitung</span>}
+            {orchestrator ? (
+              <span className="team-tag">Orchestrator</span>
+            ) : (
+              lead && <span className="team-tag">Leitung</span>
+            )}
+            {worker && (
+              <span className="watch-tag" title="Nur beobachten">
+                <EyeIcon size={11} />
+              </span>
+            )}
             {a.editing && (
               <span
                 className="team-tag"
@@ -263,52 +286,56 @@ function Sidebar(props: Props): React.JSX.Element {
             )}
           </span>
         )}
-        <span className="agent-actions">
-          <button
-            className="icon row-btn"
-            title={
-              a.editing
-                ? 'Zum Editor-Tab'
-                : `Anweisung in einem Tab schreiben – mit Bildern und Diktat (${formatAccelerator(props.editorHotkey)})`
-            }
-            onClick={(e) => {
-              e.stopPropagation()
-              props.onEditPrompt(a.id)
-            }}
-          >
-            <EditIcon size={12} />
-          </button>
-          <button
-            className={`icon row-btn ${props.recordingAgentId === a.id ? 'recording' : ''}`}
-            title={`Sprach-Anweisung an ${a.name}`}
-            onClick={(e) => {
-              e.stopPropagation()
-              props.onAgentVoiceFor(a.id)
-            }}
-          >
-            <MicIcon size={12} />
-          </button>
-          <button
-            className="icon row-btn"
-            title={`Unterhaltung von ${a.name} leeren (/clear)`}
-            onClick={(e) => {
-              e.stopPropagation()
-              props.onClearAgent(a.id)
-            }}
-          >
-            <ClearIcon size={12} />
-          </button>
-          <button
-            className="icon stop-agent"
-            title="Agent beenden"
-            onClick={(e) => {
-              e.stopPropagation()
-              props.onStopAgent(a)
-            }}
-          >
-            <CloseIcon />
-          </button>
-        </span>
+        {!worker && (
+          <span className="agent-actions">
+            <button
+              className="icon row-btn"
+              title={
+                a.editing
+                  ? 'Zum Editor-Tab'
+                  : `Anweisung in einem Tab schreiben – mit Bildern und Diktat (${formatAccelerator(props.editorHotkey)})`
+              }
+              onClick={(e) => {
+                e.stopPropagation()
+                props.onEditPrompt(a.id)
+              }}
+            >
+              <EditIcon size={12} />
+            </button>
+            <button
+              className={`icon row-btn ${props.recordingAgentId === a.id ? 'recording' : ''}`}
+              title={`Sprach-Anweisung an ${a.name}`}
+              onClick={(e) => {
+                e.stopPropagation()
+                props.onAgentVoiceFor(a.id)
+              }}
+            >
+              <MicIcon size={12} />
+            </button>
+            <button
+              className="icon row-btn"
+              title={`Unterhaltung von ${a.name} leeren (/clear)`}
+              onClick={(e) => {
+                e.stopPropagation()
+                props.onClearAgent(a.id)
+              }}
+            >
+              <ClearIcon size={12} />
+            </button>
+            <button
+              className="icon stop-agent"
+              title={
+                orchestrator ? 'Team beenden (Orchestrator und alle Mitglieder)' : 'Agent beenden'
+              }
+              onClick={(e) => {
+                e.stopPropagation()
+                props.onStopAgent(a)
+              }}
+            >
+              <CloseIcon />
+            </button>
+          </span>
+        )}
       </div>
     )
   }
@@ -340,7 +367,7 @@ function Sidebar(props: Props): React.JSX.Element {
               ]
             })
           }}
-          title={`${team.temporary ? 'Temporäres Team' : 'Team'} „${team.name}“ – Mitglieder dürfen sich Nachrichten schicken\nLeitung: ${lead?.name ?? '–'}\nKlick: alle im Raster · Strg+Klick: hinzufügen/entfernen · Rechtsklick: beenden`}
+          title={`${team.temporary ? 'Temporäres Team' : 'Team'} „${team.name}“\n${lead?.teamRole === 'orchestrator' ? `Orchestrator: ${lead.name} – steuert die Mitglieder, nur mit ihm sprichst du; die Mitglieder kannst du beobachten` : `Leitung: ${lead?.name ?? '–'}`}\nKlick: alle im Raster · Strg+Klick: hinzufügen/entfernen · Rechtsklick: beenden`}
         >
           <button
             className={`chevron ${isOpen ? 'open' : ''}`}

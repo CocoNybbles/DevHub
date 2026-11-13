@@ -23,6 +23,10 @@ interface Entry {
    * Containern wird das Terminal stattdessen verkleinert dargestellt (CSS-Skalierung).
    */
   lockedSize: { w: number; h: number } | null
+  /** Team-Worker: nur beobachten (keine Eingaben, unabhängig von der Editor-Sperre) */
+  readOnly: boolean
+  /** Editor-Tab offen */
+  locked: boolean
 }
 
 const entries = new Map<string, Entry>()
@@ -65,11 +69,22 @@ function ensure(id: string): Entry {
   term.loadAddon(fit)
   term.onData((data) => window.api.agents.write(id, data))
 
-  // Strg+Shift+C kopiert die Auswahl (Strg+C bleibt "Abbrechen" für den Agent)
+  // Kopieren/Einfügen wie im Windows-Terminal (xterm.js selbst schickt bei Strg+V nur ^V)
   term.attachCustomKeyEventHandler((ev) => {
-    if (ev.type === 'keydown' && ev.ctrlKey && ev.shiftKey && ev.code === 'KeyC') {
-      const sel = term.getSelection()
-      if (sel) navigator.clipboard.writeText(sel)
+    const key = clipboardKey(ev)
+    if (key === 'copy' && term.hasSelection()) {
+      // Strg+C mit Auswahl = Kopieren; ohne Auswahl bleibt es „Abbrechen“ für den Agent
+      ev.preventDefault()
+      if (ev.type === 'keydown') {
+        window.api.clipboard.writeText(term.getSelection()).catch(() => {})
+        term.clearSelection()
+      }
+      return false
+    }
+    if (key === 'paste') {
+      // Standard-Einfügen des Browsers unterdrücken, sonst käme der Text doppelt an
+      ev.preventDefault()
+      if (ev.type === 'keydown') pasteInto(id, term)
       return false
     }
     // App-Kürzel (Sprache) nicht ans Terminal weitergeben
@@ -79,9 +94,44 @@ function ensure(id: string): Entry {
 
   const host = document.createElement('div')
   host.className = 'xterm-host'
-  e = { term, fit, host, opened: false, lastSize: null, lockedSize: null }
+  e = {
+    term,
+    fit,
+    host,
+    opened: false,
+    lastSize: null,
+    lockedSize: null,
+    readOnly: false,
+    locked: false
+  }
   entries.set(id, e)
   return e
+}
+
+/** Strg+C / Strg+Shift+C / Strg+Einfg = kopieren, Strg+V / Strg+Shift+V / Shift+Einfg = einfügen */
+function clipboardKey(ev: KeyboardEvent): 'copy' | 'paste' | null {
+  if (ev.altKey || ev.metaKey) return null
+  if (ev.ctrlKey && ev.code === 'KeyC') return 'copy'
+  if (ev.ctrlKey && !ev.shiftKey && ev.code === 'Insert') return 'copy'
+  if (ev.ctrlKey && ev.code === 'KeyV') return 'paste'
+  if (ev.shiftKey && !ev.ctrlKey && ev.code === 'Insert') return 'paste'
+  return null
+}
+
+/**
+ * Zwischenablage ins Terminal: Text per `term.paste` (Bracketed Paste, mehrzeilig = ein Block).
+ * Nur ein Bild → Alt+V an claude, das unter Windows damit selbst ein Bild aus der Zwischenablage
+ * anhängt (Strg+V ist dort für das Terminal reserviert).
+ */
+function pasteInto(id: string, term: Terminal): void {
+  if (term.options.disableStdin) return // gesperrt bzw. nur beobachten
+  window.api.clipboard
+    .read()
+    .then(({ text, hasImage }) => {
+      if (text) term.paste(text)
+      else if (hasImage) window.api.agents.write(id, '\x1bv')
+    })
+    .catch(() => {})
 }
 
 export function hasTerminal(id: string): boolean {
@@ -196,7 +246,8 @@ export function attachSnapshot(id: string, container: HTMLElement): () => void {
 export function setTerminalLocked(id: string, locked: boolean): void {
   const e = entries.get(id)
   if (!e) return
-  e.term.options.disableStdin = locked
+  e.locked = locked
+  e.term.options.disableStdin = locked || e.readOnly
   if (locked && !e.lockedSize) {
     const connected = e.host.isConnected && e.host.clientWidth > 0
     e.lockedSize = connected ? { w: e.host.clientWidth, h: e.host.clientHeight } : e.lastSize
@@ -206,6 +257,14 @@ export function setTerminalLocked(id: string, locked: boolean): void {
     Object.assign(e.host.style, { width: '', height: '', transform: '', transformOrigin: '' })
     requestAnimationFrame(() => layout(id, e))
   }
+}
+
+/** Team-Worker: Terminal nur zum Beobachten (Auswahl/Kopieren geht weiter, Tippen nicht) */
+export function setTerminalReadOnly(id: string, readOnly: boolean): void {
+  const e = ensure(id)
+  e.readOnly = readOnly
+  e.term.options.disableStdin = e.locked || readOnly
+  e.term.options.cursorBlink = !readOnly
 }
 
 export function focusTerminal(id: string): void {

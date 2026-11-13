@@ -59,7 +59,8 @@ const api: DevHubApi = {
     onEdits: (cb) => subscribe('code:edits', cb)
   },
   clipboard: {
-    writeText: (text) => invoke('clipboard:writeText', text)
+    writeText: (text) => invoke('clipboard:writeText', text),
+    read: () => invoke('clipboard:read')
   },
   editor: {
     text: (id) => invoke('editor:text', id),
