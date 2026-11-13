@@ -2,17 +2,16 @@
 //
 // 1. Version: Patch +1 gegenüber package.json (oder die angegebene x.y.z, z. B. für 1.1.0)
 // 2. package.json/-lock auf die neue Version setzen und ZIP bauen (`npm run build:win`)
-// 3. Release im öffentlichen Repo DevHub-Release anlegen (Notizen aus der Datei) + ZIP hochladen
-// 4. Versions-Commit + Tag vX.Y.Z hier im privaten Repo, beides pushen
+// 3. Commit „Version x.y.z“ + Tag vX.Y.Z, beides pushen
+// 4. GitHub-Release zu diesem Tag anlegen (Notizen aus der Datei) + ZIP hochladen
 //
-// Ins öffentliche Repo gelangen nur ZIP und Notizen – kein Code, keine Commits.
 // GitHub-Anmeldung: die bei Git gespeicherte (Git Credential Manager), wird nicht ausgegeben.
 /* eslint-disable @typescript-eslint/explicit-function-return-type -- reines JS-Skript */
 import { execSync } from 'child_process'
 import { existsSync, readFileSync, statSync } from 'fs'
 import { basename } from 'path'
 
-const RELEASE_REPO = 'CocoNybbles/DevHub-Release'
+const RELEASE_REPO = 'CocoNybbles/DevHub'
 
 const run = (cmd, opts = {}) => execSync(cmd, { stdio: 'inherit', ...opts })
 const out = (cmd) => execSync(cmd).toString().trim()
@@ -71,7 +70,16 @@ try {
   fail('Build fehlgeschlagen – Version zurückgesetzt')
 }
 const zip = `dist/DevHub-${version}-win.zip`
-if (!existsSync(zip)) fail(`${zip} wurde nicht gebaut`)
+if (!existsSync(zip)) {
+  run('git checkout -- package.json package-lock.json')
+  fail(`${zip} wurde nicht gebaut – Version zurückgesetzt`)
+}
+
+// --- Version festhalten: Commit + Tag (das Release zeigt auf genau diesen Stand)
+run('git add package.json package-lock.json')
+run(`git commit -q -m "Version ${version}"`)
+run(`git tag ${tag}`)
+run(`git push -q origin main ${tag}`)
 
 // --- Veröffentlichen
 const res = await fetch(`https://api.github.com/repos/${RELEASE_REPO}/releases`, {
@@ -79,14 +87,17 @@ const res = await fetch(`https://api.github.com/repos/${RELEASE_REPO}/releases`,
   headers,
   body: JSON.stringify({
     tag_name: tag,
-    target_commitish: 'main',
     name: `DevHub ${version}`,
     body: notes,
     make_latest: 'true'
   })
 })
 const release = await res.json()
-if (!res.ok) fail(`Release anlegen: ${res.status} ${JSON.stringify(release)}`)
+if (!res.ok) {
+  fail(
+    `Release anlegen: ${res.status} ${JSON.stringify(release)} – Commit und Tag ${tag} sind schon gepusht; Release auf GitHub von Hand anlegen und ${zip} anhängen`
+  )
+}
 console.log(`\nRelease angelegt: ${release.html_url}`)
 
 const up = await fetch(
@@ -108,10 +119,4 @@ if (!up.ok) {
   )
 }
 console.log(`Hochgeladen: ${asset.browser_download_url}`)
-
-// --- Version hier festhalten
-run('git add package.json package-lock.json')
-run(`git commit -q -m "Version ${version}"`)
-run(`git tag ${tag}`)
-run(`git push -q origin main ${tag}`)
 console.log(`\n✔ DevHub ${version} veröffentlicht`)
