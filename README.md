@@ -32,3 +32,9 @@ npm run build:win  # ZIP nach dist/
 ```
 
 Details zu Architektur, Konventionen und Stolpersteinen: [CLAUDE.md](CLAUDE.md).
+
+## Lizenz
+
+[MIT](LICENSE). Die enthaltenen Open-Source-Bibliotheken und ihre Lizenzen stehen in `THIRD_PARTY_NOTICES.txt` im Programmordner (wird beim Build erzeugt).
+
+Claude Code ist nicht enthalten: DevHub startet das lokal installierte `claude`, für das die Nutzungsbedingungen von Anthropic gelten.

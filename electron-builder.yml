@@ -12,6 +12,8 @@ files:
   # Entwicklungs-Datenordner (Caches, whisper-Modell, eigener Zustand) nie mitpacken
   - '!data{,/**}'
   - '!{dist,build,.claude,scripts,.github}{,/**}'
+  - '!out/THIRD_PARTY_NOTICES.txt'
+  - '!LICENSE'
 asarUnpack:
   - resources/**
   - node_modules/node-pty/**
@@ -28,4 +30,9 @@ win:
 extraFiles:
   - from: build/LIESMICH.txt
     to: LIESMICH.txt
+  # Lizenz von DevHub + Lizenztexte der enthaltenen Bibliotheken (scripts/notices.mjs)
+  - from: LICENSE
+    to: LICENSE.txt
+  - from: out/THIRD_PARTY_NOTICES.txt
+    to: THIRD_PARTY_NOTICES.txt
 npmRebuild: false

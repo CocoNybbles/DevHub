@@ -86,6 +86,7 @@ Lokale Windows-Desktop-App zum Verwalten von Projekten und den darin laufenden K
   - Erster Voice-Versuch ohne Modell → `VoiceSetupDialog` (Modellauswahl base ~60 MB / small ~190 MB [Standard] / large-v3-turbo ~550 MB, Download mit Fortschritt direkt im Dialog)
   - Einstellungen: dieselbe Auswahl (`VoiceModels`), Modell wechseln/löschen
 - Laufzeit-Abhängigkeiten (`dependencies`) nur: `node-pty`, `@electron-toolkit/utils`. Alles, was Vite bündelt (React, xterm, Monaco), gehört in `devDependencies` (sonst landet es doppelt im Paket).
+- **Lizenz:** DevHub = MIT (`LICENSE`, Inhaber „CocoNybbles“). `npm run build` erzeugt am Ende `out/THIRD_PARTY_NOTICES.txt` (`scripts/notices.mjs`: Lizenztexte aller `dependencies` + der gebündelten Pakete in `BUNDLED`, jeweils mit Abhängigkeiten; bricht ab, wenn eine Lizenzdatei fehlt). electron-builder legt `LICENSE.txt` + `THIRD_PARTY_NOTICES.txt` neben die .exe. **Neue Bibliothek im Renderer/Main → in `BUNDLED` eintragen.** Geprüft: keine GPL/nicht-kommerziellen Lizenzen in `node_modules`; MPL/CC-Pakete sind nur Build-Werkzeuge.
 
 ## Architektur
 

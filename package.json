@@ -1,6 +1,7 @@
 {
   "name": "devhub",
   "version": "1.0.0",
+  "license": "MIT",
   "description": "Lokaler Hub für Projekte und KI-Coding-Agents",
   "main": "./out/main/index.js",
   "author": "DevHub",
@@ -12,7 +13,7 @@
     "typecheck": "npm run typecheck:node && npm run typecheck:web",
     "start": "electron-vite preview",
     "dev": "electron-vite dev",
-    "build": "npm run typecheck && electron-vite build",
+    "build": "npm run typecheck && electron-vite build && node scripts/notices.mjs",
     "postinstall": "install-electron",
     "build:unpack": "npm run build && electron-builder --dir",
     "build:win": "npm run build && electron-builder --win",
