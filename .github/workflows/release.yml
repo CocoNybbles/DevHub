@@ -1,0 +1,98 @@
+# Bei jedem Push auf main: Patch-Version erhöhen, Windows-ZIP bauen und als Release im
+# öffentlichen Repo CocoNybbles/DevHub-Release veröffentlichen (Code bleibt hier privat).
+#
+# Version: höchster Tag vX.Y.Z hier + 1 im Patch. Steht in package.json eine höhere Version
+# (z. B. von Hand auf 1.1.0 gesetzt), gilt diese. Der Tag wird nach dem Release hier gesetzt.
+#
+# Benötigt das Secret RELEASE_TOKEN: Fine-grained Personal Access Token mit Zugriff nur auf
+# CocoNybbles/DevHub-Release, Berechtigung „Contents: Read and write“.
+name: Release
+
+on:
+  push:
+    branches: [main]
+    # Reine Doku-/Workflow-Änderungen erzeugen kein Release
+    paths-ignore:
+      - '**.md'
+      - '.github/**'
+      - '.gitignore'
+      - '.gitattributes'
+  workflow_dispatch:
+
+# Releases nacheinander, nie parallel (sonst doppelte Versionsnummern)
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+permissions:
+  contents: write # Tag im privaten Repo setzen
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # alle Tags + Verlauf für die Release-Notizen
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Version und Notizen bestimmen
+        id: version
+        shell: bash
+        run: |
+          last=$(git tag -l 'v[0-9]*.[0-9]*.[0-9]*' --sort=-v:refname | head -1)
+          next=$(node -e '
+            const last = (process.argv[1] || "v0.0.0").slice(1).split(".").map(Number)
+            const pkg = require("./package.json").version.split(".").map(Number)
+            const bumped = [last[0], last[1], last[2] + 1]
+            const cmp = (a, b) => a[0] - b[0] || a[1] - b[1] || a[2] - b[2]
+            console.log((cmp(pkg, bumped) > 0 ? pkg : bumped).join("."))
+          ' "$last")
+          echo "version=$next" >> "$GITHUB_OUTPUT"
+          {
+            echo "## Änderungen"
+            echo
+            if [ -n "$last" ]; then
+              git log --no-merges --pretty='- %s' "$last..HEAD"
+            else
+              git log --no-merges --pretty='- %s' -20
+            fi
+            echo
+            echo "## Installation"
+            echo
+            echo "ZIP herunterladen und über den bisherigen DevHub-Ordner entpacken (Daten im Ordner \`data\` bleiben erhalten) bzw. in einen neuen, beschreibbaren Ordner entpacken und \`DevHub.exe\` starten. Voraussetzung: Windows 10/11 und Claude Code (installiert und angemeldet)."
+          } > release-notes.md
+          echo "Letzte Version: ${last:-keine} → neue Version: $next"
+
+      - run: npm ci
+
+      - name: Version setzen
+        run: npm version ${{ steps.version.outputs.version }} --no-git-tag-version --allow-same-version
+
+      - name: Bauen
+        run: |
+          npm run build
+          npx electron-builder --win --publish never
+
+      - name: Release veröffentlichen
+        uses: softprops/action-gh-release@v2
+        with:
+          repository: CocoNybbles/DevHub-Release
+          token: ${{ secrets.RELEASE_TOKEN }}
+          tag_name: v${{ steps.version.outputs.version }}
+          target_commitish: main
+          name: DevHub ${{ steps.version.outputs.version }}
+          body_path: release-notes.md
+          make_latest: 'true'
+          files: dist/DevHub-${{ steps.version.outputs.version }}-win.zip
+          fail_on_unmatched_files: true
+
+      - name: Tag im privaten Repo setzen
+        shell: bash
+        run: |
+          git tag "v${{ steps.version.outputs.version }}"
+          git push origin "v${{ steps.version.outputs.version }}"

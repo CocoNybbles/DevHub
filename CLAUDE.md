@@ -227,7 +227,8 @@ Typ in `DevHubApi` (`shared/types.ts`). Alle drei immer zusammen anpassen. Ereig
 - [x] Automatische `.sln`-Suche beim Projekt-Anlegen — Suche getestet, **in der UI noch nicht getestet**
 - [x] Paketierung (`build:unpack`) getestet: `app.asar` ~8 MB, ZIP ~147 MB (Rest Electron), Start aus dem entpackten Ordner ≈1,3 s
 - [x] Initialer Git-Commit (nach Durchsicht durch den Nutzer)
-- Verteilung an Tester: `npm run build:win` → `dist/DevHub-<ver>-win.zip` (enthält `LIESMICH.txt`) weitergeben
+- **Releases (automatisch):** Jeder Push auf `main` → GitHub Action `.github/workflows/release.yml` (windows-latest): Version = höchster Tag `vX.Y.Z` + 1 im Patch (höhere Version in `package.json` gewinnt → Minor/Major von Hand dort setzen), baut das ZIP, veröffentlicht es mit Commit-Liste als Notizen im **öffentlichen** Repo https://github.com/CocoNybbles/DevHub-Release und setzt hier den Tag. Ausnahme: Pushes, die nur `*.md`/`.github/**` ändern. Braucht Secret `RELEASE_TOKEN` (Fine-grained PAT, nur DevHub-Release, Contents: Read and write). `package.json` im Repo bleibt auf der Basisversion, die Action setzt die Version nur im Build. v1.0.0 wurde von Hand veröffentlicht (Tag `v1.0.0` = 0aecc72)
+- Lokales Test-ZIP: `npm run build:win` → `dist/DevHub-<ver>-win.zip` (enthält `LIESMICH.txt`)
 
 ## Konventionen
 
