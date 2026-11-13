@@ -10,18 +10,30 @@ import {
   Notification,
   clipboard
 } from 'electron'
-import { basename, dirname, join } from 'path'
-import { randomUUID } from 'crypto'
+import { basename, dirname, join, resolve } from 'path'
+import { randomBytes, randomUUID } from 'crypto'
 import { existsSync, readFileSync, statSync, writeFileSync } from 'fs'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import type {
+  Agent,
   AgentTemplate,
   AgentTemplateInput,
+  AgentWorktree,
+  Engine,
+  EngineInput,
+  PermissionAnswer,
   Project,
   ProjectInput,
+  PromptTemplate,
+  PromptTemplateInput,
+  ReviewInfo,
+  ReviewTarget,
+  RunCommand,
   ScannedProject,
   Selection,
   Settings,
+  StartOptions,
+  TaskStatus,
   TeamTemplate,
   TeamTemplateInput,
   WhisperModelId
@@ -29,6 +41,24 @@ import type {
 import { checkClaudeAuth, startClaudeLogin } from './claudeAuth'
 import { AgentManager } from './agents'
 import { applyOrder, getState, updateState } from './store'
+import { RunManager } from './runs'
+import { RemoteServer } from './remote'
+import { dailyReport, spokenSummary } from './reports'
+import { searchSessions } from './history'
+import {
+  changes as gitChanges,
+  commit as gitCommit,
+  discardFile,
+  fileDiff,
+  listWorktrees,
+  mergeWorktree,
+  removeWorktree,
+  repoRoot,
+  reviewRef,
+  worktreesDir,
+  saveFile
+} from './git'
+import { validateRule } from '../shared/permissions'
 import {
   findProjects,
   findSolution,
@@ -61,7 +91,95 @@ function send(channel: string, ...args: unknown[]): void {
   if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(channel, ...args)
 }
 
+const runs = new RunManager({
+  onChanged: (projectId) => send('runs:changed', projectId),
+  onOutput: (projectId, name, chunk) => send('runs:output', projectId, name, chunk)
+})
+
+/** MCP tools `run_*`: agents see and control the project commands of the Run window. */
+function runTool(
+  p: Project,
+  tool: 'run_list' | 'run_output' | 'run_start' | 'run_stop',
+  args: Record<string, unknown>
+): string {
+  const list = runs.list(p)
+  if (tool === 'run_list') {
+    if (!list.length)
+      return 'No commands are configured for this project (the user can add them in the DevHub project settings).'
+    return list
+      .map((r) => {
+        const state = r.running
+          ? 'running'
+          : r.exitCode === undefined
+            ? 'not started yet'
+            : `exited with code ${r.exitCode ?? '?'}`
+        return `- ${r.name}: \`${r.command}\` – ${state}`
+      })
+      .join('\n')
+  }
+  const wanted = String(args.name ?? '')
+    .trim()
+    .toLowerCase()
+  const run = list.find((r) => r.name.trim().toLowerCase() === wanted)
+  if (!run) throw new Error(`No command named "${String(args.name ?? '')}". Call run_list first.`)
+  if (tool === 'run_start') {
+    runs.start(p, run.name)
+    return `Started "${run.name}". Read its output with run_output.`
+  }
+  if (tool === 'run_stop') {
+    runs.stop(p.id, run.name)
+    return `Stopping "${run.name}".`
+  }
+  const count = Math.max(1, Math.min(400, Math.floor(Number(args.lines)) || 80))
+  const lines = runs.output(p.id, run.name).split(/\r?\n/)
+  const tail = lines.slice(-count).join('\n').trim()
+  return `${run.name} (${run.running ? 'running' : 'not running'}), last ${count} lines:\n${tail || '(no output yet)'}`
+}
+
+/** Most recently reported waiting reason per agent (no duplicate notifications in quick succession) */
+const lastAttention = new Map<string, { message: string; at: number }>()
+
+/** Agent is waiting for the user and DevHub is in the background → Windows notification + flashing. */
+function notifyAttention(agent: Agent, message: string): void {
+  if (!getState().settings.notifyOnWaiting) return
+  if (!mainWindow || mainWindow.isDestroyed() || mainWindow.isFocused()) return
+  const last = lastAttention.get(agent.id)
+  if (last && last.message === message && Date.now() - last.at < 5000) return
+  lastAttention.set(agent.id, { message, at: Date.now() })
+  mainWindow.flashFrame(true)
+  if (!Notification.isSupported()) return
+  const projectName = getState().projects.find((p) => p.id === agent.projectId)?.name
+  const n = new Notification({
+    title: projectName ? `${agent.name} · ${projectName}` : agent.name,
+    body: message.slice(0, 240)
+  })
+  n.on('click', () => {
+    if (!mainWindow || mainWindow.isDestroyed()) return
+    if (mainWindow.isMinimized()) mainWindow.restore()
+    mainWindow.show()
+    mainWindow.focus()
+    send('agents:focusRequest', agent.id)
+  })
+  n.show()
+}
+
 const agents = new AgentManager({
+  onPermissions: (list) => send('inbox:permissions', list),
+  onNotice: (notice) => send('inbox:notice', notice),
+  onAttention: notifyAttention,
+  onTurnFinished: (agent) => {
+    if (!getState().settings.voiceReadback || !agent.lastMessage) return
+    spokenSummary(agent.name, agent.lastMessage)
+      .then((text) => text && send('voice:speak', text))
+      .catch((e) => console.error('[DevHub] Vorlesen:', e))
+  },
+  onPlan: (plan) => send('code:plan', plan),
+  onShowDiff: (id, filePath) => {
+    send('code:showDiff', id, filePath)
+    if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.isFocused()) mainWindow.show()
+  },
+  onTasksChanged: (tasks) => send('tasks:changed', tasks),
+  runTool,
   onData: (id, data) => send('agents:data', id, data),
   onChanged: (list, teams) => send('agents:changed', list, teams),
   onCodeFocus: (focus) => send('code:focus', focus),
@@ -76,7 +194,112 @@ const agents = new AgentManager({
   onEditorAppend: (id, text) => send('editor:append', id, text)
 })
 
-/** File extensions shown as image previews in the editor tab */
+const remote = new RemoteServer(agents)
+
+// ------------------------------------------------------------ Review changes (Git)
+
+interface ResolvedTarget {
+  target: ReviewTarget
+  /** Only for worktrees */
+  worktree?: AgentWorktree
+}
+
+/** A project's reviewable working directories: main folder + worktrees of its agents. */
+async function reviewTargets(
+  projectId: string
+): Promise<{ info: ReviewInfo; all: ResolvedTarget[] }> {
+  const p = project(projectId)
+  const repo = await repoRoot(p.agentPath)
+  if (!repo) return { info: { isRepo: false, targets: [] }, all: [] }
+  const same = (a: string, b: string): boolean =>
+    resolve(a).toLowerCase() === resolve(b).toLowerCase()
+  const running = agents.list().filter((a) => a.projectId === projectId)
+  const root = resolve(worktreesDir(repo)).toLowerCase()
+  const all: ResolvedTarget[] = []
+  for (const wt of await listWorktrees(repo)) {
+    if (same(wt.path, repo)) {
+      const inMain = running.find((a) => !a.worktree)
+      all.unshift({
+        target: {
+          id: 'main',
+          label: `Hauptordner${wt.branch ? ` (${wt.branch})` : ''}`,
+          cwd: repo,
+          isWorktree: false,
+          branch: wt.branch || undefined,
+          agentId: inMain?.id
+        }
+      })
+      continue
+    }
+    if (!wt.path.toLowerCase().startsWith(root) || !wt.branch) continue
+    const agent = running.find((a) => a.worktree && same(a.worktree.path, wt.path))
+    const archived = getState().archive.find((x) => x.worktree && same(x.worktree.path, wt.path))
+    const known = agent?.worktree ?? archived?.worktree
+    const base = known?.base ?? all[0]?.target.branch ?? 'HEAD'
+    all.push({
+      target: {
+        id: `wt:${wt.branch}`,
+        label: `${agent?.name ?? (archived ? `${archived.name} (beendet)` : basename(wt.path))} · ${wt.branch}`,
+        cwd: wt.path,
+        isWorktree: true,
+        branch: wt.branch,
+        base,
+        agentId: agent?.id
+      },
+      worktree: { path: wt.path, branch: wt.branch, base, repo }
+    })
+  }
+  return { info: { isRepo: true, targets: all.map((t) => t.target) }, all }
+}
+
+async function reviewTarget(projectId: string, targetId: string): Promise<ResolvedTarget> {
+  const found = (await reviewTargets(projectId)).all.find((t) => t.target.id === targetId)
+  if (!found) throw new Error('Arbeitsverzeichnis nicht gefunden')
+  return found
+}
+
+// ------------------------------------------------------------ Web preview
+
+/** Preview window per project */
+const previews = new Map<string, BrowserWindow>()
+
+function previewUrl(p: Project): string {
+  const url = p.previewUrl?.trim()
+  if (!url)
+    throw new Error(`Für „${p.name}“ ist keine Vorschau-Adresse eingetragen (Projekt bearbeiten)`)
+  return url
+}
+
+function openPreview(projectId: string): BrowserWindow {
+  const p = project(projectId)
+  const url = previewUrl(p)
+  let win = previews.get(projectId)
+  if (win && !win.isDestroyed()) {
+    win.show()
+    win.focus()
+    if (win.webContents.getURL() !== url) void win.loadURL(url).catch(() => {})
+    return win
+  }
+  win = new BrowserWindow({
+    width: 1100,
+    height: 800,
+    autoHideMenuBar: true,
+    title: `Vorschau · ${p.name}`,
+    backgroundColor: '#ffffff',
+    // Foreign page: sandboxed, without preload/Node
+    webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false }
+  })
+  win.webContents.setWindowOpenHandler((details) => {
+    shell.openExternal(details.url)
+    return { action: 'deny' }
+  })
+  win.on('closed', () => previews.delete(projectId))
+  previews.set(projectId, win)
+  void win.loadURL(url).catch(() => {})
+  return win
+}
+
+/** File extensions shown as an image preview in the editor tab */
 const IMAGE_TYPES: Record<string, string> = {
   png: 'image/png',
   jpg: 'image/jpeg',
@@ -103,6 +326,8 @@ function createWindow(): void {
   })
 
   mainWindow.on('ready-to-show', () => mainWindow?.show())
+  // Flashing in the taskbar (waiting agent) ends as soon as the window is in front again
+  mainWindow.on('focus', () => mainWindow?.flashFrame(false))
 
   // Dev aid: DEVHUB_SCREENSHOT=<file.png> saves an image of the window after DEVHUB_SCREENSHOT_DELAY ms (default 8000)
   const shot = process.env.DEVHUB_SCREENSHOT
@@ -208,7 +433,33 @@ function registerIpc(): void {
       validateProgram(input.projectFileApp?.trim()) ?? validateProgram(input.folderApp?.trim())
     if (programError) throw new Error(programError)
 
-    const saved = {
+    const runCommands: RunCommand[] = (Array.isArray(input.runCommands) ? input.runCommands : [])
+      .map((c) => ({
+        name: String(c?.name ?? '').trim(),
+        command: String(c?.command ?? '').trim()
+      }))
+      .filter((c) => c.name || c.command)
+    for (const c of runCommands) {
+      if (!c.name || !c.command)
+        throw new Error('Befehle: Name und Befehl müssen beide ausgefüllt sein')
+      if (/[\r\n]/.test(c.command)) throw new Error(`Befehl „${c.name}“: nur eine Zeile`)
+    }
+    if (new Set(runCommands.map((c) => c.name.toLowerCase())).size < runCommands.length)
+      throw new Error('Befehle: Namen müssen eindeutig sein')
+    const permissionRules = [
+      ...new Set((input.permissionRules ?? []).map((r) => String(r).trim()).filter(Boolean))
+    ]
+    for (const rule of permissionRules) {
+      const ruleError = validateRule(rule)
+      if (ruleError) throw new Error(`Freigabe-Regel „${rule}“: ${ruleError}`)
+    }
+    const previewUrl = input.previewUrl?.trim() || undefined
+    if (previewUrl && !/^https?:\/\/\S+$/i.test(previewUrl))
+      throw new Error('Vorschau-Adresse muss mit http:// oder https:// beginnen')
+    if (input.useWorktrees && !(await repoRoot(input.agentPath)))
+      throw new Error('Worktrees: Der Agent-Ordner liegt in keinem Git-Repository (oder git fehlt)')
+
+    const saved: Project = {
       id: input.id ?? randomUUID(),
       name,
       agentPath: input.agentPath,
@@ -216,7 +467,12 @@ function registerIpc(): void {
       projectFileApp: input.projectFileApp?.trim() || undefined,
       folderPath: input.folderPath || undefined,
       folderApp: input.folderApp?.trim() || undefined,
-      agentArgs: input.agentArgs?.trim() || undefined
+      agentArgs: input.agentArgs?.trim() || undefined,
+      useWorktrees: input.useWorktrees || undefined,
+      checks: input.checks?.trim() || undefined,
+      runCommands: runCommands.length ? runCommands : undefined,
+      previewUrl,
+      permissionRules: permissionRules.length ? permissionRules : undefined
     }
     updateState((s) => {
       const i = s.projects.findIndex((p) => p.id === saved.id)
@@ -227,10 +483,14 @@ function registerIpc(): void {
   })
   ipcMain.handle('projects:remove', (_, id: string) => {
     for (const a of agents.list().filter((a) => a.projectId === id)) agents.stop(a.id)
+    for (const r of runs.list(project(id))) runs.stop(id, r.name)
     updateState((s) => {
       s.projects = s.projects.filter((p) => p.id !== id)
       s.agents = s.agents.filter((a) => a.projectId !== id)
+      s.tasks = s.tasks.filter((t) => t.projectId !== id)
+      s.archive = s.archive.filter((x) => x.projectId !== id)
     })
+    send('tasks:changed', getState().tasks)
   })
   ipcMain.handle('projects:reorder', (_, ids: string[]) => {
     updateState((s) => (s.projects = applyOrder(s.projects, ids)))
@@ -422,9 +682,202 @@ function registerIpc(): void {
   // --- Agents ---
   ipcMain.handle('agents:list', () => agents.list())
   ipcMain.handle('agents:restore', () => agents.restore())
-  ipcMain.handle('agents:start', (_, projectId: string, task?: string, templateId?: string) =>
-    agents.start(projectId, task, undefined, templateId)
+  ipcMain.handle('agents:start', (_, projectId: string, options?: StartOptions) =>
+    agents.start(projectId, options?.task, undefined, options?.templateId, {
+      engineId: options?.engineId
+    })
   )
+  ipcMain.handle('agents:fork', (_, id: string) => agents.fork(id))
+  ipcMain.handle('agents:enqueue', (_, id: string, text: string) =>
+    agents.enqueue(id, String(text ?? ''))
+  )
+  ipcMain.handle('agents:dequeue', (_, id: string, queueId: string) => agents.dequeue(id, queueId))
+  ipcMain.handle('agents:activityLog', (_, id: string) => agents.activityLog(id))
+
+  // --- Inbox: approvals ---
+  ipcMain.handle('inbox:permissions', () => agents.userPermissions())
+  ipcMain.handle('inbox:answer', (_, id: number, answer: PermissionAnswer, message?: string) => {
+    if (!['allow', 'deny', 'always', 'terminal'].includes(answer))
+      throw new Error('Ungültige Antwort')
+    agents.answerUserPermission(Number(id), answer, message)
+  })
+
+  // --- Tasks ---
+  ipcMain.handle('tasks:list', () => agents.tasks())
+  ipcMain.handle('tasks:save', (_, input: { id?: string; projectId: string; text: string }) =>
+    agents.saveTask(input)
+  )
+  ipcMain.handle('tasks:remove', (_, id: string) => agents.removeTask(id))
+  ipcMain.handle('tasks:setStatus', (_, id: string, status: TaskStatus) => {
+    if (!['open', 'running', 'done'].includes(status)) throw new Error('Ungültiger Status')
+    agents.updateTask(
+      id,
+      status === 'open' ? { status, agentId: undefined, agentName: undefined } : { status }
+    )
+  })
+  ipcMain.handle('tasks:start', (_, id: string, templateId?: string) =>
+    agents.startTask(id, templateId)
+  )
+  ipcMain.handle('tasks:assign', (_, id: string, agentId: string) => agents.assignTask(id, agentId))
+
+  // --- History ---
+  ipcMain.handle('history:list', () => agents.archive())
+  ipcMain.handle('history:remove', (_, id: string) => agents.removeArchived(id))
+  ipcMain.handle('history:resume', (_, id: string, fork?: boolean) =>
+    agents.resumeArchived(id, fork === true)
+  )
+  ipcMain.handle('history:search', (_, query: string) =>
+    searchSessions(
+      [
+        ...agents
+          .list()
+          .filter((a) => !a.engineId)
+          .map((a) => ({
+            sessionId: a.sessionId,
+            name: a.name,
+            projectId: a.projectId,
+            agentId: a.id
+          })),
+        ...agents.archive().map((x) => ({
+          sessionId: x.sessionId,
+          name: x.name,
+          projectId: x.projectId,
+          archivedId: x.id
+        }))
+      ],
+      String(query ?? '')
+    )
+  )
+
+  // --- Review changes (Git) ---
+  ipcMain.handle('git:targets', async (_, projectId: string): Promise<ReviewInfo> => {
+    try {
+      return (await reviewTargets(projectId)).info
+    } catch (e) {
+      return { isRepo: false, targets: [], error: e instanceof Error ? e.message : String(e) }
+    }
+  })
+  ipcMain.handle('git:changes', async (_, projectId: string, targetId: string) => {
+    const { target } = await reviewTarget(projectId, targetId)
+    return gitChanges(target.cwd, await reviewRef(target.cwd, target.base))
+  })
+  ipcMain.handle('git:diff', async (_, projectId: string, targetId: string, path: string) => {
+    const { target } = await reviewTarget(projectId, targetId)
+    return fileDiff(target.cwd, await reviewRef(target.cwd, target.base), String(path))
+  })
+  ipcMain.handle(
+    'git:saveFile',
+    async (_, projectId: string, targetId: string, path: string, content: string) => {
+      const { target } = await reviewTarget(projectId, targetId)
+      saveFile(target.cwd, String(path), String(content))
+    }
+  )
+  ipcMain.handle('git:discard', async (_, projectId: string, targetId: string, path: string) => {
+    const { target } = await reviewTarget(projectId, targetId)
+    await discardFile(target.cwd, await reviewRef(target.cwd, target.base), String(path))
+  })
+  ipcMain.handle(
+    'git:commit',
+    async (_, projectId: string, targetId: string, message: string, paths?: string[]) => {
+      const { target } = await reviewTarget(projectId, targetId)
+      return gitCommit(target.cwd, String(message ?? ''), Array.isArray(paths) ? paths : [])
+    }
+  )
+  ipcMain.handle('git:merge', async (_, projectId: string, targetId: string) => {
+    const { worktree } = await reviewTarget(projectId, targetId)
+    if (!worktree) throw new Error('Nur Worktrees lassen sich zusammenführen')
+    return mergeWorktree(worktree)
+  })
+  ipcMain.handle(
+    'git:removeWorktree',
+    async (_, projectId: string, targetId: string, force?: boolean) => {
+      const { target, worktree } = await reviewTarget(projectId, targetId)
+      if (!worktree) throw new Error('Der Hauptordner kann nicht entfernt werden')
+      if (target.agentId) throw new Error('In diesem Worktree läuft noch ein Agent – erst beenden')
+      await removeWorktree(worktree, force === true)
+    }
+  )
+
+  // --- Run: project commands + web preview ---
+  ipcMain.handle('runs:list', (_, projectId: string) => runs.list(project(projectId)))
+  ipcMain.handle('runs:start', (_, projectId: string, name: string) =>
+    runs.start(project(projectId), String(name))
+  )
+  ipcMain.handle('runs:stop', (_, projectId: string, name: string) =>
+    runs.stop(projectId, String(name))
+  )
+  ipcMain.handle('runs:output', (_, projectId: string, name: string) =>
+    runs.output(projectId, String(name))
+  )
+  ipcMain.handle('preview:open', (_, projectId: string) => {
+    openPreview(projectId)
+  })
+  // Save an image of the preview and insert it as an attachment into the agent's prompt (without submitting)
+  ipcMain.handle('preview:screenshot', async (_, projectId: string, agentId: string) => {
+    const win = openPreview(projectId)
+    if (win.webContents.isLoading())
+      await new Promise<void>((done) => win.webContents.once('did-stop-loading', () => done()))
+    await new Promise((done) => setTimeout(done, 400))
+    const image = await win.webContents.capturePage()
+    const file = agents.saveEditorImage(agentId, 'png', image.toPNG().buffer as ArrayBuffer)
+    agents.write(agentId, `@"${file}" `)
+    return file
+  })
+
+  // --- Prompt library ---
+  ipcMain.handle('prompts:list', () => getState().prompts)
+  ipcMain.handle('prompts:save', (_, input: PromptTemplateInput) => {
+    const name = input.name?.trim().replace(/\s+/g, ' ')
+    const text = input.text?.trim()
+    if (!name) throw new Error('Name fehlt')
+    if (!text) throw new Error('Text fehlt')
+    const others = getState().prompts.filter((p) => p.id !== input.id)
+    if (others.some((p) => p.name.toLowerCase() === name.toLowerCase()))
+      throw new Error(`Es gibt bereits einen Prompt „${name}“`)
+    const saved: PromptTemplate = { id: input.id ?? randomUUID(), name, text }
+    updateState((s) => {
+      const i = s.prompts.findIndex((p) => p.id === saved.id)
+      if (i >= 0) s.prompts[i] = saved
+      else s.prompts.push(saved)
+    })
+    return saved
+  })
+  ipcMain.handle('prompts:remove', (_, id: string) =>
+    updateState((s) => (s.prompts = s.prompts.filter((p) => p.id !== id)))
+  )
+
+  // --- Further engines ---
+  ipcMain.handle('engines:list', () => getState().engines)
+  ipcMain.handle('engines:save', (_, input: EngineInput) => {
+    const name = input.name?.trim().replace(/\s+/g, ' ')
+    const command = input.command?.trim()
+    if (!name) throw new Error('Name fehlt')
+    if (/^agent \d+$/i.test(name)) throw new Error('„Agent N“ ist für normale Agents reserviert')
+    if (/ \d+$/.test(name)) throw new Error('Name darf nicht auf eine Zahl enden')
+    if (!command) throw new Error('Befehl fehlt')
+    if (/[\r\n]/.test(command)) throw new Error('Befehl: nur eine Zeile')
+    const taken = [...getState().engines.filter((e) => e.id !== input.id), ...getState().templates]
+    if (taken.some((e) => e.name.toLowerCase() === name.toLowerCase()))
+      throw new Error(`Der Name „${name}“ ist schon vergeben (Engine oder vordefinierter Agent)`)
+    const saved: Engine = { id: input.id ?? randomUUID(), name, command }
+    updateState((s) => {
+      const i = s.engines.findIndex((e) => e.id === saved.id)
+      if (i >= 0) s.engines[i] = saved
+      else s.engines.push(saved)
+    })
+    return saved
+  })
+  ipcMain.handle('engines:remove', (_, id: string) => {
+    if (agents.list().some((a) => a.engineId === id))
+      throw new Error('Mit dieser Engine läuft noch ein Agent')
+    updateState((s) => (s.engines = s.engines.filter((e) => e.id !== id)))
+  })
+
+  // --- Reports, remote access ---
+  ipcMain.handle('reports:daily', (_, projectId?: string) =>
+    dailyReport(agents, projectId || undefined)
+  )
+  ipcMain.handle('remote:info', () => remote.info())
   ipcMain.handle('agents:stop', (_, id: string) => agents.stop(id))
   ipcMain.handle('agents:rename', (_, id: string, name: string) => agents.rename(id, name))
   ipcMain.handle('agents:reorder', (_, ids: string[]) => agents.reorder(ids))
@@ -559,7 +1012,23 @@ function registerIpc(): void {
         )
       }
     }
+    const number = (v: unknown, min: number, max: number, label: string): number => {
+      const n = Number(v)
+      if (!Number.isFinite(n) || n < min || n > max)
+        throw new Error(`${label}: Wert zwischen ${min} und ${max} erwartet`)
+      return n
+    }
+    next.contextWarnTokens = Math.round(
+      number(next.contextWarnTokens, 0, 5_000_000, 'Kontext-Warnung')
+    )
+    next.priceInput = number(next.priceInput, 0, 10_000, 'Preis Eingabe')
+    next.priceOutput = number(next.priceOutput, 0, 10_000, 'Preis Ausgabe')
+    next.remotePort = Math.round(number(next.remotePort, 1024, 65535, 'Port'))
+    // The secret part of the address is created when first switched on; clearing it = regenerate (old links expire)
+    if (next.remoteEnabled && !next.remoteToken)
+      next.remoteToken = randomBytes(18).toString('base64url')
     updateState((s) => (s.settings = next))
+    remote.apply(next)
     return getState().settings
   })
   ipcMain.handle('settings:suspendGlobalHotkey', (_, suspend: boolean) => {
@@ -583,6 +1052,7 @@ app.whenReady().then(async () => {
   await agents.init()
   registerIpc()
   createWindow()
+  remote.apply(getState().settings)
 
   // System-wide hotkey for global voice commands (configurable)
   const hotkey = getState().settings.hotkeyGlobalVoice
@@ -591,7 +1061,12 @@ app.whenReady().then(async () => {
   }
 })
 
-// Stop agents but keep them saved → restored on next start
-app.on('before-quit', () => agents.shutdown())
+// Stop the agents but keep them saved → restore on the next start
+app.on('before-quit', () => {
+  agents.shutdown()
+  runs.stopAll()
+  remote.stop()
+  for (const win of previews.values()) if (!win.isDestroyed()) win.destroy()
+})
 app.on('will-quit', () => globalShortcut.unregisterAll())
 app.on('window-all-closed', () => app.quit())

@@ -21,6 +21,33 @@ export interface Project {
   folderApp?: string
   /** Extra start flags for this project's agents (extend/override the global ones) */
   agentArgs?: string
+  /** Every new agent works in its own Git worktree (own branch) instead of the agent folder */
+  useWorktrees?: boolean
+  /** Check commands (one per line) that run when an agent reports done after making changes */
+  checks?: string
+  /** Commands for the run window (dev server, tests …) */
+  runCommands?: RunCommand[]
+  /** Address of the web preview, e.g. http://localhost:5173 */
+  previewUrl?: string
+  /** Automatically allowed tool calls: `Tool` or `Bash:<command prefix>` */
+  permissionRules?: string[]
+}
+
+/** Named command of a project (runs in the agent folder) */
+export interface RunCommand {
+  name: string
+  command: string
+}
+
+/** State of a project command in the run window */
+export interface RunInfo {
+  projectId: string
+  name: string
+  command: string
+  running: boolean
+  /** Exit code of the last run (undefined = never run yet) */
+  exitCode?: number | null
+  startedAt?: number
 }
 
 export type ProjectInput = Omit<Project, 'id'> & { id?: string }
@@ -70,6 +97,208 @@ export interface Agent {
   teamRole?: TeamRole
   /** Ctrl+G: instruction is being written in the editor tab → agent locked elsewhere (not persisted) */
   editing?: boolean
+  /** The agent's own Git worktree (project with `useWorktrees`) */
+  worktree?: AgentWorktree
+  /** Engine other than Claude Code (settings → "Weitere Engines"); without hooks/status */
+  engineId?: string
+  /** Session to fork from on the first start (`--fork-session`) */
+  forkFrom?: string
+  /** Instructions sent one after another as soon as the agent is done */
+  queue?: QueuedPrompt[]
+  /** Task (board) the agent is currently working on */
+  currentTaskId?: string
+  /** What the agent is currently doing (from the tool hooks, not persisted) */
+  activity?: string
+  /** Progress reported by the agent (MCP `report_progress`, not persisted) */
+  progress?: AgentProgress
+  /** Token usage from the transcript (not persisted) */
+  usage?: AgentUsage
+  /** Start of the last reply (for inbox, remote access, read-aloud; not persisted) */
+  lastMessage?: string
+}
+
+export interface AgentWorktree {
+  /** Root of the worktree */
+  path: string
+  branch: string
+  /** Branch/commit it was branched from */
+  base: string
+  /** Root of the main repository */
+  repo: string
+}
+
+export interface QueuedPrompt {
+  id: string
+  text: string
+  taskId?: string
+}
+
+export interface AgentProgress {
+  /** 0–100, undefined = no bar */
+  percent?: number
+  message: string
+}
+
+export interface TokenTotals {
+  input: number
+  output: number
+  cacheRead: number
+  cacheWrite: number
+}
+
+export interface AgentUsage {
+  /** Tokens in context at the last reply (input + cache) */
+  context: number
+  total: TokenTotals
+  /** Usage per day (`YYYY-MM-DD`, local time) */
+  byDay: Record<string, TokenTotals>
+  model?: string
+}
+
+/** One step of the agent (tool call) for the activity list */
+export interface ActivityEntry {
+  at: number
+  text: string
+}
+
+/** Pending permission request the user decides in the inbox */
+export interface PermissionInfo {
+  id: number
+  agentId: string
+  tool: string
+  /** Shortened tool input */
+  summary: string
+  /** Rule that "Immer erlauben" (always allow) would save for the project */
+  rule: string
+  at: number
+}
+
+export type PermissionAnswer = 'allow' | 'deny' | 'always' | 'terminal'
+
+/** Notice from an agent or from DevHub (MCP `notify_user`, context warning …) */
+export interface UserNotice {
+  id: number
+  agentId?: string
+  message: string
+  at: number
+}
+
+/** Plan/text shown by the agent (MCP `show_plan`), as a tab on the right */
+export interface CodePlan {
+  agentId: string
+  title: string
+  markdown: string
+  at: number
+}
+
+export type TaskStatus = 'open' | 'running' | 'done'
+
+/** Task on a project's board */
+export interface Task {
+  id: string
+  projectId: string
+  text: string
+  status: TaskStatus
+  /** Agent that is (or was) working on it */
+  agentId?: string
+  agentName?: string
+  createdAt: number
+  doneAt?: number
+}
+
+/** Ended session in the history (resumable as long as the transcript exists) */
+export interface ArchivedSession {
+  /** former agent id */
+  id: string
+  projectId: string
+  name: string
+  sessionId: string
+  /** Working directory of the session (it can only be resumed there) */
+  cwd: string
+  createdAt: number
+  endedAt: number
+  /** The user's first instruction (shortened) */
+  title?: string
+  model?: string
+  templateId?: string
+  worktree?: AgentWorktree
+  usage?: AgentUsage
+}
+
+/** Match of the full-text search across the transcripts */
+export interface SessionMatch {
+  sessionId: string
+  name: string
+  projectId: string
+  /** Running agent (then `agentId`), otherwise history entry (`archivedId`) */
+  agentId?: string
+  archivedId?: string
+  excerpts: string[]
+}
+
+export type GitChangeKind = 'modified' | 'added' | 'deleted' | 'untracked'
+
+export interface GitFileChange {
+  /** Path relative to the root of the working directory, with `/` */
+  path: string
+  kind: GitChangeKind
+}
+
+/** Working directory whose changes can be reviewed (main folder or worktree) */
+export interface ReviewTarget {
+  id: string
+  label: string
+  cwd: string
+  isWorktree: boolean
+  branch?: string
+  base?: string
+  /** Running agent in this directory */
+  agentId?: string
+}
+
+export interface ReviewInfo {
+  isRepo: boolean
+  /** Error message if git is missing or similar */
+  error?: string
+  targets: ReviewTarget[]
+}
+
+export interface GitDiff {
+  original: string
+  modified: string
+  binary?: boolean
+}
+
+/** Reusable instruction; placeholders `{{name}}` are asked for when sending */
+export interface PromptTemplate {
+  id: string
+  name: string
+  text: string
+}
+
+export type PromptTemplateInput = Omit<PromptTemplate, 'id'> & { id?: string }
+
+/** Coding engine other than Claude Code: runs as a terminal program without hooks */
+export interface Engine {
+  id: string
+  name: string
+  /** Command line, e.g. `codex` or `gemini` */
+  command: string
+}
+
+export type EngineInput = Omit<Engine, 'id'> & { id?: string }
+
+export interface StartOptions {
+  task?: string
+  templateId?: string
+  engineId?: string
+}
+
+export interface RemoteInfo {
+  running: boolean
+  /** Addresses for the phone (with token) */
+  urls: string[]
+  error?: string
 }
 
 export type TeamRole = 'orchestrator' | 'worker'
@@ -241,6 +470,22 @@ export interface Settings {
   voiceFixedLanguage: string | null
   /** File preview: show files edited by the active agent as tabs on the right */
   showEditedFiles: boolean
+  /** Windows notification + taskbar flashing when an agent is waiting and DevHub is in the background */
+  notifyOnWaiting: boolean
+  /** Decide permission requests in the inbox instead of in the agent's terminal */
+  permissionInbox: boolean
+  /** Finished agents: read a short summary of the reply aloud */
+  voiceReadback: boolean
+  /** Warn from this many tokens in context (0 = never) */
+  contextWarnTokens: number
+  /** Prices in USD per million tokens for the cost estimate (0 = no cost display) */
+  priceInput: number
+  priceOutput: number
+  /** Remote access in the local network (phone): see agents, reply, decide permission requests */
+  remoteEnabled: boolean
+  remotePort: number
+  /** Secret part of the address; generated when first enabled */
+  remoteToken: string
 }
 
 export interface TranscribeResult {
@@ -295,8 +540,17 @@ export interface DevHubApi {
     list: () => Promise<Agent[]>
     /** Restores the agents of the last session on app start. */
     restore: () => Promise<void>
-    /** templateId: start from a template (name, model, instructions) */
-    start: (projectId: string, task?: string, templateId?: string) => Promise<Agent>
+    /** templateId: start from a template; engineId: engine other than Claude Code */
+    start: (projectId: string, options?: StartOptions) => Promise<Agent>
+    /** New agent that continues this agent's conversation as a copy */
+    fork: (id: string) => Promise<Agent>
+    /** Append an instruction: sent as soon as the agent is done (immediately if it is free) */
+    enqueue: (id: string, text: string) => Promise<void>
+    dequeue: (id: string, queueId: string) => Promise<void>
+    /** The agent's latest steps (tool calls), newest first */
+    activityLog: (id: string) => Promise<ActivityEntry[]>
+    /** Notification clicked → show this agent */
+    onFocusRequest: (cb: (agentId: string) => void) => Unsubscribe
     stop: (id: string) => Promise<void>
     rename: (id: string, name: string) => Promise<void>
     /** New order of a group (agents of a project/team); others stay in place */
@@ -329,6 +583,83 @@ export interface DevHubApi {
     edits: () => Promise<Record<string, EditedFile[]>>
     /** An agent's list of edited files has changed (full list) */
     onEdits: (cb: (agentId: string, files: EditedFile[]) => void) => Unsubscribe
+    /** Agent shows a plan/text (MCP `show_plan`) */
+    onPlan: (cb: (plan: CodePlan) => void) => Unsubscribe
+    /** Agent asks to have its changes reviewed (MCP `show_diff`) */
+    onShowDiff: (cb: (agentId: string, filePath?: string) => void) => Unsubscribe
+  }
+  /** Inbox: permission requests and notices */
+  inbox: {
+    permissions: () => Promise<PermissionInfo[]>
+    answer: (id: number, answer: PermissionAnswer, message?: string) => Promise<void>
+    onPermissions: (cb: (list: PermissionInfo[]) => void) => Unsubscribe
+    onNotice: (cb: (notice: UserNotice) => void) => Unsubscribe
+  }
+  tasks: {
+    list: () => Promise<Task[]>
+    save: (input: { id?: string; projectId: string; text: string }) => Promise<Task>
+    remove: (id: string) => Promise<void>
+    setStatus: (id: string, status: TaskStatus) => Promise<void>
+    /** Start a new agent with the task */
+    start: (id: string, templateId?: string) => Promise<Agent>
+    /** Put the task into a running agent's queue */
+    assign: (id: string, agentId: string) => Promise<void>
+    onChanged: (cb: (tasks: Task[]) => void) => Unsubscribe
+  }
+  history: {
+    list: () => Promise<ArchivedSession[]>
+    remove: (id: string) => Promise<void>
+    /** Resume the session as an agent (fork = as a copy, the original stays in the history) */
+    resume: (id: string, fork?: boolean) => Promise<Agent>
+    search: (query: string) => Promise<SessionMatch[]>
+  }
+  git: {
+    targets: (projectId: string) => Promise<ReviewInfo>
+    changes: (projectId: string, targetId: string) => Promise<GitFileChange[]>
+    diff: (projectId: string, targetId: string, path: string) => Promise<GitDiff>
+    saveFile: (projectId: string, targetId: string, path: string, content: string) => Promise<void>
+    discard: (projectId: string, targetId: string, path: string) => Promise<void>
+    /** paths empty = all changes; returns git's output */
+    commit: (
+      projectId: string,
+      targetId: string,
+      message: string,
+      paths?: string[]
+    ) => Promise<string>
+    /** Merge the worktree's branch into the main folder's current branch */
+    merge: (projectId: string, targetId: string) => Promise<string>
+    removeWorktree: (projectId: string, targetId: string, force?: boolean) => Promise<void>
+  }
+  runs: {
+    list: (projectId: string) => Promise<RunInfo[]>
+    start: (projectId: string, name: string) => Promise<void>
+    stop: (projectId: string, name: string) => Promise<void>
+    output: (projectId: string, name: string) => Promise<string>
+    onChanged: (cb: (projectId: string) => void) => Unsubscribe
+    onOutput: (cb: (projectId: string, name: string, chunk: string) => void) => Unsubscribe
+  }
+  /** Web preview of the project in its own window */
+  preview: {
+    open: (projectId: string) => Promise<void>
+    /** Insert an image of the preview into the agent's prompt as an attachment; returns the file path */
+    screenshot: (projectId: string, agentId: string) => Promise<string>
+  }
+  prompts: {
+    list: () => Promise<PromptTemplate[]>
+    save: (input: PromptTemplateInput) => Promise<PromptTemplate>
+    remove: (id: string) => Promise<void>
+  }
+  engines: {
+    list: () => Promise<Engine[]>
+    save: (input: EngineInput) => Promise<Engine>
+    remove: (id: string) => Promise<void>
+  }
+  reports: {
+    /** Summary of today (Markdown); projectId empty = all projects */
+    daily: (projectId?: string) => Promise<string>
+  }
+  remote: {
+    info: () => Promise<RemoteInfo>
   }
   clipboard: {
     writeText: (text: string) => Promise<void>
@@ -359,6 +690,8 @@ export interface DevHubApi {
     transcribe: (wav: ArrayBuffer) => Promise<TranscribeResult>
     command: (text: string) => Promise<VoiceCommandResult>
     onGlobalHotkey: (cb: () => void) => Unsubscribe
+    /** Read text aloud (short summary of a finished agent) */
+    onSpeak: (cb: (text: string) => void) => Unsubscribe
   }
   settings: {
     get: () => Promise<Settings>

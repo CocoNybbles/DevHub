@@ -19,6 +19,13 @@ Windows-App zum Verwalten von Projekten und den darin laufenden KI-Coding-Agents
 - **Agents:** beliebig viele Claude-Code-Agents pro Projekt mit eigenem Terminal, Raster-Ansicht, Hervorhebung wartender Agents, Wiederherstellung nach Neustart, Anweisungen im eigenen Tab (Strg+G) mit Diktat und Bildern, vordefinierte Agents mit Rolle und Modell
 - **Code-Ansicht:** bearbeitete Dateien als Reiter mit hervorgehobenen Änderungen, vom Agent gezeigte Code-Stellen, Snippets mit Kopier-Button
 - **Teams:** mehrere Agents mit automatisch gestartetem Orchestrator, der die Aufgabe verteilt und über Freigaben entscheidet; die Mitglieder lassen sich beobachten
+- **Eingang:** alles, was auf dich wartet, an einer Stelle – wartende Agents mit Direktantwort, Freigaben (auch „immer erlauben“ je Projekt), Hinweise der Agents, Warnung bei gleichzeitig bearbeiteten Dateien; Windows-Benachrichtigung, wenn DevHub im Hintergrund ist
+- **Worktrees und Review:** auf Wunsch arbeitet jeder Agent in einem eigenen Git-Worktree; Änderungen im Vergleich prüfen, einzeln zurücknehmen, committen, zusammenführen und Kommentare an den Agent schicken
+- **Prüfungen:** Befehle wie Typcheck, Lint oder Tests laufen automatisch, wenn ein Agent fertig meldet – bei Fehlern bessert er nach
+- **Aufträge und Aufgaben:** Anweisungen einreihen („wenn fertig, dann …“), Aufgaben-Board je Projekt, Prompt-Bibliothek mit Platzhaltern
+- **Überblick:** aktueller Schritt und Fortschritt je Agent, Kontextgröße und Token-Verbrauch, Verlauf beendeter Sitzungen (fortsetzen, abzweigen, durchsuchen), Tagesbericht
+- **Ausführen:** Dev-Server, Tests und andere Projekt-Befehle mit Live-Ausgabe, die auch die Agents lesen können; Web-Vorschau mit Screenshot an den Agent
+- **Außerdem:** andere Coding-Agents als Terminal-Programm (eingeschränkt), Fernzugriff im eigenen Netz fürs Handy (abschaltbar, Standard aus)
 - **Sprachsteuerung:** Anweisung an den aktiven Agent oder systemweiter Sprachbefehl („Agent 2, schreib Tests für den Login“, „Starte einen Agent für …“); Spracherkennung lokal per whisper.cpp
 
 ## Entwicklung

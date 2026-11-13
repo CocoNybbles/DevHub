@@ -4,7 +4,11 @@ import { join } from 'path'
 import type {
   Agent,
   AgentTemplate,
+  ArchivedSession,
+  Engine,
   Project,
+  PromptTemplate,
+  Task,
   Selection,
   Settings,
   Team,
@@ -12,8 +16,11 @@ import type {
 } from '../shared/types'
 import { DEFAULT_HOTKEYS } from '../shared/hotkeys'
 
-/** Saved agent; `needsInput` = hint text if it was waiting for input when quitting. */
-export type PersistedAgent = Omit<Agent, 'status' | 'statusMessage'> & { needsInput?: string }
+/** Saved agent; `needsInput` = hint text if it was waiting for input at shutdown. */
+export type PersistedAgent = Omit<
+  Agent,
+  'status' | 'statusMessage' | 'editing' | 'activity' | 'progress' | 'usage' | 'lastMessage'
+> & { needsInput?: string }
 
 /** Persisted state: projects, (last running) agents, settings. */
 interface PersistedState {
@@ -30,6 +37,14 @@ interface PersistedState {
   teams: Team[]
   /** Location last used in the folder picker (parent folder of the choice) */
   lastPickDir?: string
+  /** Task board */
+  tasks: Task[]
+  /** Ended sessions (history), newest first */
+  archive: ArchivedSession[]
+  /** Prompt library */
+  prompts: PromptTemplate[]
+  /** Further engines besides Claude Code */
+  engines: Engine[]
 }
 
 const DEFAULT_STATE: PersistedState = {
@@ -38,6 +53,10 @@ const DEFAULT_STATE: PersistedState = {
   templates: [],
   teamTemplates: [],
   teams: [],
+  tasks: [],
+  archive: [],
+  prompts: [],
+  engines: [],
   view: null,
   settings: {
     voiceModel: null,
@@ -51,7 +70,16 @@ const DEFAULT_STATE: PersistedState = {
     voiceRememberLanguage: true,
     voiceLanguage: null,
     voiceFixedLanguage: null,
-    showEditedFiles: true
+    showEditedFiles: true,
+    notifyOnWaiting: true,
+    permissionInbox: false,
+    voiceReadback: false,
+    contextWarnTokens: 150_000,
+    priceInput: 0,
+    priceOutput: 0,
+    remoteEnabled: false,
+    remotePort: 8787,
+    remoteToken: ''
   }
 }
 

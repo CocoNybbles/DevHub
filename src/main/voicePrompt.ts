@@ -1,4 +1,11 @@
-import type { Agent, AgentTemplate, Project, Team, TeamTemplate } from '../shared/types'
+import type {
+  Agent,
+  AgentTemplate,
+  Project,
+  PromptTemplate,
+  Team,
+  TeamTemplate
+} from '../shared/types'
 import { teamLead } from '../shared/types'
 
 /**
@@ -11,7 +18,8 @@ export function routerPrompt(
   running: Agent[],
   templates: AgentTemplate[],
   teamTemplates: TeamTemplate[] = [],
-  teams: Team[] = []
+  teams: Team[] = [],
+  prompts: PromptTemplate[] = []
 ): string {
   const templateName = (id?: string): string =>
     templates.find((t) => t.id === id)?.name ?? 'general agent'
@@ -53,9 +61,13 @@ export function routerPrompt(
         )
       : ['(none)']),
     '',
+    'Saved prompts (reusable instructions the user can send by name):',
+    ...(prompts.length ? prompts.map((p) => `- id=${p.id} name="${p.name}"`) : ['(none)']),
+    '',
     'Decide what the user wants and answer with ONLY one JSON object, no other text:',
-    '{"action":"send","agentId":"<id>","message":"<instruction for the agent>"}',
+    '{"action":"send","agentId":"<id>","message":"<instruction for the agent>","promptId":"<saved prompt id or empty>"}',
     '  → the user addresses an existing (running) agent by name. "message" is the instruction without the addressing part, in the language the user spoke.',
+    '  "promptId": only if the user asks to send a saved prompt by its name (e.g. "Agent 2, Prompt Code-Review" / "schick Agent 2 den Prompt Aufräumen"); then "message" holds only additional words the user said beyond the prompt name (or ""). Otherwise "".',
     '  A running agent always wins over a template with a similar name (e.g. "Entwickler, schreib Tests" → send to the running agent "Entwickler").',
     "  If the user addresses a running team by name, send to that team's leadAgentId.",
     '{"action":"start_team","projectId":"<id>","teamTemplateId":"<team template id or empty>","members":["<template id or \'agent\'>", ...],"teamName":"<name or empty>","task":"<task or empty>","model":"<model or empty>"}',

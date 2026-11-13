@@ -42,7 +42,32 @@ export interface AnswerPermissionArgs {
   message?: string
 }
 
-export type ToolName = 'show_code' | 'team_members' | 'send_team_message' | 'answer_permission'
+export type ToolName =
+  | 'show_code'
+  | 'show_plan'
+  | 'show_diff'
+  | 'notify_user'
+  | 'report_progress'
+  | 'run_list'
+  | 'run_output'
+  | 'run_start'
+  | 'run_stop'
+  | 'team_members'
+  | 'send_team_message'
+  | 'answer_permission'
+
+/** Tools that every Claude agent in DevHub gets */
+export const COMMON_TOOLS: ToolName[] = [
+  'show_code',
+  'show_plan',
+  'show_diff',
+  'notify_user',
+  'report_progress',
+  'run_list',
+  'run_output',
+  'run_start',
+  'run_stop'
+]
 
 /** Decision on a worker's permission request (null = none, e.g. agent exited) */
 export type PermissionDecision = { behavior: 'allow' } | { behavior: 'deny'; message: string }
@@ -63,6 +88,119 @@ export interface BridgeHandlers {
     event: HookEvent,
     signal: AbortSignal
   ) => Promise<PermissionDecision | null>
+  /**
+   * Stop hook (agent reports done): response = hook output for claude, e.g.
+   * `{decision: "block", reason}` if checks fail; null = the agent may stop.
+   */
+  onStop: (agentId: string, event: HookEvent) => Promise<object | null>
+}
+
+const SHOW_PLAN_TOOL = {
+  name: 'show_plan',
+  description:
+    'Show a plan, summary or other structured text to the user in the DevHub side panel (rendered ' +
+    'as Markdown: headings, lists, check boxes "- [ ]"/"- [x]", code blocks, tables are shown as text). ' +
+    'Use it for implementation plans, review results or step lists the user should keep in view; ' +
+    'call it again with the same title to update it.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      title: { type: 'string', description: 'Short title of the tab' },
+      markdown: { type: 'string', description: 'The content as Markdown' }
+    },
+    required: ['title', 'markdown']
+  }
+}
+
+const SHOW_DIFF_TOOL = {
+  name: 'show_diff',
+  description:
+    'Open the DevHub review window with the changes in your working directory (diff against the ' +
+    'last commit), optionally focused on one file. Use it when you want the user to review your changes.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      file_path: { type: 'string', description: 'Optional: file to select in the review' }
+    }
+  }
+}
+
+const NOTIFY_USER_TOOL = {
+  name: 'notify_user',
+  description:
+    'Send the user a short notification (DevHub inbox and, if the app is in the background, a ' +
+    'desktop notification). Use it sparingly for things worth interrupting for: a long task is ' +
+    'done, something needs a decision soon, or a problem you cannot solve.',
+  inputSchema: {
+    type: 'object',
+    properties: { message: { type: 'string', description: 'One or two sentences' } },
+    required: ['message']
+  }
+}
+
+const REPORT_PROGRESS_TOOL = {
+  name: 'report_progress',
+  description:
+    'Report the progress of a longer task; shown next to your name in DevHub. ' +
+    'Call it at meaningful steps (not for every tool call).',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      message: {
+        type: 'string',
+        description: 'What you are doing, e.g. "Step 3/5: migrating tests"'
+      },
+      percent: { type: 'number', minimum: 0, maximum: 100, description: 'Optional: 0-100' }
+    },
+    required: ['message']
+  }
+}
+
+const RUN_NAME = {
+  type: 'object',
+  properties: { name: { type: 'string', description: 'Name of the command (see run_list)' } },
+  required: ['name']
+}
+
+const RUN_LIST_TOOL = {
+  name: 'run_list',
+  description:
+    'List the commands the user configured for this project in DevHub (dev server, tests, build …) ' +
+    'with their state (running, last exit code).',
+  inputSchema: { type: 'object', properties: {} }
+}
+
+const RUN_OUTPUT_TOOL = {
+  name: 'run_output',
+  description:
+    'Read the latest output (stdout + stderr) of a project command managed by DevHub, e.g. the ' +
+    'log of the running dev server or the result of the last test run.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      name: { type: 'string', description: 'Name of the command (see run_list)' },
+      lines: {
+        type: 'integer',
+        minimum: 1,
+        description: 'How many lines from the end (default 80)'
+      }
+    },
+    required: ['name']
+  }
+}
+
+const RUN_START_TOOL = {
+  name: 'run_start',
+  description:
+    'Start a project command managed by DevHub (no effect if it is already running). ' +
+    'Read its output with run_output afterwards.',
+  inputSchema: RUN_NAME
+}
+
+const RUN_STOP_TOOL = {
+  name: 'run_stop',
+  description: 'Stop a running project command managed by DevHub.',
+  inputSchema: RUN_NAME
 }
 
 const SHOW_CODE_TOOL = {
@@ -135,6 +273,14 @@ const ANSWER_PERMISSION_TOOL = {
 
 const TOOLS: Record<ToolName, object> = {
   show_code: SHOW_CODE_TOOL,
+  show_plan: SHOW_PLAN_TOOL,
+  show_diff: SHOW_DIFF_TOOL,
+  notify_user: NOTIFY_USER_TOOL,
+  report_progress: REPORT_PROGRESS_TOOL,
+  run_list: RUN_LIST_TOOL,
+  run_output: RUN_OUTPUT_TOOL,
+  run_start: RUN_START_TOOL,
+  run_stop: RUN_STOP_TOOL,
   team_members: TEAM_MEMBERS_TOOL,
   send_team_message: SEND_TEAM_MESSAGE_TOOL,
   answer_permission: ANSWER_PERMISSION_TOOL
@@ -175,6 +321,10 @@ export class AgentBridge {
     return `http://127.0.0.1:${this.port}/permission/${this.token}/${agentId}`
   }
 
+  stopUrl(agentId: string): string {
+    return `http://127.0.0.1:${this.port}/stop/${this.token}/${agentId}`
+  }
+
   editorUrl(agentId: string): string {
     return `http://127.0.0.1:${this.port}/editor/${this.token}/${agentId}`
   }
@@ -194,6 +344,21 @@ export class AgentBridge {
         console.error('[DevHub] Hook-Ereignis ungültig:', e)
       }
       return end(res, 204)
+    }
+
+    // Stop hook: keep it open until the project's checks have run. Empty response =
+    // the agent stops; `{decision: "block", reason}` = it keeps working with this reason.
+    if (kind === 'stop' && req.method === 'POST') {
+      let output: object | null = null
+      try {
+        output = await this.handlers.onStop(agentId, JSON.parse((await readBody(req)) || '{}'))
+      } catch (e) {
+        console.error('[DevHub] Stop-Hook:', e)
+      }
+      if (!output || res.writableEnded) return end(res, 200)
+      res.writeHead(200, { 'Content-Type': 'application/json' })
+      res.end(JSON.stringify(output))
+      return
     }
 
     // A worker's permission request: keep it open until the orchestrator has decided.

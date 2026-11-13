@@ -1,5 +1,13 @@
-import { useState } from 'react'
-import type { AgentTemplate, Settings, TeamTemplate, VoiceStatus } from '../../../shared/types'
+import { useEffect, useState } from 'react'
+import type {
+  AgentTemplate,
+  Engine,
+  PromptTemplate,
+  RemoteInfo,
+  Settings,
+  TeamTemplate,
+  VoiceStatus
+} from '../../../shared/types'
 import { validateAgentArgs } from '../../../shared/agentArgs'
 import { errorText } from '../lib/errors'
 import AgentArgsHelp from './AgentArgsHelp'
@@ -35,6 +43,126 @@ interface Props {
   onSettingsChanged: (s: Settings) => void
   onVoiceChanged: () => void
   onClose: () => void
+  prompts: PromptTemplate[]
+  /** null = create a new prompt */
+  onEditPrompt: (p: PromptTemplate | null) => void
+  onRemovePrompt: (p: PromptTemplate) => void
+  engines: Engine[]
+  /** null = create a new engine */
+  onEditEngine: (e: Engine | null) => void
+  onRemoveEngine: (e: Engine) => void
+}
+
+/** Number as a setting: draft kept locally, saved when leaving the field */
+function NumberSetting(p: {
+  label: string
+  value: number
+  help: string
+  step?: number
+  onSave: (value: number) => Promise<void>
+}): React.JSX.Element {
+  const [draft, setDraft] = useState(String(p.value))
+  const [error, setError] = useState<string | null>(null)
+  return (
+    <label>
+      <span>{p.label}</span>
+      <input
+        type="number"
+        min={0}
+        step={p.step ?? 1}
+        value={draft}
+        onChange={(e) => {
+          setDraft(e.target.value)
+          setError(null)
+        }}
+        onBlur={() => {
+          const n = Number(draft.replace(',', '.'))
+          if (n === p.value) return
+          p.onSave(n).catch((e) => setError(errorText(e)))
+        }}
+      />
+      {error ? <small className="error">{error}</small> : <small className="muted">{p.help}</small>}
+    </label>
+  )
+}
+
+/** Remote access: switch, port and the addresses for the phone */
+function RemoteSettings({
+  settings,
+  update
+}: {
+  settings: Settings
+  update: (patch: Partial<Settings>) => Promise<void>
+}): React.JSX.Element {
+  const [info, setInfo] = useState<RemoteInfo | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const { remoteEnabled, remotePort, remoteToken } = settings
+  useEffect(() => {
+    let cancelled = false
+    // Wait briefly: the server reports a port in use only after starting
+    const t = setTimeout(() => window.api.remote.info().then((i) => !cancelled && setInfo(i)), 400)
+    return () => {
+      cancelled = true
+      clearTimeout(t)
+    }
+  }, [remoteEnabled, remotePort, remoteToken])
+  const change = (patch: Partial<Settings>): void => {
+    setError(null)
+    update(patch).catch((e) => setError(errorText(e)))
+  }
+  return (
+    <>
+      <label className="checkbox">
+        <input
+          type="checkbox"
+          checked={remoteEnabled}
+          onChange={(e) => change({ remoteEnabled: e.target.checked })}
+        />
+        Fernzugriff im lokalen Netz einschalten (z. B. fürs Handy)
+      </label>
+      <small className="muted">
+        Zeigt die Agents mit Status und letzter Antwort, nimmt Anweisungen an und entscheidet
+        Freigaben aus dem Eingang. Die Verbindung ist unverschlüsselt (HTTP) und nur durch den
+        geheimen Teil der Adresse geschützt – nur in einem vertrauenswürdigen Netz bzw. über ein VPN
+        nutzen. Windows fragt beim ersten Einschalten ggf. nach der Firewall-Freigabe.
+      </small>
+      {remoteEnabled && (
+        <div className="form">
+          <NumberSetting
+            key={remotePort}
+            label="Port"
+            value={remotePort}
+            help="1024–65535"
+            onSave={(port) => update({ remotePort: port })}
+          />
+          {info?.error && <small className="error">{info.error}</small>}
+          {info?.running && (
+            <div>
+              {info.urls.length === 0 && (
+                <small className="muted">Keine Netzwerkadresse gefunden.</small>
+              )}
+              {info.urls.map((url) => (
+                <div key={url} className="remote-url">
+                  <code>{url}</code>
+                  <button className="link" onClick={() => window.api.clipboard.writeText(url)}>
+                    kopieren
+                  </button>
+                </div>
+              ))}
+              <button
+                className="link"
+                title="Erzeugt eine neue Adresse – bisherige Links funktionieren danach nicht mehr"
+                onClick={() => change({ remoteToken: '' })}
+              >
+                Neue Adresse erzeugen
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+      {error && <small className="error">{error}</small>}
+    </>
+  )
 }
 
 /**
@@ -212,6 +340,138 @@ function SettingsDialog(props: Props): React.JSX.Element {
           Sprache geht auch ein temporäres Team: „Starte einen Entwickler und einen Reviewer als
           Team für DevHub, …“.
         </p>
+      </section>
+
+      <section className="settings-section">
+        <h3>Prompt-Bibliothek</h3>
+        {props.prompts.length > 0 && (
+          <div className="template-list">
+            {props.prompts.map((p) => (
+              <div key={p.id} className="template-item">
+                <span className="template-info">
+                  <span className="template-name">{p.name}</span>
+                  <span className="muted"> · {p.text}</span>
+                </span>
+                <button className="link" onClick={() => props.onEditPrompt(p)}>
+                  Bearbeiten
+                </button>
+                <button
+                  className="link danger"
+                  onClick={() => {
+                    if (confirm(`Prompt „${p.name}“ löschen?`)) props.onRemovePrompt(p)
+                  }}
+                >
+                  Löschen
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+        <button onClick={() => props.onEditPrompt(null)}>Neuer Prompt …</button>
+        <p className="muted small">
+          Wiederverwendbare Anweisungen mit Platzhaltern. Senden: Rechtsklick auf einen Agent →
+          „Auftrag / Prompt aus der Bibliothek“ oder per Sprache („Agent 2, Prompt Code-Review“).
+        </p>
+      </section>
+
+      <section className="settings-section">
+        <h3>Weitere Engines</h3>
+        {props.engines.length > 0 && (
+          <div className="template-list">
+            {props.engines.map((e) => (
+              <div key={e.id} className="template-item">
+                <span className="template-info">
+                  <span className="template-name">{e.name}</span>
+                  <span className="muted"> · {e.command}</span>
+                </span>
+                <button className="link" onClick={() => props.onEditEngine(e)}>
+                  Bearbeiten
+                </button>
+                <button
+                  className="link danger"
+                  onClick={() => {
+                    if (confirm(`Engine „${e.name}“ löschen?`)) props.onRemoveEngine(e)
+                  }}
+                >
+                  Löschen
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+        <button onClick={() => props.onEditEngine(null)}>Neue Engine …</button>
+        <p className="muted small">
+          Andere Coding-Agents als Claude Code (z. B. Codex CLI, Gemini CLI) als Terminal-Programm.
+          Start über ▶ am Projekt. Ohne Claude-Hooks nur mit vereinfachtem Status.
+        </p>
+      </section>
+
+      <section className="settings-section">
+        <h3>Eingang und Benachrichtigungen</h3>
+        <label className="checkbox">
+          <input
+            type="checkbox"
+            checked={settings.notifyOnWaiting}
+            onChange={(e) => update({ notifyOnWaiting: e.target.checked })}
+          />
+          Windows-Benachrichtigung, wenn ein Agent wartet und DevHub im Hintergrund ist
+        </label>
+        <label className="checkbox">
+          <input
+            type="checkbox"
+            checked={settings.permissionInbox}
+            onChange={(e) => update({ permissionInbox: e.target.checked })}
+          />
+          Freigaben im Eingang entscheiden (statt im Terminal des Agents)
+        </label>
+        <small className="muted">
+          Mit „Immer“ entsteht eine Regel fürs Projekt (Projekt bearbeiten → Freigabe-Regeln).
+          Regeln gelten auch ohne diese Einstellung.
+        </small>
+        <label className="checkbox">
+          <input
+            type="checkbox"
+            checked={settings.voiceReadback}
+            onChange={(e) => update({ voiceReadback: e.target.checked })}
+          />
+          Fertige Agents: Kurzfassung der Antwort vorlesen
+        </label>
+        <small className="muted">
+          Claude (Haiku) fasst die Antwort in ein bis zwei Sätzen zusammen; vorgelesen wird mit der
+          Windows-Sprachausgabe.
+        </small>
+      </section>
+
+      <section className="settings-section">
+        <h3>Verbrauch</h3>
+        <div className="form">
+          <NumberSetting
+            label="Kontext-Warnung ab (Tokens)"
+            value={settings.contextWarnTokens}
+            step={10000}
+            help="Hinweis im Eingang, sobald die Unterhaltung eines Agents so groß ist. 0 = aus."
+            onSave={(contextWarnTokens) => update({ contextWarnTokens })}
+          />
+          <NumberSetting
+            label="Preis Eingabe (USD je Million Tokens)"
+            value={settings.priceInput}
+            step={0.5}
+            help="Für die Kostenschätzung im Verlauf. 0 = keine Kostenanzeige (z. B. mit Abo)."
+            onSave={(priceInput) => update({ priceInput })}
+          />
+          <NumberSetting
+            label="Preis Ausgabe (USD je Million Tokens)"
+            value={settings.priceOutput}
+            step={0.5}
+            help="Cache-Lesen wird mit 10 %, Cache-Schreiben mit 125 % des Eingabepreises gerechnet."
+            onSave={(priceOutput) => update({ priceOutput })}
+          />
+        </div>
+      </section>
+
+      <section className="settings-section">
+        <h3>Fernzugriff</h3>
+        <RemoteSettings settings={settings} update={update} />
       </section>
 
       <section className="settings-section">

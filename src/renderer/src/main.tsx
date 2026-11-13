@@ -1,5 +1,6 @@
 import './assets/main.css'
 import './assets/components.css'
+import './assets/workbench.css'
 
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'

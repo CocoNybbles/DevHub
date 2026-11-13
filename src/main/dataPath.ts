@@ -28,7 +28,12 @@ function migrateFromAppData(target: string): void {
   }
 }
 
-const dir = join(exeDir(), 'data')
+/**
+ * Development/tests: `DEVHUB_DATA_DIR` = a separate data folder. This lets a second instance start
+ * next to a running one (the single-instance lock is tied to the data folder) without touching its state.
+ */
+const override = process.env.DEVHUB_DATA_DIR?.trim()
+const dir = override || join(exeDir(), 'data')
 try {
   mkdirSync(dir, { recursive: true })
   const probe = join(dir, '.write-test')
@@ -42,5 +47,5 @@ try {
   )
   app.exit(1)
 }
-migrateFromAppData(dir)
+if (!override) migrateFromAppData(dir)
 app.setPath('userData', dir)
