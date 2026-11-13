@@ -1,6 +1,6 @@
 {
   "name": "devhub",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "license": "MIT",
   "description": "Lokaler Hub für Projekte und KI-Coding-Agents",
   "main": "./out/main/index.js",
