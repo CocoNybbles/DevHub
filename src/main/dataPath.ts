@@ -1,19 +1,19 @@
 /**
- * Legt den Datenordner fest: alle Daten liegen neben der .exe im Ordner `data\`.
- * Muss vor allem anderen geladen werden (erster Import in `index.ts`), weil
- * `userData` vor `app.ready` und vor jedem `dataDir()`-Aufruf gesetzt sein muss.
+ * Sets the data folder: all data lives next to the .exe in the `data\` folder.
+ * Must be loaded before anything else (first import in `index.ts`), because
+ * `userData` has to be set before `app.ready` and before any `dataDir()` call.
  */
 import { app, dialog } from 'electron'
 import { cpSync, existsSync, mkdirSync, rmSync, writeFileSync } from 'fs'
 import { dirname, join } from 'path'
 
-/** Ordner, in dem die .exe liegt (portable: der echte Ort, nicht der Entpack-Ordner in %TEMP%). */
+/** Folder containing the .exe (portable: the real location, not the extraction folder in %TEMP%). */
 function exeDir(): string {
-  if (!app.isPackaged) return app.getAppPath() // Entwicklung: Projektordner
+  if (!app.isPackaged) return app.getAppPath() // development: project folder
   return process.env.PORTABLE_EXECUTABLE_DIR || dirname(process.execPath)
 }
 
-/** Übernimmt einmalig die Daten aus dem früheren Speicherort `%APPDATA%\DevHub`. */
+/** One-time migration of the data from the former location `%APPDATA%\DevHub`. */
 function migrateFromAppData(target: string): void {
   if (existsSync(join(target, 'devhub-state.json'))) return
   const old = join(app.getPath('appData'), 'DevHub')

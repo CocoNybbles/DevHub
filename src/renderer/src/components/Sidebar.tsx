@@ -28,15 +28,15 @@ import {
   TeamIcon
 } from './Icons'
 
-/** „rider64.exe“ statt vollem Pfad; leer = Bezeichnung des Standardprogramms */
+/** "rider64.exe" instead of the full path; empty = label of the default program */
 const programLabel = (exe: string, fallback: string): string =>
   exe ? (exe.split(/[\\/]/).pop() ?? exe) : fallback
 
-/** Alphanumerisch aufsteigend: „Agent 2“ vor „Agent 10“, Groß-/Kleinschreibung egal */
+/** Alphanumeric ascending: "Agent 2" before "Agent 10", case-insensitive */
 const byName = (a: { name: string }, b: { name: string }): number =>
   a.name.localeCompare(b.name, 'de', { numeric: true, sensitivity: 'base' })
 
-/** Ids einer Gruppe nach dem Verschieben von `moved` vor/hinter `target` */
+/** Ids of a group after moving `moved` before/after `target` */
 function moveId(ids: string[], moved: string, target: string, after: boolean): string[] {
   const rest = ids.filter((id) => id !== moved)
   const i = rest.indexOf(target)
@@ -45,59 +45,59 @@ function moveId(ids: string[], moved: string, target: string, after: boolean): s
   return rest
 }
 
-/** Orchestrator eines Teams (ältere Teams ohne Orchestrator: zuerst gestartetes Mitglied) */
+/** Orchestrator of a team (older teams without orchestrator: first started member) */
 const leadOf = (members: Agent[]): Agent | undefined =>
   members[0]?.teamId ? teamLead(members, members[0].teamId) : undefined
 
 interface Props {
   projects: Project[]
   agents: Agent[]
-  /** Laufende Teams */
+  /** Running teams */
   teams: Team[]
   selection: Selection
   vscodeInstalled: boolean
   globalVoiceActive: boolean
-  /** Kürzel für globale Sprachbefehle (Accelerator) */
+  /** Shortcut for global voice commands (accelerator) */
   globalHotkey: string
-  /** multi = Strg gehalten: Agents zum Raster hinzufügen/entfernen statt Auswahl ersetzen */
+  /** multi = Ctrl held: add/remove agents to/from the grid instead of replacing the selection */
   onSelectProject: (id: string, multi: boolean) => void
   onSelectAgent: (id: string, multi: boolean) => void
-  /** Klick auf ein Team: alle Mitglieder im Raster (multi: hinzufügen/entfernen) */
+  /** Click on a team: all members in the grid (multi: add/remove) */
   onSelectTeam: (team: Team, multi: boolean) => void
-  /** Vordefinierte Agents und Teams → Auswahl beim Start */
+  /** Predefined agents and teams → choice when starting */
   templates: AgentTemplate[]
   teamTemplates: TeamTemplate[]
-  /** templateId: aus einer Vorlage starten, sonst normaler Agent */
+  /** templateId: start from a template, otherwise a normal agent */
   onStartAgent: (projectId: string, templateId?: string) => void
   onStartTeam: (projectId: string, teamTemplateId: string) => void
   onStopTeam: (team: Team) => void
   onStopAgent: (agent: Agent) => void
   onRenameAgent: (id: string, name: string) => void
-  /** Sprach-Anweisung an genau diesen Agent */
+  /** Voice instruction to exactly this agent */
   onAgentVoiceFor: (id: string) => void
-  /** `/clear` an den Agent schicken */
+  /** Send `/clear` to the agent */
   onClearAgent: (id: string) => void
-  /** Für diesen Agent läuft gerade eine Aufnahme */
+  /** A recording is running for this agent */
   recordingAgentId: string | null
-  /** Anweisung im Editor-Tab schreiben (bzw. zum offenen Tab wechseln) */
+  /** Write an instruction in the editor tab (or switch to the open tab) */
   onEditPrompt: (id: string) => void
-  /** Kürzel dafür (Accelerator, für die Anzeige) */
+  /** Shortcut for it (accelerator, for display) */
   editorHotkey: string
-  /** Neue Reihenfolge aller Projekte (Ids) */
+  /** New order of all projects (ids) */
   onReorderProjects: (ids: string[]) => void
-  /** Neue Reihenfolge einer Agent-Gruppe (Projekt ohne Team bzw. Team) */
+  /** New order of an agent group (project without team, or team) */
   onReorderAgents: (ids: string[]) => void
-  /** Globale Einstellung „Sprachtext automatisch abschicken“ (Anzeige im Menü) */
+  /** Global setting "auto-send voice text" (shown in the menu) */
   globalVoiceAutoSend: boolean
-  /** undefined = globale Einstellung verwenden */
+  /** undefined = use the global setting */
   onSetVoiceAutoSend: (id: string, value: boolean | undefined) => void
   onAddProject: () => void
-  /** Projekte aus (mehreren) Ordnern importieren */
+  /** Import projects from (multiple) folders */
   onImportProjects: () => void
   onEditProject: (p: Project) => void
   onRemoveProject: (p: Project) => void
   onOpenProjectFile: (p: Project) => void
-  /** Globale Programme aus den Einstellungen ('' = Standard) – für die Tooltips */
+  /** Global programs from the settings ('' = default) – for the tooltips */
   globalProjectFileApp: string
   globalFolderApp: string
   onOpenFolder: (p: Project) => void
@@ -131,19 +131,19 @@ const STATUS_LABEL: Record<Agent['status'], string> = {
   needsInput: 'Wartet auf Eingabe'
 }
 
-/** Linke Spalte: registrierte Projekte, ihre Teams und Agents. */
+/** Left column: registered projects, their teams and agents. */
 function Sidebar(props: Props): React.JSX.Element {
   const { projects, agents, teams, selection } = props
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set())
   const [renaming, setRenaming] = useState<string | null>(null)
   const [menu, setMenu] = useState<MenuState | null>(null)
-  /** Gezogene Zeile; `group` = nur innerhalb dieser Gruppe ablegbar */
+  /** Dragged row; `group` = can only be dropped within this group */
   const [drag, setDrag] = useState<{ group: string; id: string } | null>(null)
   const [drop, setDrop] = useState<{ id: string; after: boolean } | null>(null)
 
   /**
-   * Drag & Drop für eine Zeile. `group`: Projekte bzw. Agents eines Projekts (ohne Team) /
-   * eines Teams – verschoben wird nur innerhalb derselben Gruppe. `ids` = Gruppe in Anzeigereihenfolge.
+   * Drag & drop for a row. `group`: projects, or agents of a project (without team) /
+   * of a team – rows only move within the same group. `ids` = group in display order.
    */
   const dnd = (
     group: string,
@@ -186,7 +186,7 @@ function Sidebar(props: Props): React.JSX.Element {
     }
   })
 
-  /** Menüeinträge zum Starten: normaler Agent, je Vorlage ein Eintrag, je Team ein Eintrag. */
+  /** Menu entries for starting: normal agent, one entry per template, one entry per team. */
   const startItems = (projectId: string): MenuItem[] => [
     { label: 'Agent starten', action: () => props.onStartAgent(projectId) },
     ...props.templates.map((t) => ({
@@ -221,7 +221,7 @@ function Sidebar(props: Props): React.JSX.Element {
     (selection?.kind === 'agent' && selection.agentId === id) ||
     (selection?.kind === 'agents' && selection.agentIds.includes(id))
 
-  /** `group`/`groupIds`: Agents, zwischen denen per Drag & Drop umsortiert werden kann */
+  /** `group`/`groupIds`: agents that can be reordered among each other via drag & drop */
   const agentRow = (
     a: Agent,
     group: string,
@@ -250,7 +250,7 @@ function Sidebar(props: Props): React.JSX.Element {
         onClick={(e) => props.onSelectAgent(a.id, e.ctrlKey || e.metaKey)}
         onContextMenu={(e) => {
           e.preventDefault()
-          // Worker: nur beobachten – kein Umbenennen, keine Anweisungen, kein einzelnes Beenden
+          // Worker: observe only – no renaming, no instructions, no stopping individually
           if (worker) return
           const voice = (label: string, value: boolean | undefined): MenuItem => ({
             label,
@@ -407,7 +407,7 @@ function Sidebar(props: Props): React.JSX.Element {
     )
   }
 
-  /** Teamkopf + eingerückte Mitglieder (Reihenfolge frei sortierbar, Leitung = zuerst gestartet). */
+  /** Team header + indented members (order freely sortable, lead = started first). */
   const teamGroup = (team: Team, members: Agent[]): React.JSX.Element => {
     const ids = members.map((a) => a.id)
     const lead = leadOf(members)
@@ -522,13 +522,13 @@ function Sidebar(props: Props): React.JSX.Element {
         )}
 
         {projects.map((p) => {
-          // Reihenfolge der Agents kommt aus dem Main (gespeichert, per Drag & Drop änderbar)
+          // Agent order comes from main (persisted, changeable via drag & drop)
           const projectAgents = agents.filter((a) => a.projectId === p.id)
           const projectTeams = teams
             .filter((t) => t.projectId === p.id)
             .sort((a, b) => a.createdAt - b.createdAt)
           const teamIds = new Set(projectTeams.map((t) => t.id))
-          // Agents ohne (bekanntes) Team stehen unter den Teams
+          // Agents without a (known) team are listed below the teams
           const loose = projectAgents.filter((a) => !a.teamId || !teamIds.has(a.teamId))
           const looseIds = loose.map((a) => a.id)
           const isOpen = !collapsed.has(p.id)
@@ -559,7 +559,7 @@ function Sidebar(props: Props): React.JSX.Element {
                       ...(projectAgents.length > 1
                         ? [
                             {
-                              // Alle auf einmal: Teams und Agents ohne Team sind getrennte Gruppen
+                              // All at once: teams and agents without a team are separate groups
                               label: 'Agents nach Name sortieren',
                               action: () =>
                                 props.onReorderAgents(
@@ -627,7 +627,7 @@ function Sidebar(props: Props): React.JSX.Element {
                   }
                   onClick={(e) => {
                     e.stopPropagation()
-                    // Mit Vorlagen/Teams: Auswahl unter dem Button, sonst direkt starten
+                    // With templates/teams: choice below the button, otherwise start directly
                     if (!hasStartChoice) return props.onStartAgent(p.id)
                     const r = e.currentTarget.getBoundingClientRect()
                     setMenu({ x: r.left, y: r.bottom + 2, items: startItems(p.id) })

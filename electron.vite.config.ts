@@ -9,9 +9,9 @@ export default defineConfig({
     resolve: {
       alias: [
         { find: '@renderer', replacement: resolve('src/renderer/src') },
-        // Monaco bringt eine eigene (veraltete) Kopie von DOMPurify mit und importiert sie nur
-        // in vs/base/browser/domSanitize.js. Stattdessen das npm-Paket nehmen, dessen Version
-        // `overrides` in package.json festlegt (Sicherheitskorrekturen, Dependabot).
+        // Monaco ships its own (outdated) copy of DOMPurify and imports it only
+        // in vs/base/browser/domSanitize.js. Use the npm package instead, whose version is
+        // pinned by `overrides` in package.json (security fixes, Dependabot).
         {
           find: /^\.\/dompurify\/dompurify\.js$/,
           replacement: resolve('node_modules/dompurify/dist/purify.es.mjs')

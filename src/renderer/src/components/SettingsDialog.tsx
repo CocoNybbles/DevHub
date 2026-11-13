@@ -18,7 +18,7 @@ import ProgramInput from './ProgramInput'
 import VoiceModels from './VoiceModels'
 import { canRememberLanguage, FIXED_LANGUAGES } from '../../../shared/voiceLanguage'
 
-/** whisper-Sprachcode → „Deutsch“, „Englisch“ … (Fallback: Code) */
+/** whisper language code → "Deutsch", "Englisch" … (fallback: the code) */
 function languageName(code: string): string {
   try {
     return new Intl.DisplayNames(['de'], { type: 'language' }).of(code) ?? code
@@ -30,14 +30,14 @@ function languageName(code: string): string {
 interface Props {
   settings: Settings
   voiceStatus: VoiceStatus
-  /** Für die Anzeige des Standardprogramms für Ordner */
+  /** For displaying the default program for folders */
   vscodeInstalled: boolean
   templates: AgentTemplate[]
-  /** null = neue Vorlage anlegen */
+  /** null = create a new template */
   onEditTemplate: (t: AgentTemplate | null) => void
   onRemoveTemplate: (t: AgentTemplate) => void
   teamTemplates: TeamTemplate[]
-  /** null = neues Team anlegen */
+  /** null = create a new team */
   onEditTeam: (t: TeamTemplate | null) => void
   onRemoveTeam: (t: TeamTemplate) => void
   onSettingsChanged: (s: Settings) => void
@@ -166,8 +166,8 @@ function RemoteSettings({
 }
 
 /**
- * Programmpfad als Einstellung: Entwurf lokal, gespeichert beim Verlassen des Feldes bzw. nach
- * Auswahl/Zurücksetzen. Ungültige Pfade lehnt der Main-Prozess ab → Fehler, alter Wert bleibt.
+ * Program path as a setting: draft kept locally, saved when leaving the field or after
+ * picking/resetting. The main process rejects invalid paths → error, old value stays.
  */
 function ProgramSetting(p: {
   label: string
@@ -215,7 +215,7 @@ function SettingsDialog(props: Props): React.JSX.Element {
   const update = async (patch: Partial<Settings>): Promise<void> =>
     props.onSettingsChanged(await window.api.settings.update(patch))
 
-  // Start-Flags: Entwurf lokal, gespeichert beim Verlassen des Feldes bzw. Schließen
+  // Start flags: draft kept locally, saved when leaving the field or closing
   const [argsDraft, setArgsDraft] = useState(settings.agentArgs)
   const [argsSaveError, setArgsSaveError] = useState<string | null>(null)
   const argsError = validateAgentArgs(argsDraft) ?? argsSaveError
@@ -230,7 +230,7 @@ function SettingsDialog(props: Props): React.JSX.Element {
       return false
     }
   }
-  // Ungültige Werte werden nicht gespeichert (Dialog schließt trotzdem, alter Wert bleibt)
+  // Invalid values are not saved (dialog closes anyway, old value stays)
   const close = async (): Promise<void> => {
     await saveArgs()
     props.onClose()

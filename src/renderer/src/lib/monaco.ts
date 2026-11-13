@@ -1,17 +1,17 @@
-// Schlanker Import: Editor-Kern + Syntax-Hervorhebung (ohne TS/JSON/CSS/HTML-Sprachdienste)
+// Slim import: editor core + syntax highlighting (without TS/JSON/CSS/HTML language services)
 import * as monaco from 'monaco-editor/editor/editor.api'
 import 'monaco-editor/basic-languages/monaco.contribution'
 import EditorWorker from 'monaco-editor/editor/editor.worker?worker'
 
-// Nur der Basis-Worker: Ansicht ist schreibgeschützt, Syntax-Hervorhebung braucht keine Sprach-Worker
+// Base worker only: the view is read-only, syntax highlighting needs no language workers
 self.MonacoEnvironment = { getWorker: () => new EditorWorker() }
 
-// Theme global setzen: auch `colorize` (Snippets ohne Editor) braucht die Farbklassen
+// Set the theme globally: `colorize` (snippets without an editor) needs the color classes too
 monaco.editor.setTheme('vs-dark')
 
 export { monaco }
 
-/** Sprache für eine Datei (Endung oder Dateiname) */
+/** Language for a file (extension or file name) */
 export function languageForPath(path: string): string {
   const ext = '.' + (path.split('.').pop() ?? '').toLowerCase()
   const name = path.split(/[\\/]/).pop()?.toLowerCase() ?? ''
@@ -19,12 +19,12 @@ export function languageForPath(path: string): string {
     .getLanguages()
     .find((l) => l.extensions?.includes(ext) || l.filenames?.some((f) => f.toLowerCase() === name))
   if (lang) return lang.id
-  // JSON gehört nicht zu den Basis-Sprachen → JavaScript-Hervorhebung passt dafür gut
+  // JSON is not among the basic languages → JavaScript highlighting fits it well
   if (['.json', '.jsonc', '.json5'].includes(ext)) return 'javascript'
   return 'plaintext'
 }
 
-/** Sprache für einen Markdown-Code-Zaun (```sql, ```ps1, ```bash …) */
+/** Language for a Markdown code fence (```sql, ```ps1, ```bash …) */
 export function languageForFence(fence: string): string {
   const f = fence.toLowerCase()
   if (!f) return 'plaintext'

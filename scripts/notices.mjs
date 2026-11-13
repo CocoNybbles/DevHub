@@ -1,11 +1,11 @@
-// Erzeugt out/THIRD_PARTY_NOTICES.txt: Lizenztexte aller Bibliotheken, die im ZIP landen
-// (MIT/Apache verlangen, die Hinweise mit auszuliefern). Läuft am Ende von `npm run build`;
-// electron-builder legt die Datei neben DevHub.exe.
+// Generates out/THIRD_PARTY_NOTICES.txt: license texts of all libraries that end up in the ZIP
+// (MIT/Apache require shipping the notices). Runs at the end of `npm run build`;
+// electron-builder puts the file next to DevHub.exe.
 //
-// Grundlage: Laufzeit-`dependencies` + die von Vite gebündelten Pakete (BUNDLED), jeweils mit
-// allen Abhängigkeiten. Electron/Chromium bringen eigene Dateien mit (LICENSE.electron.txt,
-// LICENSES.chromium.html). Neue Bibliothek im Renderer/Main → hier in BUNDLED eintragen.
-/* eslint-disable @typescript-eslint/explicit-function-return-type -- reines JS-Skript */
+// Basis: runtime `dependencies` + the packages bundled by Vite (BUNDLED), each with all
+// their dependencies. Electron/Chromium ship their own files (LICENSE.electron.txt,
+// LICENSES.chromium.html). New library in renderer/main → add it to BUNDLED here.
+/* eslint-disable @typescript-eslint/explicit-function-return-type -- plain JS script */
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'fs'
 import { join } from 'path'
 
@@ -29,7 +29,7 @@ while (queue.length) {
   queue.push(...Object.keys(pkg.dependencies ?? {}))
 }
 
-/** Lizenz- und Hinweisdateien eines Pakets (LICENSE, LICENSE.md, NOTICE, ThirdPartyNotices.txt …) */
+/** License and notice files of a package (LICENSE, LICENSE.md, NOTICE, ThirdPartyNotices.txt …) */
 const legalFiles = (dir) =>
   readdirSync(dir)
     .filter((f) => /^(licen[cs]e|copying|notice|thirdpartynotices)/i.test(f))
@@ -63,7 +63,7 @@ for (const name of names) {
 }
 
 mkdirSync('out', { recursive: true })
-// CRLF, damit Notepad unter Windows die Zeilen sauber zeigt
+// CRLF so Notepad on Windows shows the lines properly
 writeFileSync(
   join('out', 'THIRD_PARTY_NOTICES.txt'),
   parts.join('\n').replace(/\n/g, '\r\n') + '\r\n'

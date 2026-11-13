@@ -6,7 +6,7 @@ interface Props {
   onRecheck: () => void
 }
 
-/** Startbildschirm: blockiert die App, bis Claude Code installiert und eingeloggt ist. */
+/** Start screen: blocks the app until Claude Code is installed and logged in. */
 function AuthGate({ state, checking, onRecheck }: Props): React.JSX.Element {
   if (!state) {
     return (

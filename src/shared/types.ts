@@ -1,4 +1,4 @@
-/** Typen, die von Main-, Preload- und Renderer-Prozess gemeinsam genutzt werden. */
+/** Types shared by the main, preload and renderer processes. */
 
 export type ClaudeAuthState =
   | { kind: 'notInstalled' }
@@ -9,17 +9,17 @@ export type ClaudeAuthState =
 export interface Project {
   id: string
   name: string
-  /** Pfad 1: Arbeitsverzeichnis, in dem Agents gestartet werden */
+  /** Path 1: working directory in which agents are started */
   agentPath: string
-  /** Pfad 2: .sln / Projektdatei (z. B. für Visual Studio, Rider …) */
+  /** Path 2: .sln / project file (e.g. for Visual Studio, Rider …) */
   projectFile?: string
-  /** Programm (Pfad zur .exe) für die Projektdatei; leer = globale Einstellung */
+  /** Program (path to the .exe) for the project file; empty = global setting */
   projectFileApp?: string
-  /** Pfad 3: Ordner, der in einem Editor geöffnet wird (früher `vscodePath`, wird beim Laden übernommen) */
+  /** Path 3: folder opened in an editor (formerly `vscodePath`, migrated on load) */
   folderPath?: string
-  /** Programm (Pfad zur .exe) für den Ordner; leer = globale Einstellung */
+  /** Program (path to the .exe) for the folder; empty = global setting */
   folderApp?: string
-  /** Zusätzliche Start-Flags für Agents dieses Projekts (ergänzen/überschreiben die globalen) */
+  /** Extra start flags for this project's agents (extend/override the global ones) */
   agentArgs?: string
   /** Jeder neue Agent arbeitet in einem eigenen Git-Worktree (eigener Branch) statt im Agent-Ordner */
   useWorktrees?: boolean
@@ -52,24 +52,24 @@ export interface RunInfo {
 
 export type ProjectInput = Omit<Project, 'id'> & { id?: string }
 
-/** Beim Import gefundener Projektordner */
+/** Project folder found during import */
 export interface ScannedProject {
   path: string
-  /** Vorschlag: Ordnername */
+  /** Suggestion: folder name */
   name: string
-  /** Woran erkannt (z. B. „Git“, „.sln“, „Node“) */
+  /** What it was recognized by (e.g. "Git", ".sln", "Node") */
   marker: string
-  /** Automatisch gefundene .sln/.slnx (null = keine) */
+  /** Automatically found .sln/.slnx (null = none) */
   projectFile: string | null
-  /** Ordner ist schon als Projekt registriert */
+  /** Folder is already registered as a project */
   registered: boolean
 }
 
 /**
- * starting   – Prozess gestartet, noch keine Rückmeldung
- * working    – Agent arbeitet
- * idle       – bereit, noch keine Aufgabe
- * needsInput – wartet auf Antwort/Freigabe/nächste Anweisung → links hervorgehoben
+ * starting   – process started, no feedback yet
+ * working    – agent is working
+ * idle       – ready, no task yet
+ * needsInput – waiting for answer/permission/next instruction → highlighted on the left
  */
 export type AgentStatus = 'starting' | 'working' | 'idle' | 'needsInput'
 
@@ -77,25 +77,25 @@ export interface Agent {
   id: string
   projectId: string
   name: string
-  /** Claude-Session-ID (für --session-id / --resume) */
+  /** Claude session ID (for --session-id / --resume) */
   sessionId: string
   status: AgentStatus
   statusMessage?: string
   createdAt: number
-  /** Sprachtext automatisch abschicken: überschreibt `Settings.voiceAutoSend`, undefined = global */
+  /** Auto-send voice text: overrides `Settings.voiceAutoSend`, undefined = global */
   voiceAutoSend?: boolean
-  /** Beim Start festgelegtes Modell (`--model`, z. B. per Sprachbefehl), hat Vorrang vor Vorlage und Start-Flags */
+  /** Model set at start (`--model`, e.g. via voice command), takes precedence over template and start flags */
   model?: string
-  /** Vorlage, aus der der Agent gestartet wurde (Modell + Anweisung werden bei jedem Start gelesen) */
+  /** Template the agent was started from (model + instructions are read on every start) */
   templateId?: string
-  /** Laufendes Team, zu dem der Agent gehört (Mitglieder dürfen sich Nachrichten schicken) */
+  /** Running team the agent belongs to (members may send each other messages) */
   teamId?: string
   /**
-   * Rolle im Team: `orchestrator` (wird mit jedem Team gestartet, einziger Ansprechpartner des
-   * Nutzers) oder `worker` (nur beobachtbar, keine Eingaben). Fehlt bei Teams aus älteren Ständen.
+   * Role in the team: `orchestrator` (started with every team, the user's only point of
+   * contact) or `worker` (observe only, no input). Missing for teams from older states.
    */
   teamRole?: TeamRole
-  /** Strg+G: Anweisung wird gerade im Editor-Tab geschrieben → Agent sonst gesperrt (nicht gespeichert) */
+  /** Ctrl+G: instruction is being written in the editor tab → agent locked elsewhere (not persisted) */
   editing?: boolean
   /** Eigener Git-Worktree des Agents (Projekt mit `useWorktrees`) */
   worktree?: AgentWorktree
@@ -303,10 +303,10 @@ export interface RemoteInfo {
 
 export type TeamRole = 'orchestrator' | 'worker'
 
-/** Teammitglied, das nur beobachtet werden kann (Aufträge kommen ausschließlich vom Orchestrator) */
+/** Team member that can only be observed (tasks come exclusively from the orchestrator) */
 export const isTeamWorker = (a: Pick<Agent, 'teamRole'>): boolean => a.teamRole === 'worker'
 
-/** Orchestrator eines Teams; ältere Teams ohne Orchestrator: zuerst gestartetes Mitglied (Leitung) */
+/** Orchestrator of a team; older teams without orchestrator: first started member (lead) */
 export function teamLead<A extends Pick<Agent, 'teamId' | 'teamRole' | 'createdAt'>>(
   agents: A[],
   teamId: string
@@ -318,48 +318,48 @@ export function teamLead<A extends Pick<Agent, 'teamId' | 'teamRole' | 'createdA
   )
 }
 
-/** Mitglied einer Team-Vorlage: vordefinierter Agent oder (ohne templateId) normaler Agent. */
+/** Member of a team template: predefined agent or (without templateId) normal agent. */
 export interface TeamMember {
   templateId?: string
 }
 
-/** Fest definiertes Team aus vordefinierten Agents (Einstellungen). */
+/** Predefined team made of predefined agents (settings). */
 export interface TeamTemplate {
   id: string
   name: string
-  /** Ausführende Agents; dazu startet immer automatisch ein Orchestrator, der sie steuert */
+  /** Executing agents; an orchestrator that directs them is always started automatically in addition */
   members: TeamMember[]
-  /** Gemeinsame Richtlinien für alle Mitglieder (z. B. Ablauf, Übergaben) */
+  /** Shared guidelines for all members (e.g. workflow, hand-offs) */
   instructions?: string
 }
 
 export type TeamTemplateInput = Omit<TeamTemplate, 'id'> & { id?: string }
 
-/** Laufendes Team in einem Projekt (aus einer Team-Vorlage oder temporär per Sprache). */
+/** Running team in a project (from a team template or temporary via voice). */
 export interface Team {
   id: string
   name: string
   projectId: string
-  /** Team-Vorlage (Richtlinien werden bei jedem Start gelesen); fehlt bei temporären Teams */
+  /** Team template (guidelines are read on every start); missing for temporary teams */
   teamTemplateId?: string
   temporary: boolean
   createdAt: number
 }
 
-/** Vordefinierter, benannter Agent (z. B. „Entwickler“) – per Sprache oder Liste startbar. */
+/** Predefined, named agent (e.g. "Entwickler") – startable via voice or the list. */
 export interface AgentTemplate {
   id: string
-  /** Eindeutig; gestartete Agents heißen so (bei Bedarf „Name 2“, „Name 3“ …) */
+  /** Unique; started agents get this name ("Name 2", "Name 3" … if needed) */
   name: string
-  /** `--model` (Alias oder voller Name); leer = Start-Flags. Ein per Sprache genanntes Modell hat Vorrang. */
+  /** `--model` (alias or full name); empty = start flags. A model named by voice takes precedence. */
   model?: string
-  /** Rolle/Richtlinien, werden an den System-Prompt angehängt */
+  /** Role/guidelines, appended to the system prompt */
   instructions?: string
 }
 
 export type AgentTemplateInput = Omit<AgentTemplate, 'id'> & { id?: string }
 
-/** Von einem Agent über das MCP-Tool `show_code` gemeldete Code-Stelle. */
+/** Code location reported by an agent via the MCP tool `show_code`. */
 export interface CodeFocus {
   agentId: string
   filePath: string
@@ -369,33 +369,33 @@ export interface CodeFocus {
   at: number
 }
 
-/** Code-Block aus einer Antwort des Agents (aus dem Transkript), rechts mit Kopier-Button. */
+/** Code block from an agent reply (from the transcript), shown on the right with a copy button. */
 export interface CodeSnippet {
-  /** `<Nachrichten-uuid>-<n>` */
+  /** `<message-uuid>-<n>` */
   id: string
   agentId: string
-  /** Sprache aus dem Code-Zaun (```sql), klein geschrieben; '' = keine Angabe */
+  /** Language from the code fence (```sql), lowercase; '' = none given */
   language: string
   code: string
-  /** Zeitpunkt der Antwort (ms) */
+  /** Time of the reply (ms) */
   at: number
 }
 
-/** Zeilenbereich (1-basiert, inklusive) */
+/** Line range (1-based, inclusive) */
 export interface LineRange {
   start: number
   end: number
 }
 
-/** Vom Agent bearbeitete Datei (Edit/Write/MultiEdit), rechts als eigener Reiter. */
+/** File edited by the agent (Edit/Write/MultiEdit), shown on the right as its own tab. */
 export interface EditedFile {
   agentId: string
   filePath: string
-  /** Zeitpunkt der letzten Änderung (ms) */
+  /** Time of the last change (ms) */
   at: number
-  /** Geänderte Zeilen der letzten Änderung (leer = unbekannt bzw. neu angelegt) */
+  /** Changed lines of the last change (empty = unknown or newly created) */
   changedLines: LineRange[]
-  /** Letzte Änderung hat die Datei neu angelegt */
+  /** Last change created the file */
   created?: boolean
 }
 
@@ -410,10 +410,10 @@ export interface WhisperModelInfo {
 }
 
 export interface VoiceStatus {
-  /** whisper.cpp-Programm vorhanden */
+  /** whisper.cpp program present */
   engineInstalled: boolean
   models: WhisperModelInfo[]
-  /** Aktives, installiertes Modell – null = Sprachsteuerung noch nicht einsatzbereit */
+  /** Active, installed model – null = voice control not ready yet */
   activeModel: WhisperModelId | null
 }
 
@@ -425,7 +425,7 @@ export interface DownloadProgress {
 }
 
 export type VoiceCommandResult =
-  /** sent = false: nur ins Terminal eingetragen (Auto-Abschicken aus) */
+  /** sent = false: only typed into the terminal (auto-send off) */
   | { kind: 'sent'; agentName: string; message: string; sent: boolean }
   | {
       kind: 'started'
@@ -433,7 +433,7 @@ export type VoiceCommandResult =
       projectName: string
       task?: string
       model?: string
-      /** Name der verwendeten Vorlage */
+      /** Name of the template used */
       template?: string
     }
   | {
@@ -448,27 +448,27 @@ export type VoiceCommandResult =
 
 export interface Settings {
   voiceModel: WhisperModelId | null
-  /** Transkribierten Text direkt mit Enter abschicken */
+  /** Send transcribed text right away with Enter */
   voiceAutoSend: boolean
-  /** Kürzel (Electron-Accelerator, siehe shared/hotkeys.ts): Aufnahme für den aktiven Agent, nur in der App */
+  /** Shortcut (Electron accelerator, see shared/hotkeys.ts): recording for the active agent, in-app only */
   hotkeyAgentVoice: string
-  /** Kürzel: globaler Sprachbefehl, systemweit per globalShortcut */
+  /** Shortcut: global voice command, system-wide via globalShortcut */
   hotkeyGlobalVoice: string
-  /** Kürzel (in der App): Anweisung für den aktiven Agent im Editor-Tab schreiben */
+  /** Shortcut (in-app): write an instruction for the active agent in the editor tab */
   hotkeyEditor: string
-  /** Zusätzliche Start-Flags für alle Agents, z. B. `--permission-mode auto` (siehe shared/agentArgs.ts) */
+  /** Extra start flags for all agents, e.g. `--permission-mode auto` (see shared/agentArgs.ts) */
   agentArgs: string
-  /** Programm (Pfad zur .exe) für Projektdateien; leer = Windows-Standardprogramm der Dateiendung */
+  /** Program (path to the .exe) for project files; empty = Windows default program for the extension */
   projectFileApp: string
-  /** Programm (Pfad zur .exe) für Projektordner; leer = VS Code (falls installiert), sonst Explorer */
+  /** Program (path to the .exe) for project folders; empty = VS Code (if installed), otherwise Explorer */
   folderApp: string
-  /** Zuletzt erkannte Sprache merken und bei der nächsten Aufnahme zuerst vorgeben (schneller) */
+  /** Remember the last detected language and force it first on the next recording (faster) */
   voiceRememberLanguage: boolean
-  /** Gemerkte Sprache (whisper-Code, z. B. „de“), null = noch keine; Englisch wird nie gemerkt */
+  /** Remembered language (whisper code, e.g. "de"), null = none yet; English is never remembered */
   voiceLanguage: string | null
-  /** Feste Sprache der Spracheingabe (whisper-Code), null = automatisch erkennen */
+  /** Fixed language for voice input (whisper code), null = detect automatically */
   voiceFixedLanguage: string | null
-  /** Dateivorschau: vom aktiven Agent bearbeitete Dateien rechts als Reiter zeigen */
+  /** File preview: show files edited by the active agent as tabs on the right */
   showEditedFiles: boolean
   /** Windows-Benachrichtigung + Taskleisten-Blinken, wenn ein Agent wartet und DevHub im Hintergrund ist */
   notifyOnWaiting: boolean
@@ -490,17 +490,17 @@ export interface Settings {
 
 export interface TranscribeResult {
   text: string
-  /** Erkannte bzw. verwendete Sprache (whisper-Code) */
+  /** Detected or used language (whisper code) */
   language: string
-  /** true = gemerkte Sprache wurde übernommen (ohne automatische Erkennung) */
+  /** true = remembered language was used (without automatic detection) */
   remembered: boolean
 }
 
-/** Ansicht in der Mitte; wird gespeichert und beim App-Start wiederhergestellt. */
+/** View in the center; saved and restored on app start. */
 export type Selection =
   | { kind: 'agent'; agentId: string }
   | { kind: 'project'; projectId: string; activeAgentId?: string }
-  /** Frei zusammengestelltes Raster (Strg+Klick), auch projektübergreifend */
+  /** Freely assembled grid (Ctrl+click), also across projects */
   | { kind: 'agents'; agentIds: string[]; activeAgentId?: string }
   | null
 
@@ -520,25 +520,25 @@ export interface DevHubApi {
     list: () => Promise<Project[]>
     save: (input: ProjectInput) => Promise<Project>
     remove: (id: string) => Promise<void>
-    /** Neue Reihenfolge (Ids in Anzeigereihenfolge); liefert die sortierte Liste */
+    /** New order (ids in display order); returns the sorted list */
     reorder: (ids: string[]) => Promise<Project[]>
-    /** Ordnerauswahl mit Mehrfachauswahl (Strg+Klick) für den Import */
+    /** Folder picker with multi-select (Ctrl+click) for import */
     pickFolders: () => Promise<string[]>
-    /** Durchsucht Ordner nach Projekten (inkl. Unterordnern, Projektdatei-Suche) */
+    /** Scans folders for projects (incl. subfolders, project file search) */
     scan: (dirs: string[]) => Promise<ScannedProject[]>
     openProjectFile: (id: string) => Promise<void>
-    /** Ordner (Pfad 3) öffnen: Programm Projekt → global → VS Code → Explorer */
+    /** Open folder (path 3): program project → global → VS Code → Explorer */
     openFolder: (id: string) => Promise<void>
     pickFolder: (defaultPath?: string) => Promise<string | null>
     pickProjectFile: (defaultPath?: string) => Promise<string | null>
-    /** Sucht im Ordner (bis 3 Ebenen tief) nach einer .sln/.slnx; null, wenn keine. */
+    /** Searches the folder (up to 3 levels deep) for a .sln/.slnx; null if none. */
     findSolution: (dir: string) => Promise<string | null>
-    /** Dateiauswahl für ein Programm (.exe/.cmd/.bat) */
+    /** File picker for a program (.exe/.cmd/.bat) */
     pickProgram: (defaultPath?: string) => Promise<string | null>
   }
   agents: {
     list: () => Promise<Agent[]>
-    /** Stellt beim App-Start die Agents der letzten Sitzung wieder her. */
+    /** Restores the agents of the last session on app start. */
     restore: () => Promise<void>
     /** templateId: aus einer Vorlage starten; engineId: andere Engine als Claude Code */
     start: (projectId: string, options?: StartOptions) => Promise<Agent>
@@ -553,35 +553,35 @@ export interface DevHubApi {
     onFocusRequest: (cb: (agentId: string) => void) => Unsubscribe
     stop: (id: string) => Promise<void>
     rename: (id: string, name: string) => Promise<void>
-    /** Neue Reihenfolge einer Gruppe (Agents eines Projekts/Teams); andere bleiben stehen */
+    /** New order of a group (agents of a project/team); others stay in place */
     reorder: (ids: string[]) => Promise<void>
     write: (id: string, data: string) => void
-    /** Text als Anweisung senden (Text + Enter). */
+    /** Send text as an instruction (text + Enter). */
     sendLine: (id: string, text: string) => Promise<void>
-    /** Sprachtext je nach Einstellung (Agent, sonst global) abschicken oder nur eintragen; true = abgeschickt */
+    /** Send voice text or just type it in, depending on the setting (agent, else global); true = sent */
     sendVoice: (id: string, text: string) => Promise<boolean>
-    /** undefined = globale Einstellung verwenden */
+    /** undefined = use the global setting */
     setVoiceAutoSend: (id: string, value: boolean | undefined) => Promise<void>
     resize: (id: string, cols: number, rows: number) => void
-    /** Bisherige Terminal-Ausgabe (z. B. nach Neuladen der Oberfläche). */
+    /** Terminal output so far (e.g. after reloading the UI). */
     buffer: (id: string) => Promise<string>
     onData: (cb: (id: string, data: string) => void) => Unsubscribe
-    /** Agents und laufende Teams haben sich geändert */
+    /** Agents and running teams have changed */
     onChanged: (cb: (agents: Agent[], teams: Team[]) => void) => Unsubscribe
-    /** Agent hat sich direkt nach dem Start mit Fehler beendet (z. B. ungültiges Start-Flag) */
+    /** Agent exited with an error right after start (e.g. invalid start flag) */
     onStartFailed: (cb: (agentName: string, output: string) => void) => Unsubscribe
   }
   code: {
     readFile: (path: string) => Promise<FileReadResult>
     openInVSCode: (path: string, line: number) => Promise<void>
     onFocus: (cb: (focus: CodeFocus) => void) => Unsubscribe
-    /** Snippets aller laufenden Agents (neueste zuerst), z. B. nach Neuladen der Oberfläche */
+    /** Snippets of all running agents (newest first), e.g. after reloading the UI */
     snippets: () => Promise<Record<string, CodeSnippet[]>>
-    /** Snippet-Liste eines Agents hat sich geändert (vollständige Liste, neueste zuerst) */
+    /** An agent's snippet list has changed (full list, newest first) */
     onSnippets: (cb: (agentId: string, snippets: CodeSnippet[]) => void) => Unsubscribe
-    /** Bearbeitete Dateien aller laufenden Agents (Reihenfolge = erste Bearbeitung) */
+    /** Edited files of all running agents (order = first edit) */
     edits: () => Promise<Record<string, EditedFile[]>>
-    /** Liste der bearbeiteten Dateien eines Agents hat sich geändert (vollständig) */
+    /** An agent's list of edited files has changed (full list) */
     onEdits: (cb: (agentId: string, files: EditedFile[]) => void) => Unsubscribe
     /** Agent zeigt einen Plan/Text (MCP `show_plan`) */
     onPlan: (cb: (plan: CodePlan) => void) => Unsubscribe
@@ -663,21 +663,21 @@ export interface DevHubApi {
   }
   clipboard: {
     writeText: (text: string) => Promise<void>
-    /** Inhalt der Zwischenablage zum Einfügen ins Terminal: Text und ob ein Bild darin liegt */
+    /** Clipboard content for pasting into the terminal: text and whether it holds an image */
     read: () => Promise<{ text: string; hasImage: boolean }>
   }
-  /** Strg+G im Agent → Editor-Tab in der Mitte statt externem Editor */
+  /** Ctrl+G in the agent → editor tab in the center instead of an external editor */
   editor: {
-    /** Anfangstext eines offenen Editor-Tabs (null = keiner offen) */
+    /** Initial text of an open editor tab (null = none open) */
     text: (agentId: string) => Promise<string | null>
-    /** Tab schließen: text = neuer Prompt (null = unverändert), submit = danach abschicken */
+    /** Close tab: text = new prompt (null = unchanged), submit = send afterwards */
     finish: (agentId: string, text: string | null, submit: boolean) => Promise<void>
-    /** Bild (z. B. aus der Zwischenablage) speichern → Dateipfad */
+    /** Save an image (e.g. from the clipboard) → file path */
     saveImage: (agentId: string, ext: string, data: ArrayBuffer) => Promise<string>
     pickFiles: () => Promise<string[]>
-    /** data:-URL für die Vorschau oder null (kein Bild / zu groß) */
+    /** data: URL for the preview, or null (not an image / too large) */
     imagePreview: (path: string) => Promise<string | null>
-    /** Pfad einer per Drag & Drop abgelegten Datei */
+    /** Path of a file dropped via drag & drop */
     pathForFile: (file: File) => string
     onOpened: (cb: (agentId: string, text: string) => void) => Unsubscribe
     onAppend: (cb: (agentId: string, text: string) => void) => Unsubscribe
@@ -695,17 +695,17 @@ export interface DevHubApi {
   }
   settings: {
     get: () => Promise<Settings>
-    /** Wirft, wenn das globale Kürzel ungültig oder von einer anderen Anwendung belegt ist */
+    /** Throws if the global shortcut is invalid or taken by another application */
     update: (patch: Partial<Settings>) => Promise<Settings>
-    /** Globales Kürzel vorübergehend freigeben (während ein neues Kürzel aufgenommen wird) */
+    /** Temporarily release the global shortcut (while a new shortcut is being recorded) */
     suspendGlobalHotkey: (suspend: boolean) => Promise<void>
   }
   teams: {
-    /** Laufende Teams */
+    /** Running teams */
     list: () => Promise<Team[]>
-    /** Team aus einer Team-Vorlage für ein Projekt starten (Aufgabe geht an das erste Mitglied) */
+    /** Start a team from a team template for a project (task goes to the first member) */
     start: (projectId: string, teamTemplateId: string, task?: string) => Promise<Team>
-    /** Beendet alle Agents des Teams */
+    /** Stops all agents of the team */
     stop: (teamId: string) => Promise<void>
   }
   teamTemplates: {
@@ -715,12 +715,12 @@ export interface DevHubApi {
   }
   templates: {
     list: () => Promise<AgentTemplate[]>
-    /** Wirft bei leerem/doppeltem Namen oder ungültigem Modell */
+    /** Throws on empty/duplicate name or invalid model */
     save: (input: AgentTemplateInput) => Promise<AgentTemplate>
     remove: (id: string) => Promise<void>
   }
   view: {
-    /** Zuletzt gezeigte Ansicht (kann bereits beendete Agents enthalten) */
+    /** Last view shown (may contain agents that have already ended) */
     get: () => Promise<Selection>
     set: (selection: Selection) => Promise<void>
   }

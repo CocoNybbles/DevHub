@@ -8,9 +8,9 @@ import ProgramInput from './ProgramInput'
 
 interface Props {
   project: Project | null
-  /** Nur für die Anzeige des Standardprogramms für Ordner (VS Code oder Explorer) */
+  /** Only for displaying the default program for folders (VS Code or Explorer) */
   vscodeInstalled: boolean
-  /** Globale Programme aus den Einstellungen, '' = Standard */
+  /** Global programs from the settings, '' = default */
   globalProjectFileApp: string
   globalFolderApp: string
   onSaved: (p: Project) => void
@@ -23,7 +23,7 @@ const folderName = (path: string): string =>
     .split(/[\\/]/)
     .pop() ?? ''
 
-/** Projekt anlegen/bearbeiten mit den drei Pfaden. */
+/** Create/edit a project with its three paths. */
 function ProjectDialog({
   project,
   vscodeInstalled,
@@ -52,10 +52,10 @@ function ProjectDialog({
   const [error, setError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
 
-  /** Zuletzt automatisch eingetragene Projektmappe (darf bei Ordnerwechsel ersetzt werden). */
+  /** Solution most recently filled in automatically (may be replaced when the folder changes). */
   const [autoFile, setAutoFile] = useState<string | null>(null)
 
-  /** Sucht im Agent-Ordner nach einer .sln, solange keine Projektdatei von Hand gesetzt ist. */
+  /** Looks for a .sln in the agent folder as long as no project file was set by hand. */
   const detectSolution = async (dir: string): Promise<void> => {
     if (!dir.trim() || (projectFile && projectFile !== autoFile)) return
     const found = await window.api.projects.findSolution(dir.trim()).catch(() => null)

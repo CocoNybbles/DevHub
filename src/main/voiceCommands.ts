@@ -8,10 +8,10 @@ import { isValidModelName } from '../shared/agentArgs'
 import { routerPrompt } from './voicePrompt'
 
 /**
- * Globaler Sprachbefehl: Eine headless Claude-Instanz (`claude -p`, vorhandener Account)
- * ordnet den transkribierten Text einer Aktion zu:
- *   - Anweisung an einen bestehenden Agent (per Name)
- *   - neuen Agent für ein Projekt mit Aufgabe starten
+ * Global voice command: a headless Claude instance (`claude -p`, existing account)
+ * maps the transcribed text to an action:
+ *   - instruction to an existing agent (by name)
+ *   - start a new agent for a project with a task
  */
 
 type Decision =
@@ -21,7 +21,7 @@ type Decision =
       action: 'start_team'
       projectId: string
       teamTemplateId?: string
-      /** Vorlagen-IDs oder 'agent' (normaler Agent) */
+      /** Template IDs or 'agent' (normal agent) */
       members?: string[]
       teamName?: string
       task?: string
@@ -83,7 +83,7 @@ export async function runVoiceCommand(
       agentName: agent.name,
       projectName: project.name,
       task: decision.task || undefined,
-      // angezeigt wird das tatsächlich verwendete Modell (Sprache > Vorlage)
+      // show the model actually used (voice > template)
       model: model || template?.model,
       template: template?.name
     }
@@ -98,7 +98,7 @@ export async function runVoiceCommand(
     const teamTemplate = decision.teamTemplateId
       ? teamTemplates.find((t) => t.id === decision.teamTemplateId)
       : undefined
-    // Unbekannte IDs (Fehlzuordnung) → normaler Agent statt Abbruch
+    // Unknown IDs (mismatch) → normal agent instead of aborting
     const members = teamTemplate
       ? undefined
       : (decision.members ?? []).map((id) => ({
@@ -152,7 +152,7 @@ export async function askClaude(prompt: string): Promise<string> {
     'haiku',
     '--output-format',
     'json',
-    // Leerer Wert = alle Tools aus. Node quotet '' bei .exe selbst, für cmd.exe explizit
+    // Empty value = all tools off. Node quotes '' itself for .exe, explicitly for cmd.exe
     '--tools',
     isExe ? '' : '""',
     '--strict-mcp-config',

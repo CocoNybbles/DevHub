@@ -1,24 +1,24 @@
 import { MicIcon } from './Icons'
 
-/** Laufende Aufnahme (höchstens eine gleichzeitig). */
+/** Running recording (at most one at a time). */
 export interface VoiceRecording {
   target: 'agent' | 'global'
-  /** Bei target 'agent': für welchen Agent aufgenommen wird */
+  /** For target 'agent': which agent is being recorded for */
   agentId?: string
   label: string
   startedAt: number
 }
 
-/** Eine Aufnahme, die im Hintergrund erkannt/verarbeitet wird – mehrere gleichzeitig möglich. */
+/** A recording being recognized/processed in the background – several at once are possible. */
 export interface VoiceJob {
   id: number
   state: 'processing' | 'done' | 'error'
-  /** z. B. „Wandle in Text um …“ oder das Ergebnis */
+  /** e.g. "Wandle in Text um …" or the result */
   message: string
-  /** Wer angesprochen wurde („Agent 2“, „Sprachbefehl“) */
+  /** Who was addressed ("Agent 2", "Sprachbefehl") */
   target: string
   text?: string
-  /** Erkannte Sprache (whisper-Code, z. B. „de“) */
+  /** Detected language (whisper code, e.g. "de") */
   language?: string
 }
 
@@ -31,8 +31,8 @@ interface Props {
 }
 
 /**
- * Schwebende Anzeige unten in der Mitte: Aufnahme + Hintergrund-Aufträge.
- * Blockiert die App nicht – nur die Karten selbst sind klickbar.
+ * Floating display at the bottom center: recording + background jobs.
+ * Does not block the app – only the cards themselves are clickable.
  */
 function VoiceOverlay({
   recording,

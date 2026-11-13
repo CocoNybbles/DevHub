@@ -2,9 +2,9 @@ import { exec, spawn } from 'child_process'
 import type { ClaudeAuthState } from '../shared/types'
 
 /**
- * Führt die Claude-CLI über die Shell aus, weil `claude` unter Windows je nach
- * Installationsart eine .exe oder ein npm-Wrapper (.cmd) sein kann.
- * Nur mit festen, intern definierten Argumenten aufrufen (keine Nutzereingaben).
+ * Runs the Claude CLI via the shell, because on Windows `claude` can be an .exe or an
+ * npm wrapper (.cmd) depending on how it was installed.
+ * Only call with fixed, internally defined arguments (no user input).
  */
 function runClaude(
   args: string[],
@@ -49,7 +49,7 @@ export async function checkClaudeAuth(): Promise<ClaudeAuthState> {
   }
 }
 
-/** Öffnet ein sichtbares Konsolenfenster mit `claude auth login` (Login läuft über den Browser). */
+/** Opens a visible console window with `claude auth login` (login happens in the browser). */
 export function startClaudeLogin(): void {
   spawn('cmd.exe', ['/c', 'start', '"Claude Login"', 'cmd', '/k', 'claude auth login'], {
     detached: true,

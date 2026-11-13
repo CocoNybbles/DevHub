@@ -293,7 +293,8 @@ Typ in `DevHubApi` (`shared/types.ts`). Alle drei immer zusammen anpassen. Ereig
 
 - Umgebung: Windows 11, PowerShell / Git Bash
 - Vorhanden: Node 26, npm 11, .NET 10, Claude Code 2.1 (am 2026-11-13: npm-Installation `%APPDATA%\npm\claude.cmd`, kein `claude.exe` im PATH), Git, VS Code, Visual Studio 2022 Community (ohne C++-Buildtools)
-- Code-Kommentare und UI-Texte auf Deutsch; Prompts/Tool-Beschreibungen für Claude auf Englisch
+- **Sprache im Quellcode: Englisch** (Open-Source-Projekt): Code-Kommentare (inkl. JSDoc, CSS/YAML/HTML-Kommentare), Bezeichner, Prompts/Tool-Beschreibungen für Claude. Neue und geänderte Kommentare immer auf Englisch schreiben.
+  - Ausnahme vorerst: **UI-Texte bleiben Deutsch** (Oberfläche ist deutschsprachig, noch keine Mehrsprachigkeit)
 
 ## Bekannte Stolpersteine
 

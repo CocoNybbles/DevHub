@@ -5,7 +5,7 @@ import Workspace from './Workspace'
 
 export type { Selection } from '../../shared/types'
 
-/** Einstieg: erst Claude-Login prüfen, dann den Arbeitsbereich zeigen. */
+/** Entry point: check the Claude login first, then show the workspace. */
 function App(): React.JSX.Element {
   const [auth, setAuth] = useState<ClaudeAuthState | null>(null)
   const [checking, setChecking] = useState(false)
@@ -24,7 +24,7 @@ function App(): React.JSX.Element {
     setChecking(false)
   }, [fetchAuth])
 
-  // Prüfung beim App-Start
+  // Check on app start
   useEffect(() => {
     fetchAuth().then(setAuth)
   }, [fetchAuth])

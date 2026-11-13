@@ -1,12 +1,12 @@
-// Neues Release – nur von Hand: `npm run release -- <notizen.md> [x.y.z]`
+// New release – manual only: `npm run release -- <notes.md> [x.y.z]`
 //
-// 1. Version: Patch +1 gegenüber package.json (oder die angegebene x.y.z, z. B. für 1.1.0)
-// 2. package.json/-lock auf die neue Version setzen und ZIP bauen (`npm run build:win`)
-// 3. Commit „Version x.y.z“ + Tag vX.Y.Z, beides pushen
-// 4. GitHub-Release zu diesem Tag anlegen (Notizen aus der Datei) + ZIP hochladen
+// 1. Version: patch +1 over package.json (or the given x.y.z, e.g. for 1.1.0)
+// 2. Set package.json/-lock to the new version and build the ZIP (`npm run build:win`)
+// 3. Commit "Version x.y.z" + tag vX.Y.Z, push both
+// 4. Create the GitHub release for this tag (notes from the file) + upload the ZIP
 //
-// GitHub-Anmeldung: die bei Git gespeicherte (Git Credential Manager), wird nicht ausgegeben.
-/* eslint-disable @typescript-eslint/explicit-function-return-type -- reines JS-Skript */
+// GitHub login: the one stored with Git (Git Credential Manager), never printed.
+/* eslint-disable @typescript-eslint/explicit-function-return-type -- plain JS script */
 import { execSync } from 'child_process'
 import { existsSync, readFileSync, statSync } from 'fs'
 import { basename } from 'path'
@@ -27,7 +27,7 @@ if (!notesFile || !existsSync(notesFile)) {
 const notes = readFileSync(notesFile, 'utf8').trim()
 if (!notes) fail('Die Notizen-Datei ist leer')
 
-// --- Vorbedingungen
+// --- Preconditions
 if (out('git rev-parse --abbrev-ref HEAD') !== 'main') fail('Nur vom Branch main aus')
 if (out('git status --porcelain')) fail('Es gibt nicht committete Änderungen – erst committen')
 run('git fetch -q origin main --tags')
@@ -61,7 +61,7 @@ const existing = await fetch(`https://api.github.com/repos/${RELEASE_REPO}/relea
 })
 if (existing.ok) fail(`Release ${tag} gibt es in ${RELEASE_REPO} schon`)
 
-// --- Bauen (bei Fehler Version zurücksetzen)
+// --- Build (reset the version on failure)
 run(`npm version ${version} --no-git-tag-version`)
 try {
   run('npm run build:win')
@@ -75,13 +75,13 @@ if (!existsSync(zip)) {
   fail(`${zip} wurde nicht gebaut – Version zurückgesetzt`)
 }
 
-// --- Version festhalten: Commit + Tag (das Release zeigt auf genau diesen Stand)
+// --- Record the version: commit + tag (the release points to exactly this state)
 run('git add package.json package-lock.json')
 run(`git commit -q -m "Version ${version}"`)
 run(`git tag ${tag}`)
 run(`git push -q origin main ${tag}`)
 
-// --- Veröffentlichen
+// --- Publish
 const res = await fetch(`https://api.github.com/repos/${RELEASE_REPO}/releases`, {
   method: 'POST',
   headers,

@@ -3,16 +3,16 @@ import { randomBytes } from 'crypto'
 import type { AddressInfo } from 'net'
 
 /**
- * Lokaler HTTP-Server (nur 127.0.0.1) als Rückkanal von den Agents zur App:
- *  - POST /hook/<token>/<agentId>  → Claude-Code-Hooks (per curl, Hook-JSON im Body)
- *  - POST /editor/<token>/<agentId> → Strg+G-Editor (Body = Pfad der Prompt-Datei, bleibt offen)
- *  - POST /permission/<token>/<agentId> → PermissionRequest-Hook eines Team-Workers: bleibt offen,
- *                                    bis der Orchestrator entschieden hat; Antwort = Hook-JSON
- *  - POST /mcp/<token>/<agentId>   → minimaler MCP-Server (Streamable HTTP, JSON-Antworten)
- *                                    mit `show_code` und – nur für Teammitglieder –
- *                                    `team_members` / `send_team_message`, für den Orchestrator
- *                                    zusätzlich `answer_permission`
- * Das zufällige Token verhindert, dass andere lokale Prozesse Ereignisse einschleusen.
+ * Local HTTP server (127.0.0.1 only) as the back channel from the agents to the app:
+ *  - POST /hook/<token>/<agentId>  → Claude Code hooks (via curl, hook JSON in the body)
+ *  - POST /editor/<token>/<agentId> → Ctrl+G editor (body = path of the prompt file, stays open)
+ *  - POST /permission/<token>/<agentId> → PermissionRequest hook of a team worker: stays open
+ *                                    until the orchestrator has decided; response = hook JSON
+ *  - POST /mcp/<token>/<agentId>   → minimal MCP server (Streamable HTTP, JSON responses)
+ *                                    with `show_code` and – for team members only –
+ *                                    `team_members` / `send_team_message`, plus
+ *                                    `answer_permission` for the orchestrator
+ * The random token prevents other local processes from injecting events.
  */
 
 export interface HookEvent {
@@ -31,7 +31,7 @@ export interface ShowCodeArgs {
 }
 
 export interface TeamMessageArgs {
-  /** Name eines Teammitglieds oder "all" */
+  /** Name of a team member, or "all" */
   to: string
   message: string
 }
@@ -69,20 +69,20 @@ export const COMMON_TOOLS: ToolName[] = [
   'run_stop'
 ]
 
-/** Entscheidung über eine Rechte-Abfrage eines Workers (null = keine, z. B. Agent beendet) */
+/** Decision on a worker's permission request (null = none, e.g. agent exited) */
 export type PermissionDecision = { behavior: 'allow' } | { behavior: 'deny'; message: string }
 
 export interface BridgeHandlers {
   onHook: (agentId: string, event: HookEvent) => void
-  /** Welche Tools der Agent sieht (Team-Tools nur für Teammitglieder) */
+  /** Which tools the agent sees (team tools only for team members) */
   tools: (agentId: string) => ToolName[]
-  /** Liefert den Antworttext an den Agent; Fehler werden als Tool-Fehler gemeldet */
+  /** Returns the response text for the agent; errors are reported as tool errors */
   onToolCall: (agentId: string, name: ToolName, args: Record<string, unknown>) => Promise<string>
-  /** Strg+G: Prompt-Datei im Editor-Tab bearbeiten; erfüllt, sobald der Tab geschlossen ist */
+  /** Ctrl+G: edit the prompt file in the editor tab; resolves once the tab is closed */
   onEditor: (agentId: string, filePath: string) => Promise<void>
-  /** Editor-Anfrage abgebrochen (z. B. Agent beendet) */
+  /** Editor request aborted (e.g. agent exited) */
   onEditorAbort: (agentId: string) => void
-  /** PermissionRequest eines Workers; erfüllt, sobald der Orchestrator entschieden hat */
+  /** A worker's PermissionRequest; resolves once the orchestrator has decided */
   onPermission: (
     agentId: string,
     event: HookEvent,
@@ -302,7 +302,7 @@ export class AgentBridge {
 
   async start(): Promise<void> {
     this.server = createServer((req, res) => this.handle(req, res))
-    // Editor-Anfragen bleiben beliebig lange offen
+    // Editor requests stay open indefinitely
     this.server.requestTimeout = 0
     this.server.timeout = 0
     await new Promise<void>((resolve) => this.server!.listen(0, '127.0.0.1', resolve))
@@ -385,11 +385,11 @@ export class AgentBridge {
       return
     }
 
-    // Strg+G im Agent: claude startet $EDITOR = curl mit dem Pfad der Prompt-Datei als Body.
-    // Die Anfrage bleibt offen, bis der Editor-Tab geschlossen wird – so lange wartet claude.
+    // Ctrl+G in the agent: claude runs $EDITOR = curl with the prompt file path as the body.
+    // The request stays open until the editor tab is closed – claude waits that long.
     if (kind === 'editor' && req.method === 'POST') {
       const filePath = (await readBody(req)).trim()
-      // Verbindung bricht ab (Agent beendet, curl abgebrochen) → Editor-Tab schließen
+      // Connection drops (agent exited, curl aborted) → close the editor tab
       res.on('close', () => {
         if (!res.writableEnded) this.handlers.onEditorAbort(agentId)
       })

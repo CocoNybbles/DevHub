@@ -22,20 +22,20 @@ export type PersistedAgent = Omit<
   'status' | 'statusMessage' | 'editing' | 'activity' | 'progress' | 'usage' | 'lastMessage'
 > & { needsInput?: string }
 
-/** Persistierter Zustand: Projekte, (zuletzt laufende) Agents, Einstellungen. */
+/** Persisted state: projects, (last running) agents, settings. */
 interface PersistedState {
   projects: Project[]
   agents: PersistedAgent[]
   settings: Settings
-  /** Zuletzt gezeigte Ansicht in der Mitte */
+  /** Last view shown in the center */
   view: Selection
-  /** Vordefinierte Agents (Vorlagen) */
+  /** Predefined agents (templates) */
   templates: AgentTemplate[]
-  /** Fest definierte Teams */
+  /** Predefined teams */
   teamTemplates: TeamTemplate[]
-  /** Laufende Teams (werden mit ihren Agents wiederhergestellt, leere werden entfernt) */
+  /** Running teams (restored with their agents, empty ones are removed) */
   teams: Team[]
-  /** Zuletzt in der Ordnerauswahl benutzter Ort (übergeordneter Ordner der Wahl) */
+  /** Location last used in the folder picker (parent folder of the choice) */
   lastPickDir?: string
   /** Aufgaben-Board */
   tasks: Task[]
@@ -98,13 +98,13 @@ export function getState(): PersistedState {
   try {
     const file = stateFile()
     const loaded = existsSync(file) ? JSON.parse(readFileSync(file, 'utf8')) : {}
-    // Kopie der Standardwerte: fehlende Listen dürfen DEFAULT_STATE nicht teilen (push!)
+    // Copy of the defaults: missing lists must not share DEFAULT_STATE (push!)
     state = {
       ...structuredClone(DEFAULT_STATE),
       ...loaded,
       settings: { ...DEFAULT_STATE.settings, ...(loaded.settings ?? {}) }
     }
-    // Ältere Stände: Pfad 3 hieß `vscodePath`
+    // Older states: path 3 was called `vscodePath`
     for (const p of state!.projects as (Project & { vscodePath?: string })[]) {
       if (p.vscodePath !== undefined) {
         p.folderPath ??= p.vscodePath
@@ -119,9 +119,9 @@ export function getState(): PersistedState {
 }
 
 /**
- * Ordnet die Einträge mit den Ids `ids` in dieser Reihenfolge an. Sie nehmen die Plätze ein,
- * die sie bisher in der Liste belegt haben; alle anderen Einträge bleiben, wo sie sind.
- * So lässt sich auch nur eine Gruppe (z. B. die Agents eines Teams) umsortieren.
+ * Arranges the entries with the ids `ids` in this order. They take the slots they
+ * previously occupied in the list; all other entries stay where they are.
+ * This also allows reordering just one group (e.g. the agents of a team).
  */
 export function applyOrder<T extends { id: string }>(list: T[], ids: string[]): T[] {
   const byId = new Map(list.map((x) => [x.id, x]))
@@ -131,7 +131,7 @@ export function applyOrder<T extends { id: string }>(list: T[], ids: string[]): 
   return list.map((x) => (moved.has(x.id) ? ordered[i++] : x))
 }
 
-/** Ändert den Zustand und schreibt ihn sofort (atomar über Temp-Datei). */
+/** Updates the state and writes it immediately (atomically via a temp file). */
 export function updateState(mutator: (s: PersistedState) => void): void {
   const s = getState()
   mutator(s)

@@ -49,7 +49,7 @@ import {
 } from './git'
 import { describeTool, matchesRule, ruleFor } from '../shared/permissions'
 
-/** Wird jedem Agent per --append-system-prompt mitgegeben. */
+/** Passed to every agent via --append-system-prompt. */
 const SYSTEM_HINT =
   'You are running inside DevHub, a desktop app that shows your terminal next to a code panel. ' +
   'Whenever you analyze code, investigate a problem or find a bug, call the `show_code` tool of the ' +
@@ -62,9 +62,9 @@ const SYSTEM_HINT =
   'output over starting the same long-running process yourself).'
 
 const MAX_BUFFER = 200_000
-/** Endet ein Agent so schnell mit Fehler, war der Start kaputt (z. B. unbekanntes Start-Flag). */
+/** If an agent fails this quickly, the start itself was broken (e.g. unknown start flag). */
 const EARLY_EXIT_MS = 8000
-/** Obergrenze für Teamgröße (jeder Agent ist ein eigener claude-Prozess) */
+/** Upper limit for team size (each agent is its own claude process) */
 const MAX_TEAM_SIZE = 8
 
 interface RunningAgent {
@@ -72,17 +72,17 @@ interface RunningAgent {
   proc: pty.IPty
   buffer: string
   startedAt: number
-  /** Über die Liste/App beendet (kein Startfehler) */
+  /** Stopped via the list/app (not a start failure) */
   stopping: boolean
-  /** Team-Nachrichten, die vor der ersten Ausgabe ankamen (TUI noch nicht bereit) */
+  /** Team messages that arrived before the first output (TUI not ready yet) */
   pending: string[]
-  /** Transkript der Session (Pfad aus den Hook-Ereignissen), Quelle der Snippets */
+  /** Session transcript (path from the hook events), source of the snippets */
   transcript?: TranscriptReader
-  /** Code-Blöcke aus den Antworten, neueste zuerst */
+  /** Code blocks from the responses, newest first */
   snippets: CodeSnippet[]
-  /** Vom Agent bearbeitete Dateien (Reihenfolge = erste Bearbeitung) */
+  /** Files edited by the agent (order = first edit) */
   edits: EditedFile[]
-  /** Worker: hat seit dem letzten Prompt dem Orchestrator berichtet */
+  /** Worker: has reported to the orchestrator since the last prompt */
   reported: boolean
   /** Arbeitsverzeichnis (Agent-Ordner oder Worktree) */
   cwd: string
@@ -134,18 +134,18 @@ const QUIET_MS = 2500
 
 /** Name des automatisch gestarteten Orchestrators („Orchestrator“, „Orchestrator 2“ …) */
 const ORCHESTRATOR_NAME = 'Orchestrator'
-/** Statustext eines Workers, solange seine Rechte-Abfrage offen ist */
+/** Status text of a worker while its permission request is open */
 const WAITING_FOR_PERMISSION = 'Wartet auf Freigabe durch den Orchestrator'
 
 export interface StartTeamOptions {
-  /** Team-Vorlage – oder freie Mitgliederliste (temporäres Team) */
+  /** Team template – or a free member list (temporary team) */
   teamTemplateId?: string
   members?: TeamMember[]
-  /** Name für temporäre Teams; Standard „Team N“ */
+  /** Name for temporary teams; defaults to "Team N" */
   name?: string
-  /** Aufgabe für den Orchestrator */
+  /** Task for the orchestrator */
   task?: string
-  /** Modell für alle Mitglieder (per Sprache genannt), hat Vorrang vor den Vorlagen */
+  /** Model for all members (named by voice), takes precedence over the templates */
   model?: string
 }
 
@@ -153,15 +153,15 @@ export interface AgentEvents {
   onData: (id: string, data: string) => void
   onChanged: (agents: Agent[], teams: Team[]) => void
   onCodeFocus: (focus: CodeFocus) => void
-  /** Snippet-Liste eines Agents hat sich geändert (vollständig, neueste zuerst) */
+  /** An agent's snippet list has changed (complete, newest first) */
   onSnippets: (agentId: string, snippets: CodeSnippet[]) => void
-  /** Liste der bearbeiteten Dateien eines Agents hat sich geändert (vollständig) */
+  /** An agent's list of edited files has changed (complete) */
   onEdits: (agentId: string, files: EditedFile[]) => void
-  /** Agent hat sich direkt nach dem Start mit Fehler beendet */
+  /** Agent exited with an error right after starting */
   onStartFailed: (agentName: string, output: string) => void
-  /** Strg+G: Editor-Tab öffnen, vorbelegt mit dem bisherigen Prompt */
+  /** Ctrl+G: open the editor tab, prefilled with the current prompt */
   onEditorOpened: (agentId: string, text: string) => void
-  /** Text (z. B. Sprachbefehl) an den offenen Editor-Tab anhängen statt ans Terminal */
+  /** Append text (e.g. a voice command) to the open editor tab instead of the terminal */
   onEditorAppend: (agentId: string, text: string) => void
   /** Offene Freigaben für den Eingang des Nutzers haben sich geändert */
   onPermissions: (list: PermissionInfo[]) => void
@@ -199,19 +199,19 @@ export interface StartExtra {
   noWorktree?: boolean
 }
 
-/** Offene Strg+G-Bearbeitung: claude wartet, bis `done` aufgerufen wird */
+/** Open Ctrl+G edit: claude waits until `done` is called */
 interface EditorSession {
   filePath: string
   text: string
   done: () => void
 }
 
-/** Name des Strg+G-„Editors“ (Wrapper-Skript); muss „notepad“ enthalten, s. writeAgentConfig */
+/** Name of the Ctrl+G "editor" (wrapper script); must contain "notepad", see writeAgentConfig */
 const EDITOR_NAME = 'devhub-notepad'
 
-/** Wartezeit nach dem Schließen des Editors, bis claude den Prompt neu geladen hat */
+/** Delay after closing the editor until claude has reloaded the prompt */
 const EDITOR_RELOAD_MS = 500
-/** So lange wartet ein Worker höchstens auf die Entscheidung des Orchestrators (Sekunden) */
+/** Maximum time a worker waits for the orchestrator's decision (seconds) */
 const PERMISSION_TIMEOUT_S = 24 * 60 * 60
 /** Stop-Hook: Zeit für alle Prüfbefehle zusammen (Sekunden) */
 const STOP_TIMEOUT_S = 60 * 60
@@ -222,7 +222,7 @@ export class AgentManager {
   private running = new Map<string, RunningAgent>()
   private bridge: AgentBridge
   private quitting = false
-  /** Wiederherstellung nur einmal pro App-Start */
+  /** Restore only once per app start */
   private restored = false
   private editors = new Map<string, EditorSession>()
   private permissions = new Map<number, PermissionRequest>()
@@ -253,13 +253,13 @@ export class AgentManager {
     }, 5000).unref()
   }
 
-  // ------------------------------------------------------------ Strg+G-Editor-Tab
+  // ------------------------------------------------------------ Ctrl+G editor tab
 
-  /** claude hat für die Prompt-Datei den „Editor“ gestartet → Tab öffnen, warten bis er schließt. */
+  /** claude has launched the "editor" for the prompt file → open the tab, wait until it closes. */
   private openEditor(agentId: string, filePath: string): Promise<void> {
     const r = this.running.get(agentId)
     if (!r || !filePath || !existsSync(filePath)) return Promise.resolve()
-    this.editors.get(agentId)?.done() // Vorherige (hängende) Sitzung freigeben
+    this.editors.get(agentId)?.done() // Release the previous (hanging) session
     const text = readFileSync(filePath, 'utf8')
     return new Promise((done) => {
       this.editors.set(agentId, { filePath, text, done })
@@ -269,14 +269,14 @@ export class AgentManager {
     })
   }
 
-  /** Anfangstext eines offenen Editor-Tabs (z. B. nach Neuladen der Oberfläche) */
+  /** Initial text of an open editor tab (e.g. after reloading the UI) */
   editorText(agentId: string): string | null {
     return this.editors.get(agentId)?.text ?? null
   }
 
   /**
-   * Editor-Tab schließen. `text`: neuer Prompt (null = unverändert lassen);
-   * `submit`: danach abschicken. Erst dann ist der Agent wieder bedienbar.
+   * Close the editor tab. `text`: new prompt (null = leave unchanged);
+   * `submit`: submit it afterwards. Only then is the agent usable again.
    */
   finishEditor(agentId: string, text: string | null, submit: boolean): void {
     const s = this.editors.get(agentId)
@@ -287,12 +287,12 @@ export class AgentManager {
     if (!r) return
     setTimeout(() => {
       if (submit && this.running.get(agentId) === r) r.proc.write('\r')
-      // Währenddessen angekommene Team-Nachrichten nachreichen
+      // Deliver team messages that arrived in the meantime
       setTimeout(() => this.flushPending(agentId), submit ? 1000 : 0)
     }, EDITOR_RELOAD_MS)
   }
 
-  /** Editor-Sitzung beenden (claude bekommt die Antwort, liest die Datei neu ein). */
+  /** End the editor session (claude gets the response and rereads the file). */
   private closeEditor(agentId: string): void {
     const s = this.editors.get(agentId)
     if (!s) return
@@ -303,7 +303,7 @@ export class AgentManager {
     this.emitChanged()
   }
 
-  /** Bild aus der Zwischenablage für den Prompt speichern; liefert den Pfad */
+  /** Save a clipboard image for the prompt; returns the path */
   saveEditorImage(agentId: string, ext: string, data: ArrayBuffer): string {
     if (!this.running.has(agentId)) throw new Error('Agent läuft nicht mehr')
     const safeExt = /^[a-z0-9]{1,5}$/i.test(ext) ? ext.toLowerCase() : 'png'
@@ -320,20 +320,20 @@ export class AgentManager {
     return this.bridge.start()
   }
 
-  /** Laufende Agents in der gespeicherten Reihenfolge (vom Nutzer per Drag & Drop festgelegt). */
+  /** Running agents in the saved order (set by the user via drag & drop). */
   list(): Agent[] {
     const order = new Map(getState().agents.map((a, i) => [a.id, i]))
     const pos = (id: string): number => order.get(id) ?? Number.MAX_SAFE_INTEGER
     return [...this.running.values()].map((r) => r.agent).sort((a, b) => pos(a.id) - pos(b.id))
   }
 
-  /** Neue Reihenfolge für eine Gruppe von Agents (Projekt oder Team); andere bleiben stehen. */
+  /** New order for a group of agents (project or team); all others keep their place. */
   reorder(ids: string[]): void {
     updateState((s) => (s.agents = applyOrder(s.agents, ids)))
     this.emitChanged()
   }
 
-  /** Laufende Teams */
+  /** Running teams */
   teams(): Team[] {
     return getState().teams
   }
@@ -342,7 +342,7 @@ export class AgentManager {
     return this.running.get(id)?.buffer ?? ''
   }
 
-  /** Startet alle Agents, die beim letzten Beenden der App noch liefen. */
+  /** Starts all agents that were still running when the app was last closed. */
   async restore(): Promise<void> {
     if (this.restored) return
     this.restored = true
@@ -351,7 +351,7 @@ export class AgentManager {
       if (this.running.has(saved.id)) continue
       if (!projects.has(saved.projectId)) continue
       try {
-        // Wartete der Agent beim Beenden auf Eingabe, bleibt er hervorgehoben, bis er weiterarbeitet
+        // If the agent was waiting for input at shutdown, it stays highlighted until it continues
         const { needsInput, ...agent } = saved
         await this.spawn(
           needsInput !== undefined
@@ -369,10 +369,10 @@ export class AgentManager {
   }
 
   /**
-   * Startet ein Team: automatisch einen Orchestrator + die Mitglieder als Worker, alle mit
-   * gemeinsamer teamId. Erst werden alle Agents gespeichert (Namen reserviert, jeder kennt beim Start
-   * seine Kollegen), dann gestartet. Die Aufgabe bekommt der Orchestrator, der sie verteilt; Worker
-   * sind für den Nutzer nur beobachtbar.
+   * Starts a team: an automatic orchestrator + the members as workers, all sharing one
+   * teamId. All agents are saved first (names reserved, each knows its teammates at start),
+   * then started. The orchestrator gets the task and distributes it; workers can only be
+   * observed by the user.
    */
   async startTeam(projectId: string, opts: StartTeamOptions): Promise<Team> {
     const state = getState()
@@ -404,7 +404,7 @@ export class AgentManager {
     updateState((s) => s.teams.push(team))
 
     const agents: Agent[] = []
-    // Fortlaufende Zeitstempel: Reihenfolge bleibt eindeutig, auch nach Neustart
+    // Consecutive timestamps: order stays unambiguous, even after a restart
     const base = Date.now()
     const orchestrator: Agent = {
       id: randomUUID(),
@@ -446,7 +446,7 @@ export class AgentManager {
       } catch (e) {
         failures.push(`${agent.name}: ${e instanceof Error ? e.message : String(e)}`)
         updateState((s) => (s.agents = s.agents.filter((a) => a.id !== agent.id)))
-        // Ohne Orchestrator ist das Team nicht steuerbar → ganz abbrechen
+        // Without an orchestrator the team cannot be controlled → abort entirely
         if (agent === orchestrator) {
           const ids = new Set(agents.map((a) => a.id))
           updateState((s) => (s.agents = s.agents.filter((a) => !ids.has(a.id))))
@@ -458,7 +458,7 @@ export class AgentManager {
     }
     this.removeEmptyTeams()
     this.emitChanged()
-    // Kein einziger Worker läuft → Orchestrator allein ist sinnlos
+    // Not a single worker is running → an orchestrator alone is pointless
     if (failures.length === agents.length - 1) {
       this.stopTeam(team.id)
       throw new Error(failures.join('\n'))
@@ -466,14 +466,14 @@ export class AgentManager {
     return team
   }
 
-  /** Beendet alle Agents eines Teams (das Team verschwindet mit dem letzten Agent). */
+  /** Stops all agents of a team (the team disappears with its last agent). */
   stopTeam(teamId: string): void {
     for (const a of getState().agents.filter((x) => x.teamId === teamId)) this.kill(a.id)
   }
 
   /**
-   * model: überschreibt `--model` aus Vorlage und Start-Flags (z. B. per Sprachbefehl genannt).
-   * templateId: Vorlage → Name „<Vorlage>“ / „<Vorlage> 2“ …, Modell und Anweisung der Vorlage.
+   * model: overrides `--model` from the template and start flags (e.g. named via voice command).
+   * templateId: template → name "<template>" / "<template> 2" …, the template's model and instructions.
    */
   async start(
     projectId: string,
@@ -509,7 +509,7 @@ export class AgentManager {
       worktree: extra.worktree,
       currentTaskId: extra.taskId
     }
-    // Erst speichern (reserviert den Namen), dann starten
+    // Save first (reserves the name), then start
     updateState((s) => s.agents.push(persisted(agent)))
     try {
       if (!extra.noWorktree) await this.prepareWorktree(agent, project)
@@ -614,7 +614,7 @@ export class AgentManager {
     this.emitChanged()
   }
 
-  /** Sprach-Abschicken pro Agent: true/false überschreibt die globale Einstellung, undefined = global. */
+  /** Voice auto-send per agent: true/false overrides the global setting, undefined = global. */
   setVoiceAutoSend(id: string, value: boolean | undefined): void {
     const r = this.running.get(id)
     if (!r) return
@@ -626,11 +626,11 @@ export class AgentManager {
     this.emitChanged()
   }
 
-  /** Erkannten Sprachtext an den Agent geben – abschicken oder nur eintragen. true = abgeschickt. */
+  /** Pass recognized speech text to the agent – submit it or just type it in. true = submitted. */
   async sendVoice(id: string, text: string): Promise<boolean> {
     let r = this.running.get(id)
     if (!r) throw new Error('Agent läuft nicht mehr')
-    // Worker sind nur beobachtbar → Anweisung geht an ihren Orchestrator
+    // Workers can only be observed → the instruction goes to their orchestrator
     if (isTeamWorker(r.agent)) {
       const lead = this.leadOf(r.agent)
       if (!lead) throw new Error(`${r.agent.name} hat keinen laufenden Orchestrator`)
@@ -638,7 +638,7 @@ export class AgentManager {
       r = lead
       id = lead.agent.id
     }
-    // Editor-Tab offen: Text dort einfügen (Agent selbst ist gesperrt)
+    // Editor tab open: insert the text there (the agent itself is locked)
     if (r.agent.editing) {
       this.events.onEditorAppend(id, text)
       return false
@@ -649,7 +649,7 @@ export class AgentManager {
     return autoSend
   }
 
-  /** Tastatureingaben aus dem Terminal; Editor-Tab offen oder Worker → gesperrt */
+  /** Keyboard input from the terminal; editor tab open or worker → locked */
   write(id: string, data: string): void {
     const r = this.running.get(id)
     if (!r || r.agent.editing || isTeamWorker(r.agent)) return
@@ -662,7 +662,7 @@ export class AgentManager {
     r.proc.write(data)
   }
 
-  /** Zeile vom Nutzer (z. B. `/clear`) – nicht an Worker, die sind nur beobachtbar. */
+  /** Line from the user (e.g. `/clear`) – not to workers, they can only be observed. */
   async sendLine(id: string, text: string): Promise<void> {
     const a = this.running.get(id)?.agent
     if (a && isTeamWorker(a)) {
@@ -673,7 +673,7 @@ export class AgentManager {
     return this.typeLine(id, text)
   }
 
-  /** Schreibt Text und schickt ihn ab. Enter separat, damit die TUI ihn nicht als Teil eines Paste behandelt. */
+  /** Types text and submits it. Enter is sent separately so the TUI does not treat it as part of a paste. */
   private async typeLine(id: string, text: string): Promise<void> {
     const r = this.running.get(id)
     if (!r) throw new Error('Agent läuft nicht')
@@ -688,18 +688,18 @@ export class AgentManager {
     try {
       this.running.get(id)?.proc.resize(Math.floor(cols), Math.floor(rows))
     } catch {
-      // Prozess bereits beendet
+      // Process already exited
     }
   }
 
-  /** Beim Beenden der App: Prozesse stoppen, gespeicherte Agents aber behalten (Wiederherstellung). */
+  /** On app quit: stop the processes but keep the saved agents (for restore). */
   shutdown(): void {
     this.quitting = true
     for (const r of this.running.values()) {
       try {
         r.proc.kill()
       } catch {
-        // ignorieren
+        // ignore
       }
     }
     this.running.clear()
@@ -733,14 +733,14 @@ export class AgentManager {
     if (!claude) throw new Error('Claude Code wurde nicht gefunden')
 
     const { settingsFile, mcpFile, binDir } = this.writeAgentConfig(agent)
-    // Vorlage bei jedem Start frisch lesen → Änderungen wirken auch bei Wiederherstellung
+    // Read the template fresh on every start → changes also apply on restore
     const template = agent.templateId
       ? getState().templates.find((t) => t.id === agent.templateId)
       : undefined
-    // Modell: per Sprache genannt > Vorlage > Start-Flags (Projekt > global)
+    // Model: named by voice > template > start flags (project > global)
     const model = agent.model || template?.model
-    // Nutzer-Flags zuerst: so beendet ein DevHub-Flag evtl. variadische Werte (z. B. --allowedTools a b),
-    // und vor der Aufgabe steht immer --append-system-prompt <wert> (Aufgabe bleibt positional)
+    // User flags first: a DevHub flag then terminates any variadic values (e.g. --allowedTools a b),
+    // and the task is always preceded by --append-system-prompt <value> (task stays positional)
     const args = mergeAgentArgs(
       getState().settings.agentArgs,
       project.agentArgs,
@@ -758,8 +758,8 @@ export class AgentManager {
     )
     if (task) args.push(task)
 
-    // claude.exe direkt starten; ein .cmd-Wrapper braucht cmd.exe (dort keine Sonderzeichen und
-    // keine Zeilenumbrüche erlaubt)
+    // Start claude.exe directly; a .cmd wrapper needs cmd.exe (no special characters and
+    // no line breaks allowed there)
     const isExe = claude.toLowerCase().endsWith('.exe')
     const file = isExe ? claude : 'cmd.exe'
     const argv = isExe
@@ -770,9 +770,9 @@ export class AgentManager {
           ...args.map((a) => a.replace(/["%^&|<>]/g, ' ').replace(/\s*\r?\n\s*/g, ' '))
         ]
 
-    // Strg+G („im Editor bearbeiten“): claude ruft `$EDITOR "<prompt-datei>"` per cmd auf und
-    // wartet. EDITOR ist der Wrapper aus writeAgentConfig, gefunden über PATH (Pfad ohne
-    // Leerzeichen-Probleme: claude trennt EDITOR an Leerzeichen).
+    // Ctrl+G ("edit in editor"): claude runs `$EDITOR "<prompt-file>"` via cmd and
+    // waits. EDITOR is the wrapper from writeAgentConfig, found via PATH (avoids problems with
+    // spaces in the path: claude splits EDITOR at spaces).
     const env = claudeEnv({ FORCE_COLOR: '1', EDITOR: EDITOR_NAME, VISUAL: EDITOR_NAME })
     const pathKey = Object.keys(env).find((k) => k.toUpperCase() === 'PATH') ?? 'PATH'
     env[pathKey] = `${binDir};${env[pathKey] ?? ''}`
@@ -870,9 +870,9 @@ export class AgentManager {
   }
 
   /**
-   * Pro Agent: Hooks (Status an die App melden) + MCP-Konfiguration (show_code). Worker zusätzlich:
-   * Rechte-Abfragen gehen an den Orchestrator (PermissionRequest-Hook wartet auf dessen Antwort),
-   * keine Rückfragen an den Nutzer (AskUserQuestion gesperrt – er kann ihnen nicht antworten).
+   * Per agent: hooks (report status to the app) + MCP config (show_code). Workers additionally:
+   * permission requests go to the orchestrator (PermissionRequest hook waits for its answer),
+   * no questions to the user (AskUserQuestion denied – the user cannot answer them).
    */
   private writeAgentConfig(agent: Agent): {
     settingsFile: string
@@ -882,7 +882,7 @@ export class AgentManager {
     const agentId = agent.id
     const worker = isTeamWorker(agent)
     const dir = dataDir('agents', agentId)
-    // curl.exe ist ab Windows 10 enthalten; ".exe" explizit, da "curl" in PowerShell 5.1 ein Alias ist
+    // curl.exe ships with Windows 10 and later; ".exe" is explicit because "curl" is an alias in PowerShell 5.1
     const hook = [
       {
         type: 'command',
@@ -941,10 +941,10 @@ export class AgentManager {
     writeFileSync(settingsFile, JSON.stringify(settings, null, 2))
     writeFileSync(mcpFile, JSON.stringify(mcp, null, 2))
 
-    // Strg+G-„Editor“: schickt den Pfad der Prompt-Datei an DevHub und blockiert, bis der
-    // Editor-Tab geschlossen ist. Der Name enthält „notepad“, damit claude ihn als GUI-Editor
-    // behandelt: Oberfläche bleibt stehen, Eingabefeld zeigt „Save and close editor to continue…“
-    // (bei unbekannten Namen hält claude ihn für einen Terminal-Editor und leert den Bildschirm).
+    // Ctrl+G "editor": sends the prompt file path to DevHub and blocks until the editor tab
+    // is closed. The name contains "notepad" so claude treats it as a GUI editor: the UI stays
+    // in place and the input field shows "Save and close editor to continue…"
+    // (with unknown names claude assumes a terminal editor and clears the screen).
     const binDir = dataDir('agents', agentId, 'bin')
     writeFileSync(
       join(binDir, `${EDITOR_NAME}.cmd`),
@@ -957,7 +957,7 @@ export class AgentManager {
     if (process.env.DEVHUB_DEBUG) {
       console.log('[DevHub] Hook', agentId.slice(0, 8), ev.hook_event_name, ev.tool_name ?? '')
     }
-    // Jedes Hook-Ereignis nennt das Transkript; Snippets lesen, wenn der Agent etwas gesagt hat
+    // Every hook event names the transcript; read snippets when the agent has said something
     if (typeof ev.transcript_path === 'string') this.useTranscript(agentId, ev.transcript_path)
     if (
       ev.hook_event_name === 'SessionStart' ||
@@ -966,7 +966,7 @@ export class AgentManager {
       (ev.hook_event_name === 'PreToolUse' && ev.tool_name === 'AskUserQuestion')
     ) {
       this.readSnippets(agentId)
-      // Falls die letzte Antwort beim Hook noch nicht im Transkript steht: kurz danach erneut
+      // In case the last response is not yet in the transcript when the hook fires: retry shortly after
       if (ev.hook_event_name === 'Stop') setTimeout(() => this.readSnippets(agentId), 1500)
     }
     const r = this.running.get(agentId)
@@ -1029,7 +1029,7 @@ export class AgentManager {
                   'Ask it with send_team_message if you need its result.'
               )
             }
-            r.reported = true // nur einmal pro Auftrag erinnern
+            r.reported = true // remind only once per assignment
           }
           return
         case 'Notification':
@@ -1038,7 +1038,7 @@ export class AgentManager {
     }
     switch (ev.hook_event_name) {
       case 'SessionStart':
-        // Beim Fortsetzen (Wiederherstellung) den gespeicherten Wartezustand behalten
+        // On resume (restore), keep the saved waiting state
         if (ev.source === 'resume' && this.running.get(agentId)?.agent.status === 'needsInput')
           break
         this.setStatus(agentId, 'idle')
@@ -1051,7 +1051,7 @@ export class AgentManager {
         this.setStatus(agentId, 'working')
         break
       case 'PreToolUse':
-        // AskUserQuestion wartet auf den Nutzer, alle anderen Tools = Arbeit
+        // AskUserQuestion waits for the user, all other tools = work
         if (ev.tool_name === 'AskUserQuestion') {
           this.setStatus(agentId, 'needsInput', 'Stellt eine Frage')
         } else if (!awaitingPermission) {
@@ -1302,7 +1302,7 @@ export class AgentManager {
     return Object.fromEntries([...this.running].map(([id, r]) => [id, r.snippets]))
   }
 
-  /** Bearbeitete Dateien aller laufenden Agents (für die Oberfläche nach einem Neuladen) */
+  /** Edited files of all running agents (for the UI after a reload) */
   edits(): Record<string, EditedFile[]> {
     return Object.fromEntries([...this.running].map(([id, r]) => [id, r.edits]))
   }
@@ -1311,7 +1311,7 @@ export class AgentManager {
     const r = this.running.get(agentId)
     if (!r || !added.length) return
     const merged = mergeEdits(r.edits, added)
-    // Transkript wiederholt, was der Hook schon gemeldet hat → nur bei echter Änderung melden
+    // The transcript repeats what the hook already reported → only emit on a real change
     if (merged.length === r.edits.length && merged.every((e, i) => e === r.edits[i])) return
     r.edits = merged
     this.events.onEdits(agentId, r.edits)
@@ -1322,7 +1322,7 @@ export class AgentManager {
     if (r && r.transcript?.path !== path) r.transcript = new TranscriptReader(path, agentId)
   }
 
-  /** Neue Code-Blöcke aus dem Transkript übernehmen und melden. */
+  /** Pick up new code blocks from the transcript and emit them. */
   private readSnippets(agentId: string): void {
     const running = this.running.get(agentId)
     const reader = running?.transcript
@@ -1422,7 +1422,7 @@ export class AgentManager {
     return this.handleTeamMessage(agentId, args as unknown as TeamMessageArgs)
   }
 
-  /** Orchestrator des Teams (bzw. Leitung älterer Teams), falls er läuft */
+  /** The team's orchestrator (or the lead of older teams), if it is running */
   private leadOf(agent: Agent): RunningAgent | undefined {
     if (!agent.teamId) return undefined
     const lead = teamLead(this.list(), agent.teamId)
@@ -1430,8 +1430,8 @@ export class AgentManager {
   }
 
   /**
-   * PermissionRequest eines Workers: an den Orchestrator weiterreichen und auf dessen Entscheidung
-   * (`answer_permission`) warten. Bricht die Verbindung ab (Worker beendet), verfällt die Anfrage.
+   * A worker's PermissionRequest: forward it to the orchestrator and wait for its decision
+   * (`answer_permission`). If the connection drops (worker exited), the request expires.
    */
   private requestPermission(
     workerId: string,
@@ -1560,8 +1560,8 @@ export class AgentManager {
   }
 
   /**
-   * Text als neuen Prompt an einen Agent geben – zurückhalten, solange er nicht bereit ist
-   * (startet, Editor-Tab offen, offene Rückfrage an den Nutzer, die Eingaben beantworten würden).
+   * Pass text to an agent as a new prompt – hold it back while the agent is not ready
+   * (starting, editor tab open, open question to the user that the input would answer).
    */
   private deliver(r: RunningAgent, text: string): void {
     if (this.mustHold(r)) r.pending.push(text)
@@ -1577,7 +1577,7 @@ export class AgentManager {
     )
   }
 
-  /** Teamkollegen eines Agents (ohne ihn selbst), laufend oder noch startend. */
+  /** An agent's teammates (excluding itself), running or still starting. */
   private teammates(agentId: string): RunningAgent[] {
     const teamId = this.running.get(agentId)?.agent.teamId
     if (!teamId) return []
@@ -1609,8 +1609,8 @@ export class AgentManager {
   }
 
   /**
-   * Nachricht an Teamkollegen: wird als neuer Prompt in deren Terminal geschrieben (Claude Code
-   * stellt sie in die Warteschlange, falls der Agent gerade arbeitet). Nur innerhalb des Teams.
+   * Message to teammates: typed into their terminal as a new prompt (Claude Code queues it
+   * if the agent is busy). Only within the team.
    */
   private async handleTeamMessage(agentId: string, args: TeamMessageArgs): Promise<string> {
     const me = this.running.get(agentId)
@@ -1619,7 +1619,7 @@ export class AgentManager {
     const to = String(args.to ?? '').trim()
     if (!message || !to) throw new Error('"to" and "message" are required')
 
-    // Worker sprechen nur mit dem Orchestrator (er verteilt und sammelt alles)
+    // Workers talk only to the orchestrator (it distributes and collects everything)
     const lead = isTeamWorker(me.agent) ? this.leadOf(me.agent) : undefined
     if (isTeamWorker(me.agent) && !lead) throw new Error('Your orchestrator is not running')
     const mates = lead ? [lead] : this.teammates(agentId)
@@ -1643,7 +1643,7 @@ export class AgentManager {
     const delivered: string[] = []
     const held: string[] = []
     for (const r of targets) {
-      // Nicht bereit (startet, Editor-Tab, offene Rückfrage) → wird später zugestellt
+      // Not ready (starting, editor tab, open question) → delivered later
       if (this.mustHold(r)) held.push(r.agent.name)
       else delivered.push(r.agent.name)
       this.deliver(r, text)
@@ -1663,7 +1663,7 @@ export class AgentManager {
       .join(' ')
   }
 
-  /** Team-Infos für den System-Prompt (Name, Leitung, Kollegen, gemeinsame Richtlinien). */
+  /** Team info for the system prompt (name, lead, teammates, shared guidelines). */
   private teamContext(agent: Agent): TeamContext | undefined {
     const state = getState()
     const team = state.teams.find((t) => t.id === agent.teamId)
@@ -1739,7 +1739,7 @@ export class AgentManager {
     this.emitChanged()
   }
 
-  /** Zurückgehaltene Team-Nachrichten zustellen, sobald die TUI bereit und kein Editor-Tab offen ist */
+  /** Deliver held-back team messages once the TUI is ready and no editor tab is open */
   private flushPending(id: string): void {
     const r = this.running.get(id)
     if (!r || this.mustHold(r) || !r.pending.length) return
@@ -1791,7 +1791,7 @@ export class AgentManager {
     try {
       rmSync(join(dataDir('agents'), id), { recursive: true, force: true })
     } catch {
-      // ignorieren
+      // ignore
     }
     // Worktree ohne Änderungen und ohne eigene Commits aufräumen (sonst bleibt er zum Prüfen stehen;
     // beim Fortsetzen aus dem Verlauf wird ein entfernter wieder angelegt)
@@ -1802,7 +1802,7 @@ export class AgentManager {
     this.emitChanged()
   }
 
-  /** Teams ohne (gespeicherte) Agents entfernen – ein Team endet mit seinem letzten Mitglied. */
+  /** Remove teams without (saved) agents – a team ends with its last member. */
   private removeEmptyTeams(): void {
     const { teams, agents } = getState()
     const used = new Set(agents.map((a) => a.teamId).filter(Boolean))
@@ -1811,7 +1811,7 @@ export class AgentManager {
     }
   }
 
-  /** Eindeutiger Teamname: „Feature“, „Feature 2“ … bzw. „Team 1“, „Team 2“ … */
+  /** Unique team name: "Feature", "Feature 2" … or "Team 1", "Team 2" … */
   private nextTeamName(base?: string): string {
     const names = new Set(getState().teams.map((t) => t.name.toLowerCase()))
     if (base) {
@@ -1826,8 +1826,8 @@ export class AgentManager {
   }
 
   /**
-   * Eindeutiger Name über alle Agents (für die Sprachsteuerung):
-   * ohne Vorlage „Agent N“ (kleinste freie Nummer), mit Vorlage „Entwickler“, dann „Entwickler 2“ …
+   * Name unique across all agents (for voice control):
+   * without a template "Agent N" (lowest free number), with a template "Developer", then "Developer 2" …
    */
   private nextName(base?: string): string {
     const names = new Set(getState().agents.map((a) => a.name.toLowerCase()))
@@ -1849,11 +1849,11 @@ export class AgentManager {
 
 interface TeamContext {
   name: string
-  /** Name des Orchestrators (bzw. bei älteren Teams des leitenden, ersten Mitglieds) */
+  /** Name of the orchestrator (or, for older teams, of the leading first member) */
   lead: string
-  /** Team mit Orchestrator (sonst älteres Team: erstes Mitglied leitet, alle reden miteinander) */
+  /** Team with an orchestrator (otherwise an older team: first member leads, everyone talks to everyone) */
   orchestrated: boolean
-  /** Übrige Mitglieder (ohne den Agent selbst, bei Teams mit Orchestrator ohne diesen) */
+  /** Remaining members (excluding the agent itself, and excluding the orchestrator in orchestrated teams) */
   teammates: string[]
   instructions?: string
   /** Projekt mit Worktrees: Branch je Worker (leer = alle teilen sich ein Verzeichnis) */
@@ -1967,7 +1967,7 @@ function systemPrompt(
   return parts.join('\n\n')
 }
 
-/** Team mit Orchestrator: Rolle des Orchestrators bzw. eines Workers. */
+/** Team with an orchestrator: role of the orchestrator or of a worker. */
 function orchestratedTeamPrompt(agentName: string, team: TeamContext): string {
   const guidelines = team.instructions?.trim()
     ? `Team guidelines from the user (follow them):\n\n${team.instructions.trim()}`
@@ -2015,7 +2015,7 @@ function orchestratedTeamPrompt(agentName: string, team: TeamContext): string {
     .join('\n')
 }
 
-/** Letzte Zeilen der Ausgabe ohne Terminal-Steuersequenzen (für Fehlermeldungen). */
+/** Last lines of the output without terminal control sequences (for error messages). */
 function lastLines(output: string, count = 6): string {
   return output
     .replace(ANSI, '')
@@ -2026,12 +2026,12 @@ function lastLines(output: string, count = 6): string {
     .join('\n')
 }
 
-/** CSI-, OSC- und einfache ESC-Sequenzen */
+/** CSI, OSC and simple ESC sequences */
 const ANSI =
   // eslint-disable-next-line no-control-regex
   /\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[()][A-Z0-9]|\x1b[=>]/g
 
-/** Gibt es zu der Session schon ein Transkript? Nur dann ist --resume möglich. */
+/** Does a transcript already exist for the session? Only then is --resume possible. */
 function sessionExists(sessionId: string): boolean {
   const base = join(process.env.CLAUDE_CONFIG_DIR || join(homedir(), '.claude'), 'projects')
   try {
