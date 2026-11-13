@@ -15,7 +15,8 @@
     "build": "npm run typecheck && electron-vite build",
     "postinstall": "install-electron",
     "build:unpack": "npm run build && electron-builder --dir",
-    "build:win": "npm run build && electron-builder --win"
+    "build:win": "npm run build && electron-builder --win",
+    "release": "node scripts/release.mjs"
   },
   "dependencies": {
     "@electron-toolkit/utils": "^4.0.0",
