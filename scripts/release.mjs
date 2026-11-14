@@ -5,6 +5,9 @@
 // 3. Commit "Version x.y.z" + tag vX.Y.Z, push both
 // 4. Create the GitHub release for this tag (notes from the file) + upload the ZIP
 //
+// The notes file must contain the notes in every language of `NOTE_LANGUAGES`,
+// each under its own heading (`## English`, `## Deutsch`); sub-headings use `###`.
+//
 // GitHub login: the one stored with Git (Git Credential Manager), never printed.
 /* eslint-disable @typescript-eslint/explicit-function-return-type -- plain JS script */
 import { execSync } from 'child_process'
@@ -22,34 +25,49 @@ const fail = (msg) => {
 
 const [notesFile, wanted] = process.argv.slice(2)
 if (!notesFile || !existsSync(notesFile)) {
-  fail('Aufruf: npm run release -- <notizen.md> [x.y.z]  (Notizen-Datei fehlt)')
+  fail('Usage: npm run release -- <notes.md> [x.y.z]  (notes file missing)')
 }
 const notes = readFileSync(notesFile, 'utf8').trim()
-if (!notes) fail('Die Notizen-Datei ist leer')
+if (!notes) fail('The notes file is empty')
+// Release notes are bilingual: one `## <language>` section per language, each with content.
+const NOTE_LANGUAGES = ['English', 'Deutsch']
+const sections = new Map(
+  notes
+    .split(/^## +/m)
+    .slice(1)
+    .map((part) => [part.split('\n', 1)[0].trim(), part.slice(part.indexOf('\n') + 1).trim()])
+)
+for (const language of NOTE_LANGUAGES) {
+  if (!sections.get(language)) {
+    fail(
+      `The notes need a non-empty section "## ${language}" (required: ${NOTE_LANGUAGES.map((l) => `## ${l}`).join(', ')})`
+    )
+  }
+}
 
 // --- Preconditions
-if (out('git rev-parse --abbrev-ref HEAD') !== 'main') fail('Nur vom Branch main aus')
-if (out('git status --porcelain')) fail('Es gibt nicht committete Änderungen – erst committen')
+if (out('git rev-parse --abbrev-ref HEAD') !== 'main') fail('Only from the main branch')
+if (out('git status --porcelain')) fail('There are uncommitted changes – commit them first')
 run('git fetch -q origin main --tags')
 if (out('git rev-parse HEAD') !== out('git rev-parse origin/main')) {
-  fail('main ist nicht auf dem Stand von origin/main – erst pushen bzw. pullen')
+  fail('main is not in sync with origin/main – push or pull first')
 }
 
 // --- Version
 const current = JSON.parse(readFileSync('package.json', 'utf8')).version
 const [maj, min, pat] = current.split('.').map(Number)
 const version = wanted ?? `${maj}.${min}.${pat + 1}`
-if (!/^\d+\.\d+\.\d+$/.test(version)) fail(`Ungültige Version: ${version}`)
+if (!/^\d+\.\d+\.\d+$/.test(version)) fail(`Invalid version: ${version}`)
 const tag = `v${version}`
-if (out(`git tag -l ${tag}`)) fail(`Tag ${tag} gibt es schon`)
+if (out(`git tag -l ${tag}`)) fail(`Tag ${tag} already exists`)
 console.log(`\nRelease ${current} → ${version}\n`)
 
-// --- GitHub-API
+// --- GitHub API
 const cred = execSync('git credential fill', {
   input: 'protocol=https\nhost=github.com\n\n'
 }).toString()
 const token = /^password=(.*)$/m.exec(cred)?.[1]
-if (!token) fail('Keine GitHub-Anmeldung bei Git gespeichert')
+if (!token) fail('No GitHub credentials stored with Git')
 const headers = {
   Authorization: `Bearer ${token}`,
   Accept: 'application/vnd.github+json',
@@ -59,7 +77,7 @@ const headers = {
 const existing = await fetch(`https://api.github.com/repos/${RELEASE_REPO}/releases/tags/${tag}`, {
   headers
 })
-if (existing.ok) fail(`Release ${tag} gibt es in ${RELEASE_REPO} schon`)
+if (existing.ok) fail(`Release ${tag} already exists in ${RELEASE_REPO}`)
 
 // --- Build (reset the version on failure)
 run(`npm version ${version} --no-git-tag-version`)
@@ -67,12 +85,12 @@ try {
   run('npm run build:win')
 } catch {
   run('git checkout -- package.json package-lock.json')
-  fail('Build fehlgeschlagen – Version zurückgesetzt')
+  fail('Build failed – version reset')
 }
 const zip = `dist/DevHub-${version}-win.zip`
 if (!existsSync(zip)) {
   run('git checkout -- package.json package-lock.json')
-  fail(`${zip} wurde nicht gebaut – Version zurückgesetzt`)
+  fail(`${zip} was not built – version reset`)
 }
 
 // --- Record the version: commit + tag (the release points to exactly this state)
@@ -95,10 +113,10 @@ const res = await fetch(`https://api.github.com/repos/${RELEASE_REPO}/releases`,
 const release = await res.json()
 if (!res.ok) {
   fail(
-    `Release anlegen: ${res.status} ${JSON.stringify(release)} – Commit und Tag ${tag} sind schon gepusht; Release auf GitHub von Hand anlegen und ${zip} anhängen`
+    `Creating the release failed: ${res.status} ${JSON.stringify(release)} – commit and tag ${tag} are already pushed; create the release on GitHub by hand and attach ${zip}`
   )
 }
-console.log(`\nRelease angelegt: ${release.html_url}`)
+console.log(`\nRelease created: ${release.html_url}`)
 
 const up = await fetch(
   `${release.upload_url.replace(/\{.*\}$/, '')}?name=${encodeURIComponent(basename(zip))}`,
@@ -115,8 +133,8 @@ const up = await fetch(
 const asset = await up.json()
 if (!up.ok) {
   fail(
-    `Upload: ${up.status} ${JSON.stringify(asset)} – Release ${tag} existiert ohne ZIP, bitte prüfen`
+    `Upload failed: ${up.status} ${JSON.stringify(asset)} – release ${tag} exists without the ZIP, please check`
   )
 }
-console.log(`Hochgeladen: ${asset.browser_download_url}`)
-console.log(`\n✔ DevHub ${version} veröffentlicht`)
+console.log(`Uploaded: ${asset.browser_download_url}`)
+console.log(`\n✔ DevHub ${version} published`)

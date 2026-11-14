@@ -1,325 +1,331 @@
 # DevHub
 
-> **Pflegeregel (immer befolgen):** Diese Datei wird während der Arbeit laufend aktuell gehalten.
-> Nach jeder relevanten Änderung (neuer Tech-Stack, neue Befehle, Ordnerstruktur, Architekturentscheidungen,
-> Konventionen, Setup-Schritte, bekannte Stolpersteine) wird CLAUDE.md im selben Arbeitsschritt angepasst.
-> Veraltete Angaben werden entfernt statt ergänzt. Kurz und präzise halten.
+> **Maintenance rule (always follow):** This file is kept up to date continuously while working.
+> After every relevant change (new tech stack, new commands, folder structure, architecture decisions,
+> conventions, setup steps, known pitfalls) CLAUDE.md is adjusted in the same work step.
+> Outdated statements are removed instead of amended. Keep it short and precise.
 
-## Projektüberblick
+## Project overview
 
-Lokale Windows-Desktop-App zum Verwalten von Projekten und den darin laufenden KI-Coding-Agents (Claude Code).
+Local Windows desktop app for managing projects and the AI coding agents (Claude Code) running in them.
 
-### Anforderungen
+### Requirements
 
-**Projekte**
+**Projects**
 
-- Projekte (Ordner) registrieren, je Projekt 3 Pfade:
-  1. Agent-Pfad: Arbeitsverzeichnis, in dem Claude / andere KI-Coding-Engines gestartet werden. Ordnerauswahl ohne Vorgabe (neues Projekt) startet beim zuletzt benutzten Ort (`state.lastPickDir` = übergeordneter Ordner der letzten Wahl, persistiert)
-  2. Projektdatei: `.sln` / Projektdatei, öffnbar z. B. mit Visual Studio — wird nach Wahl des Agent-Ordners automatisch gesucht (`findSolution` in `main/tools.ts`: `.sln`/`.slnx`, bis 3 Ebenen tief, flachste zuerst, Name = Ordnername bevorzugt; überschreibt nie eine von Hand gesetzte Datei)
-     Öffnen mit: `project.projectFileApp` → global `settings.projectFileApp` → Windows-Standardprogramm (`shell.openPath`). Icon neutral (`OpenFileIcon`), nicht VS-spezifisch.
-  3. Ordner (`folderPath`, früher `vscodePath` – `getState()` übernimmt alte Stände): immer konfigurierbar. Öffnen mit: `project.folderApp` → global `settings.folderApp` → VS Code (falls installiert) → Windows-Explorer
-  - Programme = absoluter Pfad zu `.exe`/`.cmd`/`.bat` (`validateProgram`/`openWithProgram` in `main/tools.ts`, losgelöst gestartet, cwd = Ordner bzw. Ordner der Datei), Eingabe per `ProgramInput`, Einstellungen-Abschnitt „Öffnen mit“
-- **Importieren** (Button rechts neben „+“, `ImportProjectsDialog`): Ordnerauswahl mit Mehrfachauswahl (`projects:pickFolders`, Strg+Klick) → `projects:scan` → `findProjects` in `main/tools.ts`: Ordner mit Kennzeichen (Git, .sln/.slnx, .csproj …, package.json, pyproject.toml, Cargo.toml, go.mod, pom.xml/build.gradle, CMakeLists.txt, CLAUDE.md) = **ein** Projekt (nicht weiter hinab, Monorepo bleibt eins), sonst Unterordner bis 3 Ebenen (max. 300 Treffer). Je Treffer `findSolution`; bereits registrierte (gleicher Agent-Pfad) werden ausgegraut. Liste mit Häkchen + editierbarem Namen, Start-Flags gelten für alle; gespeichert über `projects:save` mit Agent-Pfad = Ordner = Pfad 3. Mit `C:\Dev` getestet (6 Projekte inkl. Unterordner)
-  - Ausnahme: „In VS Code öffnen“ in der Code-Ansicht (`code:openInVSCode`, springt zur Zeile) bleibt VS-Code-spezifisch
+- Register projects (folders), 3 paths per project:
+  1. Agent path: working directory in which Claude / other AI coding engines are started. Folder picker without a preset (new project) starts at the last used location (`state.lastPickDir` = parent folder of the last choice, persisted)
+  2. Project file: `.sln` / project file, can be opened e.g. with Visual Studio — searched automatically after the agent folder is chosen (`findSolution` in `main/tools.ts`: `.sln`/`.slnx`, up to 3 levels deep, shallowest first, name = folder name preferred; never overwrites a file set by hand)
+     Open with: `project.projectFileApp` → global `settings.projectFileApp` → Windows default program (`shell.openPath`). Neutral icon (`OpenFileIcon`), not VS-specific.
+  3. Folder (`folderPath`, formerly `vscodePath` – `getState()` migrates old states): always configurable. Open with: `project.folderApp` → global `settings.folderApp` → VS Code (if installed) → Windows Explorer
+  - Programs = absolute path to `.exe`/`.cmd`/`.bat` (`validateProgram`/`openWithProgram` in `main/tools.ts`, started detached, cwd = the folder or the file's folder), entered via `ProgramInput`, settings section "Open with" („Öffnen mit“)
+- **Import** (button to the right of "+", `ImportProjectsDialog`): folder picker with multi-selection (`projects:pickFolders`, Ctrl+click) → `projects:scan` → `findProjects` in `main/tools.ts`: a folder with a marker (Git, .sln/.slnx, .csproj …, package.json, pyproject.toml, Cargo.toml, go.mod, pom.xml/build.gradle, CMakeLists.txt, CLAUDE.md) = **one** project (no further descent, a monorepo stays one), otherwise subfolders up to 3 levels (max. 300 hits). `findSolution` per hit; already registered ones (same agent path) are greyed out. List with checkboxes + editable name, start flags apply to all; saved via `projects:save` with agent path = folder = path 3. Tested with `C:\Dev` (6 projects incl. subfolders)
+  - Exception: "Open in VS Code" in the code view (`code:openInVSCode`, jumps to the line) stays VS Code-specific
 
 **Layout**
 
-- Links: Liste aller Projekte mit ihren Agents
-  - Kleiner Button neben dem Projektnamen startet einen neuen Agent
-  - Agents heißen standardmäßig „Agent 1“, „Agent 2“, … — Rechtsklick-Menü: Umbenennen, Beenden, Sprachtext abschicken/eintragen (pro Agent)
-  - Agents, die eine Frage/Input brauchen, werden hervorgehoben, bis sie weiterarbeiten — links in der Liste und im Raster (gelber Rahmen + Frage im Zellenkopf, `.grid-cell.attention`; aktiv + wartend = gelber Rahmen mit Akzentlinie unter dem Kopf)
-  - Agents können über die Liste beendet werden
-  - Agent-Buttons links in der Zeile **✎ · 🎤 · Radierer · ✕** (nur bei Hover, `display: none` → Name hat sonst die volle Breite; laufende Aufnahme bleibt sichtbar; eng gesetzt über Container `.agent-actions`, 20 px je Button), in jedem Agent-Kopf der Mitte **🎤 · Radierer · ✕** (✎ nur in der Einzelansicht) (Einzelansicht + Rasterzelle, `AgentButtons` in `CenterPane`): Sprach-Anweisung an genau diesen Agent (`toggleVoice('agent', id)`, `recording.agentId` → nur dessen Mikrofon rot), `/clear` per `sendLine` (mit echtem claude geprüft: Kontext ist danach weg), Beenden
-  - **Sortieren:** Projekte per Drag & Drop + Button „A→Z“ im Kopf (`localeCompare` mit `numeric`); Agents per Drag & Drop nur innerhalb ihrer Gruppe (Projekt ohne Team bzw. Team), dazu Rechtsklick „… nach Name sortieren“. Reihenfolge = Reihenfolge der Arrays `state.projects`/`state.agents` (`projects:reorder`, `agents:reorder` → `applyOrder` in `store.ts`, ordnet nur die übergebenen Ids um); `AgentManager.list()` liefert in dieser Reihenfolge (gilt auch fürs Raster)
-- Mitte: Terminal des ausgewählten Agents (`claude.exe` direkt per ConPTY, **ohne** Shell dazwischen – so beendet `/exit` den Agent wirklich)
-  - Klick auf ein Projekt → alle Agents des Projekts im Raster
-  - **Strg+Klick** (projektübergreifend): Agent zum Raster hinzufügen/entfernen; auf ein Projekt = alle seine Agents. Ausgangspunkt ist die aktuelle Ansicht (auch ein Projekt-Raster). Auswahl-Typ `{ kind: 'agents', agentIds }`, Logik in `lib/selection.ts`; 1 Agent → Einzelansicht, 0 → leer
-  - Beendet sich ein Agent im Terminal selbst (z. B. `/exit`), wird die Ansicht geschlossen und der Eintrag links entfernt
-  - **Strg+G** im Agent öffnet statt eines externen Editors einen weiteren Tab in der Mitte (Terminal + Textfeld mit Diktat und Bildern); der Agent ist bis zum Schließen überall sonst gesperrt (s. Architektur)
-- Rechts: Code-Ansicht (`CodePane`) mit Reitern (Leiste waagrecht scrollbar)
-  - **Je Datei ein Reiter:** jede vom **aktiven** Agent bearbeitete Datei (Edit/Write/MultiEdit; Punkt im Reiter, grün = neu angelegt), geänderte Zeilen der letzten Änderung hervorgehoben. Dazu die Datei aus `show_code` (Analyse/Bugfund; Fokus des aktiven Agents / jüngster im ausgewählten Projekt) – gleiche Datei = ein Reiter, die neuere Information zählt. ✕/Mittelklick schließt den Reiter, bis die Datei erneut geändert wird (auch „Snippets“ ist schließbar, bis ein neues Snippet kommt). Geschlossene Reiter liegen im Workspace (`closedTabs`, `lib/codeTabs.ts`), der sie vor `CodePane` herausfiltert → **alle Reiter zu = Spalte zu**. Abschaltbar: Einstellungen → „Dateivorschau“ (`settings.showEditedFiles`, Standard an; betrifft nur die bearbeiteten Dateien, nicht `show_code`/Snippets)
-  - „Snippets“: alle Code-Blöcke (` ``` `/`~~~`) aus den Antworten des **aktiven** Agents, neueste zuerst, je mit Button „Kopieren“ (`SnippetList`, Hervorhebung per `monaco.editor.colorize`, Kopieren über Main `clipboard:writeText`)
-  - Gezeigt wird der zuletzt aktualisierte Reiter, bis der Nutzer selbst wechselt
-  - Spalte wird **nur eingeblendet, solange es etwas zu zeigen gibt**, sonst nimmt das Terminal die Breite ein (`.layout.with-code`, Spalte `auto`)
-  - **Splitter** am linken Rand (`.pane-splitter`, absolut über der Fuge): Breite ziehen (min. 240 px, Liste + Terminal behalten ≥ 580 px), Doppelklick = 420 px; gemerkt in `localStorage` (`devhub.codePaneWidth`, liegt im Datenordner)
+- Left: list of all projects with their agents
+  - Small button next to the project name starts a new agent
+  - Agents are called "Agent 1", "Agent 2", … by default — context menu (right-click): rename, stop, send/insert voice text (per agent)
+  - Agents that need an answer/input are highlighted until they continue working — on the left in the list and in the grid (yellow border + question in the cell header, `.grid-cell.attention`; active + waiting = yellow border with accent line below the header)
+  - Agents can be stopped via the list
+  - Agent buttons on the left in the row **✎ · 🎤 · eraser · ✕** (only on hover, `display: none` → otherwise the name has the full width; a running recording stays visible; tightly packed via the container `.agent-actions`, 20 px per button), in every agent header in the center **🎤 · eraser · ✕** (✎ only in the single view) (single view + grid cell, `AgentButtons` in `CenterPane`): voice instruction to exactly this agent (`toggleVoice('agent', id)`, `recording.agentId` → only its microphone is red), `/clear` via `sendLine` (checked with real claude: the context is gone afterwards), stop
+  - **Sorting:** projects by drag & drop + button "A→Z" in the header (`localeCompare` with `numeric`); agents by drag & drop only within their group (project without team, or team), plus right-click "… sort by name". Order = order of the arrays `state.projects`/`state.agents` (`projects:reorder`, `agents:reorder` → `applyOrder` in `store.ts`, reorders only the ids passed in); `AgentManager.list()` returns them in this order (also applies to the grid)
+- Center: terminal of the selected agent (`claude.exe` directly via ConPTY, **without** a shell in between – this way `/exit` really ends the agent)
+  - Click on a project → all agents of the project in a grid
+  - **Ctrl+click** (across projects): add/remove an agent to/from the grid; on a project = all its agents. Starting point is the current view (also a project grid). Selection type `{ kind: 'agents', agentIds }`, logic in `lib/selection.ts`; 1 agent → single view, 0 → empty
+  - If an agent ends itself in the terminal (e.g. `/exit`), the view is closed and the entry on the left removed
+  - **Ctrl+G** in the agent opens another tab in the center instead of an external editor (terminal + text field with dictation and images); until it is closed the agent is locked everywhere else (see Architecture)
+- Right: code view (`CodePane`) with tabs (tab bar scrolls horizontally)
+  - **One tab per file:** every file edited by the **active** agent (Edit/Write/MultiEdit; dot in the tab, green = newly created), changed lines of the last change highlighted. Plus the file from `show_code` (analysis/bug found; focus of the active agent / most recent one in the selected project) – same file = one tab, the newer information wins. ✕/middle click closes the tab until the file is changed again ("Snippets" can be closed too, until a new snippet arrives). Closed tabs are kept in the Workspace (`closedTabs`, `lib/codeTabs.ts`), which filters them out before `CodePane` → **all tabs closed = column closed**. Can be switched off: Settings → "File preview" („Dateivorschau“) (`settings.showEditedFiles`, on by default; affects only the edited files, not `show_code`/snippets)
+  - "Snippets": all code blocks (` ``` `/`~~~`) from the answers of the **active** agent, newest first, each with a "Copy" button (`SnippetList`, highlighting via `monaco.editor.colorize`, copying via main `clipboard:writeText`)
+  - The most recently updated tab is shown until the user switches themselves
+  - The column is **only shown while there is something to show**, otherwise the terminal takes the width (`.layout.with-code`, column `auto`)
+  - **Splitter** on the left edge (`.pane-splitter`, absolutely positioned over the gap): drag the width (min. 240 px, list + terminal keep ≥ 580 px), double-click = 420 px; remembered in `localStorage` (`devhub.codePaneWidth`, located in the data folder)
 
-**Sitzungen**
+**Sessions**
 
-- Beim Beenden der App laufende Agents werden beim nächsten Start mit ihrer Session wiederhergestellt
+- Agents running when the app is closed are restored with their session on the next start
 
-**Sprachsteuerung**
+**Voice control**
 
-- Button + Hotkey: Sprach-Anweisung an den aktiven Agent
-- Globaler Button + Hotkey: Agent per Name ansprechen; ebenso per Sprache einen neuen Agent für ein Projekt mit Aufgabe starten
-- Interpretation der Sprachbefehle über eine eigene Claude-Instanz mit dem lokal vorhandenen Account
+- Button + hotkey: voice instruction to the active agent
+- Global button + hotkey: address an agent by name; likewise start a new agent for a project with a task by voice
+- Voice commands are interpreted by a separate Claude instance using the locally available account
 
-**Vordefinierte Agents (Vorlagen)**
+**Predefined agents (templates)**
 
-- Einstellungen → „Vordefinierte Agents“: Name (eindeutig, nicht „Agent N“, endet nicht auf Zahl), Modell (optional), Rolle/Richtlinien (Textfeld mit Diktat-Button `DictationButton`)
-- Start: ▶ am Projekt bzw. Rechtsklick (Auswahl normal/Vorlage) oder per Sprache („Starte einen Entwickler für DevHub …“); Agent heißt wie die Vorlage („Entwickler“, „Entwickler 2“ …) → per Name ansprechbar
-- Modell: per Sprache genannt > Vorlage > Start-Flags. Richtlinien werden an `--append-system-prompt` angehängt (`systemPrompt()` in `agents.ts`). Agent speichert nur `templateId`; Vorlage wird bei jedem Start frisch gelesen (gelöschte Vorlage → Start ohne Richtlinien). Vorlage, die in einem Team steckt, kann nicht gelöscht werden
+- Settings → "Predefined agents" („Vordefinierte Agents“): name (unique, not "Agent N", does not end with a number), model (optional), role/guidelines (text field with dictation button `DictationButton`)
+- Start: ▶ on the project or right-click (choice normal/template) or by voice („Starte einen Entwickler für DevHub …“ = "Start a developer for DevHub …"); the agent is named like the template ("Entwickler", "Entwickler 2" …) → can be addressed by name
+- Model: named by voice > template > start flags. Guidelines are appended to `--append-system-prompt` (`systemPrompt()` in `agents.ts`). The agent stores only `templateId`; the template is read fresh on every start (deleted template → start without guidelines). A template that is part of a team cannot be deleted
 
 **Teams**
 
-- Team-Vorlagen (`TeamTemplate`, Einstellungen → „Teams“, `TeamTemplateDialog`): Name (nicht „Team N“), 2–8 Mitglieder (vordefinierte oder normale Agents, Reihenfolge änderbar), gemeinsame Richtlinien (`DictationTextarea`)
-- Laufendes Team (`Team`, `state.teams`): aus Vorlage oder **temporär** per Sprache („Starte einen Entwickler und einen Reviewer als Team für …“, Name sonst „Team N“). Agents tragen `teamId` + `teamRole`; Team verschwindet mit dem letzten Mitglied (`removeEmptyTeams`)
-- **Orchestrator:** `AgentManager.startTeam` startet immer zusätzlich einen Agent `teamRole: 'orchestrator'` („Orchestrator“, „Orchestrator 2“ …; kleinstes `createdAt`), die Mitglieder sind `teamRole: 'worker'`. Erst alle speichern (Namen fest), dann starten. Der Orchestrator bekommt die Aufgabe, plant, verteilt, prüft, entscheidet Freigaben und berichtet dem Nutzer (Prompt `orchestratedTeamPrompt`); er ist der **einzige Ansprechpartner** des Nutzers. Endet er (✕, `/exit`), endet das ganze Team; scheitert sein Start oder der aller Worker → Team wird abgebrochen. `teamLead()` (`shared/types.ts`) = Orchestrator, bei Teams aus älteren Ständen (ohne `teamRole`) das erste Mitglied mit altem Verhalten
-- **Worker nur beobachten** (`isTeamWorker`): Main sperrt `write`, `sendLine` (wirft), `rename`, einzelnes `stop` (wirft; nur Team beenden); `sendVoice` an einen Worker geht mit Präfix `[Message from the user about X]` an den Orchestrator (auch per globalem Sprachbefehl). Renderer: Terminal `setTerminalReadOnly` (kein Tippen, Auswahl/Kopieren geht), keine Buttons/kein Kontextmenü, Kopf zeigt „👁 beobachten“, Strg+G/Stift → Hinweis, Agent-Sprachkürzel bei aktivem Worker → an den Orchestrator. Worker-Status: `Stop` → idle „Fertig“ (nie hervorgehoben, der Nutzer kann nicht antworten), `Notification` ignoriert
-- **Freigaben der Worker:** Worker-Settings haben einen `PermissionRequest`-Hook (curl **ohne** `-m`, Hook-`timeout` 24 h) auf `POST /permission/<token>/<id>` und `permissions.deny: ["AskUserQuestion"]`. Bridge hält die Anfrage offen → `requestPermission` schickt dem Orchestrator `[Permission request #N from X] … tool … input …` → er antwortet mit MCP-Tool `answer_permission(request_id, allow|deny, message)` → Antwort `{hookSpecificOutput:{hookEventName:"PermissionRequest",decision:{behavior,message}}}`. Worker-Status solange „Wartet auf Freigabe durch den Orchestrator“. Verbindungsabbruch (Worker beendet) → Anfrage verfällt. Mit echtem claude 2.1 + echtem `AgentBridge` getestet (allow → Befehl läuft, deny → Begründung kommt beim Agent an)
-- Kommunikation: MCP-Tools `team_members` + `send_team_message(to|"all", message)` für Teammitglieder (Bridge fragt `tools(agentId)`), `answer_permission` nur für den Orchestrator. **Worker schreiben nur an den Orchestrator**, er an alle. Zustellung (`deliver`) = Zeile ins Terminal mit Präfix `[Team message from X]`; zurückgehalten (`pending`), solange der Empfänger startet, im Editor-Tab ist, eine `AskUserQuestion` offen hat oder der Nutzer gerade tippt (`mustHold`, s. Architektur). Beendet ein Worker seinen Zug ohne Bericht an den Orchestrator, bekommt dieser einmal `[Team status] X finished its turn without sending you a report`
-- Links: Teamkopf (Icon, „temporär“, Anzahl, ✕ = Team beenden) mit eingerückten Mitgliedern (Orchestrator mit Tag „Orchestrator“, Worker mit Auge); Klick = Raster (`kind: 'agents'`), Strg+Klick = hinzufügen/entfernen (`toggleAgents`)
-- Sprache: `start_team` (Vorlage oder `members`-Liste, Orchestrator kommt automatisch dazu) · laufendes Team per Name ansprechen → geht an den Orchestrator
+- Team templates (`TeamTemplate`, Settings → "Teams", `TeamTemplateDialog`): name (not "Team N"), 2–8 members (predefined or normal agents, order can be changed), shared guidelines (`DictationTextarea`)
+- Running team (`Team`, `state.teams`): from a template or **temporary** by voice („Starte einen Entwickler und einen Reviewer als Team für …“ = "Start a developer and a reviewer as a team for …", name otherwise "Team N"). Agents carry `teamId` + `teamRole`; the team disappears with its last member (`removeEmptyTeams`)
+- **Orchestrator:** `AgentManager.startTeam` always additionally starts an agent `teamRole: 'orchestrator'` ("Orchestrator", "Orchestrator 2" …; smallest `createdAt`), the members are `teamRole: 'worker'`. First save all of them (names fixed), then start. The orchestrator gets the task, plans, distributes, checks, decides permission requests and reports to the user (prompt `orchestratedTeamPrompt`); it is the user's **only point of contact**. If it ends (✕, `/exit`), the whole team ends; if its start or that of all workers fails → the team is aborted. `teamLead()` (`shared/types.ts`) = orchestrator, for teams from older states (without `teamRole`) the first member with the old behaviour
+- **Workers can only be watched** (`isTeamWorker`): main blocks `write`, `sendLine` (throws), `rename`, an individual `stop` (throws; only ending the team); `sendVoice` to a worker goes to the orchestrator with the prefix `[Message from the user about X]` (also via the global voice command). Renderer: terminal `setTerminalReadOnly` (no typing, selecting/copying works), no buttons/no context menu, the header shows "👁 watching" („👁 beobachten“), Ctrl+G/pen → notice, agent voice shortcut with an active worker → goes to the orchestrator. Worker status: `Stop` → idle "Done" („Fertig“) (never highlighted, the user cannot answer), `Notification` ignored
+- **Workers' permission requests:** worker settings have a `PermissionRequest` hook (curl **without** `-m`, hook `timeout` 24 h) on `POST /permission/<token>/<id>` and `permissions.deny: ["AskUserQuestion"]`. The bridge keeps the request open → `requestPermission` sends the orchestrator `[Permission request #N from X] … tool … input …` → it answers with the MCP tool `answer_permission(request_id, allow|deny, message)` → response `{hookSpecificOutput:{hookEventName:"PermissionRequest",decision:{behavior,message}}}`. Worker status meanwhile "Waiting for approval by the orchestrator" („Wartet auf Freigabe durch den Orchestrator“). Connection dropped (worker ended) → the request expires. Tested with real claude 2.1 + the real `AgentBridge` (allow → command runs, deny → the reason reaches the agent)
+- Communication: MCP tools `team_members` + `send_team_message(to|"all", message)` for team members (the bridge asks `tools(agentId)`), `answer_permission` only for the orchestrator. **Workers write only to the orchestrator**, it writes to everyone. Delivery (`deliver`) = line into the terminal with the prefix `[Team message from X]`; held back (`pending`) while the recipient is starting, is in the editor tab, has an `AskUserQuestion` open or the user is currently typing (`mustHold`, see Architecture). If a worker ends its turn without a report to the orchestrator, the orchestrator gets `[Team status] X finished its turn without sending you a report` once
+- Left: team header (icon, "temporary", count, ✕ = end team) with indented members (orchestrator with the tag "Orchestrator", workers with an eye); click = grid (`kind: 'agents'`), Ctrl+click = add/remove (`toggleAgents`)
+- Voice: `start_team` (template or `members` list, the orchestrator is added automatically) · addressing a running team by name → goes to the orchestrator
 
-**Workbench** (Details unter Architektur)
+**Workbench** (details under Architecture)
 
-- **Eingang** (`InboxPanel`, unten in der Seitenleiste, nur wenn nicht leer): offene Freigaben (Erlauben / Ablehnen mit Begründung / Immer = Regel fürs Projekt / im Terminal), wartende Agents (fertige mit Direktantwort), Hinweise (`notify_user`, Kontext-Warnung), Datei-Konflikte (zwei laufende Agents haben denselben Pfad bearbeitet; aus `editsByAgent` im Workspace berechnet). Dazu Windows-Benachrichtigung + Taskleisten-Blinken, wenn DevHub im Hintergrund ist (`settings.notifyOnWaiting`; Klick zeigt den Agent)
-- **Worktree je Agent** (`project.useWorktrees`): eigener Branch `devhub/<name>-<id8>` unter `<repo>/.devhub/worktrees/`; Kennzeichen „wt“ in der Liste
-- **Änderungen prüfen** (`ReviewDialog`; Rechtsklick auf Projekt/Agent, MCP `show_diff`): Ziel wählen (Hauptordner / Worktrees), Dateiliste, Monaco-Diff (rechts bearbeitbar, Pfeile am Rand nehmen einzelne Änderungen zurück → „Speichern“), Verwerfen, Datei/alles committen, Worktree zusammenführen/löschen, Zeilenkommentare gesammelt an den Agent
-- **Prüfungen bei „Fertig“** (`project.checks`, ein Befehl je Zeile): schlagen sie fehl, arbeitet der Agent mit der Ausgabe weiter
-- **Aufträge**: Warteschlange je Agent (`agent.queue`, Rechtsklick „Auftrag / Prompt aus der Bibliothek“, `QueueDialog`) – geht raus, sobald der Agent fertig meldet; **Aufgaben-Board** (`TaskBoardDialog`, Knopf unten links): offen → in Arbeit → erledigt, mit neuem Agent starten oder laufendem einreihen
-- **Verlauf** (`HistoryDialog`): beendete Sitzungen fortsetzen/abzweigen, Volltextsuche über alle Transkripte, Verbrauch je Projekt (heute/gesamt, Kosten nur mit eingetragenen Preisen). Rechtsklick „Unterhaltung abzweigen“ = Kopie eines laufenden Agents
-- **Aktivität/Verbrauch**: aktueller Schritt bzw. `report_progress` unter dem Agent-Namen (grau) und im Zellenkopf, Kontextgröße im Kopf der Einzelansicht, Reiter „Aktivität“ rechts (letzte 60 Schritte), Reiter für Pläne (`show_plan`, `Markdown`-Komponente ohne Abhängigkeit, kein Mermaid)
-- **Ausführen** (`RunDialog`, Rechtsklick aufs Projekt): `project.runCommands` („Name = Befehl“) starten/stoppen mit Live-Ausgabe; Web-Vorschau (`project.previewUrl`) in eigenem Fenster, Screenshot als `@"pfad"` in den Prompt des aktiven Agents
-- **Prompt-Bibliothek** (Einstellungen): Platzhalter `{{name}}` werden beim Senden abgefragt; per Sprache „Agent 2, Prompt Code-Review“
-- **Tagesbericht** (`ReportDialog`): Fakten aus dem Zustand, formuliert von `claude -p` (Haiku)
-- **Vorlesen** (`settings.voiceReadback`): Kurzfassung der Antwort fertiger Agents (Haiku → `speechSynthesis`)
-- **Weitere Engines** (Einstellungen): beliebiges Terminal-Programm (z. B. `codex`) statt Claude Code – ohne Hooks, also ohne Status/Datei-Reiter/Prüfungen/Freigaben/Verlauf
-- **Fernzugriff** (`settings.remoteEnabled`, Standard aus): Handy-Seite im lokalen Netz
+- **Inbox** (`InboxPanel`, at the bottom of the sidebar, only when not empty): open permission requests (Allow / Deny with reason / Always = rule for the project / in the terminal), waiting agents (finished ones with direct reply), notices (`notify_user`, context warning), file conflicts (two running agents edited the same path; computed from `editsByAgent` in the Workspace). Plus a Windows notification + taskbar flashing when DevHub is in the background (`settings.notifyOnWaiting`; a click shows the agent)
+- **Worktree per agent** (`project.useWorktrees`): own branch `devhub/<name>-<id8>` under `<repo>/.devhub/worktrees/`; marker "wt" in the list
+- **Review changes** (`ReviewDialog`; right-click on project/agent, MCP `show_diff`): choose the target (main folder / worktrees), file list, Monaco diff (editable on the right, arrows in the margin revert individual changes → "Save"), discard, commit a file/everything, merge/delete the worktree, line comments sent to the agent in one batch
+- **Checks on "Done"** (`project.checks`, one command per line): if they fail, the agent continues working with the output
+- **Queued instructions**: queue per agent (`agent.queue`, right-click "Instruction / prompt from the library", `QueueDialog`) – goes out as soon as the agent reports done; **task board** (`TaskBoardDialog`, button at the bottom left): open → in progress → done, start with a new agent or queue for a running one
+- **History** (`HistoryDialog`): resume/fork finished sessions, full-text search across all transcripts, usage per project (today/total, costs only with prices entered). Right-click "Fork conversation" = copy of a running agent
+- **Activity/usage**: current step or `report_progress` below the agent name (grey) and in the cell header, context size in the header of the single view, tab "Activity" on the right (last 60 steps), tabs for plans (`show_plan`, `Markdown` component without a dependency, no Mermaid)
+- **Run** (`RunDialog`, right-click on the project): start/stop `project.runCommands` ("Name = command") with live output; web preview (`project.previewUrl`) in its own window, screenshot as `@"path"` into the prompt of the active agent
+- **Prompt library** (Settings): placeholders `{{name}}` are asked for when sending; by voice „Agent 2, Prompt Code-Review“
+- **Daily report** (`ReportDialog`): facts from the state, worded by `claude -p` (Haiku)
+- **Read aloud** (`settings.voiceReadback`): short version of the answer of finished agents (Haiku → `speechSynthesis`)
+- **Other engines** (Settings): any terminal program (e.g. `codex`) instead of Claude Code – without hooks, i.e. without status/file tabs/checks/permission requests/history
+- **Remote access** (`settings.remoteEnabled`, off by default): phone page in the local network
 
-**Start-Prüfung**
+**Startup check**
 
-- Beim App-Start prüfen, ob Claude Code installiert und eingeloggt ist; ist die Anmeldung abgelaufen, muss der Nutzer sich zuerst neu anmelden
+- On app start, check whether Claude Code is installed and logged in; if the login has expired, the user has to log in again first
 
-## Tech-Stack
+## Tech stack
 
-- **Electron + TypeScript** (entschieden 2026-11-10: am stabilsten, einfach zu verteilen)
-- Build: electron-vite (Vite 8), Electron 44, electron-builder 26 — nur Windows, **Programmordner als ZIP (Ziel `zip`) — bewusst kein Installer und kein `portable`-Ziel** (Deinstallieren = Ordner löschen, Daten liegen in `data\` daneben; `portable` entpackt bei jedem Start ~100 MB nach `%TEMP%` → langsamer Start). `build/LIESMICH.txt` liegt per `extraFiles` neben der .exe
-- UI: React 19, reines CSS (`assets/main.css` = Variablen/Basis, `assets/components.css` = Komponenten), Dark Theme
-- Terminal: `@xterm/xterm` 6 + `@xterm/addon-fit` (Renderer), `node-pty` 1.1 (Main, ConPTY, N-API-Prebuilds)
-- Code-Ansicht: `monaco-editor` 0.57, **schlanker Import** (`monaco-editor/editor/editor.api` + `basic-languages/monaco.contribution` + nur `editor.worker`)
-- Sprache → Text: whisper.cpp lokal (Release `b5454`, `whisper-bin-x64.zip`), mehrsprachige quantisierte Modelle, Sprache automatisch (`-l auto`) bzw. gemerkt (s. Architektur)
-  - Engine (~9 MB) **und** Modell werden **nicht** mitgeliefert, sondern beim ersten Nutzen nach `<data>\whisper\` geladen (Datenordner neben der .exe, s. Architektur)
-  - Erster Voice-Versuch ohne Modell → `VoiceSetupDialog` (Modellauswahl base ~60 MB / small ~190 MB [Standard] / large-v3-turbo ~550 MB, Download mit Fortschritt direkt im Dialog)
-  - Einstellungen: dieselbe Auswahl (`VoiceModels`), Modell wechseln/löschen
-- Laufzeit-Abhängigkeiten (`dependencies`) nur: `node-pty`, `@electron-toolkit/utils`. Alles, was Vite bündelt (React, xterm, Monaco), gehört in `devDependencies` (sonst landet es doppelt im Paket).
-- **Lizenz:** DevHub = MIT (`LICENSE`, Inhaber „CocoNybbles“). `npm run build` erzeugt am Ende `out/THIRD_PARTY_NOTICES.txt` (`scripts/notices.mjs`: Lizenztexte aller `dependencies` + der gebündelten Pakete in `BUNDLED`, jeweils mit Abhängigkeiten; bricht ab, wenn eine Lizenzdatei fehlt). electron-builder legt `LICENSE.txt` + `THIRD_PARTY_NOTICES.txt` neben die .exe. **Neue Bibliothek im Renderer/Main → in `BUNDLED` eintragen.** Geprüft: keine GPL/nicht-kommerziellen Lizenzen in `node_modules`; MPL/CC-Pakete sind nur Build-Werkzeuge.
+- **Electron + TypeScript** (decided 2026-11-10: most stable, easy to distribute)
+- Build: electron-vite (Vite 8), Electron 44, electron-builder 26 — Windows only, **program folder as ZIP (target `zip`) — deliberately no installer and no `portable` target** (uninstall = delete the folder, data is in `data\` next to it; `portable` extracts ~100 MB to `%TEMP%` on every start → slow start). `build/README.txt` (English + German) is placed next to the .exe via `extraFiles`
+- UI: React 19, plain CSS (`assets/main.css` = variables/base, `assets/components.css` = components), dark theme
+- Terminal: `@xterm/xterm` 6 + `@xterm/addon-fit` (renderer), `node-pty` 1.1 (main, ConPTY, N-API prebuilds)
+- Code view: `monaco-editor` 0.57, **slim import** (`monaco-editor/editor/editor.api` + `basic-languages/monaco.contribution` + only `editor.worker`)
+- Speech → text: whisper.cpp locally (release `b5454`, `whisper-bin-x64.zip`), multilingual quantized models, language automatic (`-l auto`) or remembered (see Architecture)
+  - Engine (~9 MB) **and** model are **not** shipped but downloaded to `<data>\whisper\` on first use (data folder next to the .exe, see Architecture)
+  - First voice attempt without a model → `VoiceSetupDialog` (model choice base ~60 MB / small ~190 MB [default] / large-v3-turbo ~550 MB, download with progress directly in the dialog)
+  - Settings: the same choice (`VoiceModels`), switch/delete the model
+- Runtime dependencies (`dependencies`) only: `node-pty`, `@electron-toolkit/utils`. Everything that Vite bundles (React, xterm, Monaco) belongs in `devDependencies` (otherwise it ends up in the package twice).
+- **License:** DevHub = MIT (`LICENSE`, holder "CocoNybbles"). `npm run build` generates `out/THIRD_PARTY_NOTICES.txt` at the end (`scripts/notices.mjs`: license texts of all `dependencies` + the bundled packages in `BUNDLED`, each with their dependencies; aborts if a license file is missing). electron-builder places `LICENSE.txt` + `THIRD_PARTY_NOTICES.txt` next to the .exe. **New library in renderer/main → add it to `BUNDLED`.** Checked: no GPL/non-commercial licenses in `node_modules`; MPL/CC packages are build tools only.
 
-## Architektur
+## Architecture
 
-**Agent-Start** (`main/agents.ts`): `claude.exe` direkt per node-pty im Agent-Ordner (bei `.cmd`-Installation via `cmd.exe /c`, Sonderzeichen werden entfernt):
-`claude [Nutzer-Flags]  --session-id <uuid> | --resume <uuid>  --settings <agent>/settings.json  --mcp-config <agent>/mcp.json  --append-system-prompt <Hinweis> [Aufgabe]`
+**Agent start** (`main/agents.ts`): `claude.exe` directly via node-pty in the agent folder (for a `.cmd` installation via `cmd.exe /c`, special characters are removed):
+`claude [user flags]  --session-id <uuid> | --resume <uuid>  --settings <agent>/settings.json  --mcp-config <agent>/mcp.json  --append-system-prompt <hint> [task]`
 
-- **Nutzer-Flags** (`shared/agentArgs.ts`): global `settings.agentArgs` + pro Projekt `project.agentArgs`, Text wie in einer Shell (Quotes, Backslashes bleiben). `mergeAgentArgs(global, projekt, agent)`: gleichnamiges Flag einer höheren Ebene ersetzt das niedrigere; Ebene „agent“ = `agent.model` (per Sprachbefehl genannt, persistiert) oder sonst Modell der Vorlage → `--model` (gilt auch bei Wiederherstellung; geprüft mit `isValidModelName`). Stehen **vor** den DevHub-Flags (beendet variadische Werte, Aufgabe bleibt positional). `validateAgentArgs` (Dialoge live + Main beim Speichern) lehnt freien Text und reservierte Flags ab (`--session-id`, `--resume`/`-r`, `--continue`/`-c`, `--fork-session`, `--no-session-persistence`, `--settings`, `--mcp-config`, `--append-system-prompt`, `--print`/`-p`, `--help`, `--version`). Unbekannte Flags prüft erst claude selbst → Startfehler (s. u.).
-- `--resume` nur, wenn `~/.claude/projects/*/<sessionId>.jsonl` existiert, sonst `--session-id` (gleiche ID). Abzweigen (`agent.forkFrom`): `--resume <alt> --fork-session --session-id <neu>` – nur beim ersten Start, danach gibt es das eigene Transkript
-- Arbeitsverzeichnis = Agent-Ordner oder Worktree (`worktreeCwd`: gleicher Unterordner wie der Agent-Ordner im Repo); steht in `RunningAgent.cwd`, relative Pfade der MCP-Tools beziehen sich darauf
-- **Andere Engine** (`agent.engineId`, `spawnEngine`): `cmd.exe /d /s /c "<Befehl>"` im selben pty, keine DevHub-Flags/Hooks. Status = „arbeitet“, solange Ausgabe kommt, nach 2,5 s Ruhe „bereit“; Aufgabe und Aufträge werden eingetippt (Aufträge sofort, da es kein „fertig“ gibt). Kein Verlauf, kein `--resume` (Neustart = frisches Programm)
-- Pro-Agent-Dateien in `<data>\agents\<agentId>\` (bei jedem Start neu geschrieben, da Port/Token wechseln)
-- Env ohne Session-Marker einer übergeordneten Claude-Instanz (`claudeEnv()` in `main/tools.ts`)
+- **User flags** (`shared/agentArgs.ts`): global `settings.agentArgs` + per project `project.agentArgs`, text as in a shell (quotes, backslashes are kept). `mergeAgentArgs(global, project, agent)`: a flag of the same name on a higher level replaces the lower one; level "agent" = `agent.model` (named in the voice command, persisted) or otherwise the template's model → `--model` (also applies on restore; checked with `isValidModelName`). They come **before** the DevHub flags (ends variadic values, the task stays positional). `validateAgentArgs` (dialogs live + main when saving) rejects free text and reserved flags (`--session-id`, `--resume`/`-r`, `--continue`/`-c`, `--fork-session`, `--no-session-persistence`, `--settings`, `--mcp-config`, `--append-system-prompt`, `--print`/`-p`, `--help`, `--version`). Unknown flags are only checked by claude itself → start failure (see below).
+- `--resume` only if `~/.claude/projects/*/<sessionId>.jsonl` exists, otherwise `--session-id` (same id). Forking (`agent.forkFrom`): `--resume <old> --fork-session --session-id <new>` – only on the first start, afterwards the agent has its own transcript
+- Working directory = agent folder or worktree (`worktreeCwd`: same subfolder as the agent folder within the repo); stored in `RunningAgent.cwd`, relative paths of the MCP tools refer to it
+- **Other engine** (`agent.engineId`, `spawnEngine`): `cmd.exe /d /s /c "<command>"` in the same pty, no DevHub flags/hooks. Status = "working" while output arrives, after 2.5 s of silence "ready"; task and queued instructions are typed in (queued instructions immediately, as there is no "done"). No history, no `--resume` (restart = fresh program)
+- Per-agent files in `<data>\agents\<agentId>\` (rewritten on every start because port/token change)
+- Env without the session markers of a parent Claude instance (`claudeEnv()` in `main/tools.ts`)
 
-**Rückkanal Agent → App** (`main/agentBridge.ts`): HTTP-Server auf `127.0.0.1:<zufälliger Port>` mit Zufalls-Token
+**Back channel agent → app** (`main/agentBridge.ts`): HTTP server on `127.0.0.1:<random port>` with a random token
 
-- `POST /hook/<token>/<agentId>`: Hooks posten ihr JSON per `curl.exe … --data-binary @-`
-  Status: `SessionStart`→idle · `UserPromptSubmit`/`PreToolUse`/`PostToolUse`→working · `PreToolUse(AskUserQuestion)`/`Notification`/`Stop`→**needsInput** (links hervorgehoben). `PreToolUse` liefert zusätzlich die Aktivität (`describeTool` in `shared/permissions.ts` → `agent.activity` + `activityLog`)
-- `POST /stop/<token>/<agentId>`: **Stop-Hook aller Agents** (curl ohne `-m`, Hook-`timeout` 1 h) – bleibt offen, solange die Prüfungen laufen; Antwort leer = anhalten, `{decision:"block",reason}` = weiterarbeiten (s. Prüfungen). Erst danach verarbeitet `handleStop` das Ereignis wie früher den Stop-Hook
-- `POST /permission/<token>/<agentId>`: `PermissionRequest`-Hook **aller** Claude-Agents, bleibt offen bis zur Entscheidung (s. Freigaben)
-- `POST /mcp/<token>/<agentId>`: minimaler MCP-Server (Streamable HTTP, nur JSON-Antworten). Für alle (`COMMON_TOOLS`): `show_code(file_path, start_line, end_line?, note?)` → `code:focus`, `show_plan(title, markdown)` → `code:plan`, `show_diff(file_path?)` → `code:showDiff` (öffnet das Review-Fenster), `notify_user(message)`, `report_progress(message, percent?)`, `run_list`/`run_output(name, lines?)`/`run_start`/`run_stop` (Projekt-Befehle, `runTool` in `index.ts`); für Teammitglieder zusätzlich `team_members`/`send_team_message` (s. Teams). Tools sind per `permissions.allow` freigegeben. **Neues Tool:** Definition + `ToolName` in `agentBridge.ts`, ggf. `COMMON_TOOLS`, Handler in `handleToolCall`, Hinweis in `SYSTEM_HINT`.
+- `POST /hook/<token>/<agentId>`: hooks post their JSON via `curl.exe … --data-binary @-`
+  Status: `SessionStart`→idle · `UserPromptSubmit`/`PreToolUse`/`PostToolUse`→working · `PreToolUse(AskUserQuestion)`/`Notification`/`Stop`→**needsInput** (highlighted on the left). `PreToolUse` additionally provides the activity (`describeTool` in `shared/permissions.ts` → `agent.activity` + `activityLog`)
+- `POST /stop/<token>/<agentId>`: **Stop hook of all agents** (curl without `-m`, hook `timeout` 1 h) – stays open while the checks are running; empty response = stop, `{decision:"block",reason}` = continue working (see Checks). Only afterwards does `handleStop` process the event the way the Stop hook used to
+- `POST /permission/<token>/<agentId>`: `PermissionRequest` hook of **all** Claude agents, stays open until the decision (see Permission requests)
+- `POST /mcp/<token>/<agentId>`: minimal MCP server (Streamable HTTP, JSON responses only). For all (`COMMON_TOOLS`): `show_code(file_path, start_line, end_line?, note?)` → `code:focus`, `show_plan(title, markdown)` → `code:plan`, `show_diff(file_path?)` → `code:showDiff` (opens the review window), `notify_user(message)`, `report_progress(message, percent?)`, `run_list`/`run_output(name, lines?)`/`run_start`/`run_stop` (project commands, `runTool` in `index.ts`); for team members additionally `team_members`/`send_team_message` (see Teams). Tools are allowed via `permissions.allow`. **New tool:** definition + `ToolName` in `agentBridge.ts`, `COMMON_TOOLS` if applicable, handler in `handleToolCall`, hint in `SYSTEM_HINT`.
 
-**Strg+G-Editor-Tab** (statt externem Editor): Agents starten mit `EDITOR`/`VISUAL` = `devhub-notepad` und `<data>\agents\<id>\bin` vorne im `PATH`; dort liegt `devhub-notepad.cmd` = `curl.exe -s -o NUL -X POST <bridge>/editor/<token>/<agentId> --data-binary "%~1"`. claude ruft bei Strg+G per cmd `$EDITOR "<temp-prompt.md>"` auf und wartet auf das Prozessende; Bridge hält die Anfrage offen (`requestTimeout = 0`), bis `AgentManager.finishEditor` die Datei schreibt und antwortet → claude lädt den Text als Prompt. `submit` → nach 500 ms `\r`.
+**Ctrl+G editor tab** (instead of an external editor): agents start with `EDITOR`/`VISUAL` = `devhub-notepad` and `<data>\agents\<id>\bin` at the front of `PATH`; it contains `devhub-notepad.cmd` = `curl.exe -s -o NUL -X POST <bridge>/editor/<token>/<agentId> --data-binary "%~1"`. On Ctrl+G claude calls `$EDITOR "<temp-prompt.md>"` via cmd and waits for the process to end; the bridge keeps the request open (`requestTimeout = 0`) until `AgentManager.finishEditor` writes the file and responds → claude loads the text as the prompt. `submit` → `\r` after 500 ms.
 
-- Während der Tab offen ist: `agent.editing = true` (nicht persistiert). Main ignoriert `write`, `sendLine` wirft, `sendVoice` → `editor:append` (Text landet im Entwurf), Team-Nachrichten → `pending` (`flushPending` nach dem Schließen). Renderer: `disableStdin` (`setTerminalLocked`), Einzelansicht/Raster zeigen `LockedTerminal` = Terminal/Standbild + darübergelegte, abgedunkelte Ebene `.locked-overlay` mit Hinweis unten (wo das Eingabefeld ist – sonst wirkt das Standbild bedienbar; absolut positioniert, verkleinert das Terminal nicht) + Badge „🔒 im Tab“ im Kopf (Klick irgendwo → Tab, per `onMouseDownCapture`; geht, weil Agents-Ansicht und Editor-Tab nie gleichzeitig gerendert werden – ein xterm hängt immer nur an einer Stelle), Klick links auf den Agent → Tab.
-- **Größe einfrieren:** claude wartet blockierend (`spawnSync`) auf den Editor und zeichnet bei Größenänderung nicht neu → xterm würde den Inhalt abschneiden. Deshalb **erst Tab, dann Strg+G** (`openEditor` in `Workspace`): Tab öffnet sich sofort (`preparing`, Textfeld noch gesperrt), Terminal hängt in der Tab-Spalte → fit → claude zeichnet sich in dieser Größe neu; nach 400 ms `sendEditorKey`. Öffnet claude binnen 4 s keinen Editor (z. B. Auswahl offen), schließt der Tab mit Hinweis. `setTerminalLocked` (schon im `editor:opened`-Handler) merkt sich die Pixelgröße (`lockedSize`) und fittet nicht mehr; in kleineren Containern wird per CSS `transform` skaliert (nur Rückfall, z. B. Strg+G direkt im Terminal bei anders belegtem DevHub-Kürzel). Nichts über/neben das Terminal legen, was dessen Container verkleinert (Hinweise in den Kopf).
-- **Standbild für die Agents-Ansicht:** `openEditor` ruft vorher `snapshotTerminal` (DOM-Kopie des `.xterm`-Wurzelelements; xterm zeichnet per DOM, Farben/Maße hängen an der Owner-Klasse daran). Solange der Tab offen ist, zeigt `LockedTerminal` per `TerminalView snapshot` dieses Standbild in voller Breite, das live-Terminal hängt im schmaleren Tab. `dropSnapshot` beim Schließen/Abbruch/`disposeTerminal`.
-- Mitte: Tab-Leiste (`.center-tabs`) nur bei offenen Editor-Tabs: „Agents“ + je Agent ein Tab; ✕ = Text übernehmen ohne Abschicken. `EditorTab`: Terminal links (gesperrt), rechts Textfeld mit Diktat, Anhängen, Verwerfen / In Prompt übernehmen / Abschicken (Strg+Enter). Im Tab ist der Agent der aktive → Sprach-Kürzel diktiert in den Entwurf.
-- Bilder/Dateien als `@"pfad"` (claude hängt sie beim Abschicken an, Bilder als Bild): Strg+V speichert nach `<data>\agents\<id>\images\`, Drag & Drop nutzt den Originalpfad (`webUtils.getPathForFile`), Button „Anhängen“ = Dateiauswahl. Chips mit Vorschau (`editor:imagePreview` → data:-URL).
-- Agent endet bei offenem Tab → `closeEditor` beantwortet die Anfrage (sonst bliebe ein verwaister curl).
-- Auslösen: **DevHub-Kürzel** `settings.hotkeyEditor` (Standard `Strg+G`, Einstellungen → Tastenkürzel) für den aktiven Agent, Stift-Button im Einzelansicht-Kopf, Rechtsklick „Anweisung im Tab schreiben“. Alle über `openEditor` in `Workspace`: Tab offen → hinwechseln, sonst `sendEditorKey` (`lib/terminals.ts`, schickt `\x07` = claudes Strg+G). Strg+G direkt im Terminal funktioniert unabhängig davon weiter (claudes eigene Belegung `chat:externalEditor`).
-- **Warum „notepad“ im Namen:** claude (2.1, aus dem Binary gelesen) stuft `EDITOR` als GUI-Editor ein, wenn der Programmname (erstes Wort ohne `start`/`cmd`/Schalter, Basisname) `code`, `cursor`, `windsurf`, `codium`, `subl`, `atom`, `gedit`, `notepad++` oder `notepad` enthält. GUI → Oberfläche bleibt stehen, Eingabefeld zeigt „Save and close editor to continue...“ (wie nativ). Sonst (z. B. `curl.exe`) = Terminal-Editor → claude wechselt in den Alternate Screen und leert ihn → Terminal wäre leer. Nicht `code` verwenden: dann hängt claude ggf. `-g datei:zeile` an. EDITOR darf keinen Pfad mit Leerzeichen enthalten (claude trennt an Leerzeichen) → Aufruf über `PATH`. Mit echtem claude geprüft (Leerzeichen im bin-Pfad ok).
+- While the tab is open: `agent.editing = true` (not persisted). Main ignores `write`, `sendLine` throws, `sendVoice` → `editor:append` (the text lands in the draft), team messages → `pending` (`flushPending` after closing). Renderer: `disableStdin` (`setTerminalLocked`), single view/grid show `LockedTerminal` = terminal/still image + a dimmed layer `.locked-overlay` on top with a notice at the bottom (where the input field is – otherwise the still image looks usable; absolutely positioned, does not shrink the terminal) + badge "🔒 in tab" („🔒 im Tab“) in the header (click anywhere → tab, via `onMouseDownCapture`; works because the agents view and the editor tab are never rendered at the same time – an xterm is only ever attached in one place), click on the agent on the left → tab.
+- **Freezing the size:** claude waits blockingly (`spawnSync`) for the editor and does not redraw on a size change → xterm would cut off the content. Therefore **first the tab, then Ctrl+G** (`openEditor` in `Workspace`): the tab opens immediately (`preparing`, text field still locked), the terminal is attached in the tab column → fit → claude redraws itself at this size; after 400 ms `sendEditorKey`. If claude does not open an editor within 4 s (e.g. a selection is open), the tab closes with a notice. `setTerminalLocked` (already in the `editor:opened` handler) remembers the pixel size (`lockedSize`) and no longer fits; in smaller containers it is scaled via CSS `transform` (fallback only, e.g. Ctrl+G directly in the terminal when the DevHub shortcut is assigned differently). Do not put anything above/next to the terminal that shrinks its container (notices go into the header).
+- **Still image for the agents view:** `openEditor` calls `snapshotTerminal` beforehand (DOM copy of the `.xterm` root element; xterm draws via DOM, colors/dimensions depend on the owner class on it). While the tab is open, `LockedTerminal` shows this still image at full width via `TerminalView snapshot`, the live terminal is attached in the narrower tab. `dropSnapshot` on close/abort/`disposeTerminal`.
+- Center: tab bar (`.center-tabs`) only with open editor tabs: "Agents" + one tab per agent; ✕ = take over the text without sending. `EditorTab`: terminal on the left (locked), on the right a text field with dictation, attach, discard / take over into the prompt / send (Ctrl+Enter). In the tab the agent is the active one → the voice shortcut dictates into the draft.
+- Images/files as `@"path"` (claude attaches them on sending, images as images): Ctrl+V saves to `<data>\agents\<id>\images\`, drag & drop uses the original path (`webUtils.getPathForFile`), button "Attach" = file picker. Chips with a preview (`editor:imagePreview` → data: URL).
+- Agent ends while the tab is open → `closeEditor` answers the request (otherwise an orphaned curl would remain).
+- Triggering: **DevHub shortcut** `settings.hotkeyEditor` (default `Ctrl+G`, Settings → Keyboard shortcuts) for the active agent, pen button in the single-view header, right-click "Write instruction in tab". All via `openEditor` in `Workspace`: tab open → switch to it, otherwise `sendEditorKey` (`lib/terminals.ts`, sends `\x07` = claude's Ctrl+G). Ctrl+G directly in the terminal keeps working independently of this (claude's own binding `chat:externalEditor`).
+- **Why "notepad" in the name:** claude (2.1, read from the binary) classifies `EDITOR` as a GUI editor if the program name (first word without `start`/`cmd`/switches, base name) contains `code`, `cursor`, `windsurf`, `codium`, `subl`, `atom`, `gedit`, `notepad++` or `notepad`. GUI → the interface stays, the input field shows "Save and close editor to continue..." (as natively). Otherwise (e.g. `curl.exe`) = terminal editor → claude switches to the alternate screen and clears it → the terminal would be empty. Do not use `code`: claude may then append `-g file:line`. EDITOR must not contain a path with spaces (claude splits at spaces) → call via `PATH`. Checked with real claude (spaces in the bin path are ok).
 
-**Bearbeitete Dateien** (`main/snippets.ts`, `EditedFile`): live aus `PostToolUse` (`tool_response` mit `filePath` + `structuredPatch` → `editFromToolResult`, `changedRanges` = `+`-Zeilen, Löschung markiert die Folgezeile); nach Wiederherstellung aus dem Transkript (`user`-Einträge, `toolUseResult` = gleiches Format, `editsFromLines`). `mergeEdits`: gleiche Datei behält ihren Platz (Reihenfolge = erste Bearbeitung), neuere Änderung gewinnt, max. 30; doppelte Meldung (Hook + Transkript) löst kein Event aus. Event/Abfrage `code:edits`. Format mit echtem claude 2.1 geprüft (Edit, Write `type: "create"`).
+**Edited files** (`main/snippets.ts`, `EditedFile`): live from `PostToolUse` (`tool_response` with `filePath` + `structuredPatch` → `editFromToolResult`, `changedRanges` = `+` lines, a deletion marks the following line); after a restore from the transcript (`user` entries, `toolUseResult` = same format, `editsFromLines`). `mergeEdits`: the same file keeps its place (order = first edit), the newer change wins, max. 30; a duplicate report (hook + transcript) does not trigger an event. Event/query `code:edits`. Format checked with real claude 2.1 (Edit, Write `type: "create"`).
 
-**Snippets** (`main/snippets.ts`): Jedes Hook-Ereignis enthält `transcript_path` → `TranscriptReader` pro Agent liest das JSONL-Transkript inkrementell (Byte-Offset, nur vollständige Zeilen; erstes Lesen = ganze Datei, nach Wiederherstellung sind alte Snippets also wieder da). Gelesen bei `SessionStart`, `Stop` (+ erneut nach 1,5 s), `Notification`, `PreToolUse(AskUserQuestion)`. Nur `type: "assistant"`, nicht `isSidechain` (Subagents), Text-Blöcke → Code-Zäune. Pro Agent max. 30, gleicher Code nur einmal. Event `code:snippets` (volle Liste), `code:snippets`-Abfrage nach Renderer-Reload. Kein Mitwirken des Agents nötig (kein MCP-Tool).
+**Snippets** (`main/snippets.ts`): every hook event contains `transcript_path` → a `TranscriptReader` per agent reads the JSONL transcript incrementally (byte offset, complete lines only; first read = whole file, so after a restore old snippets are back). Read on `SessionStart`, `Stop` (+ again after 1.5 s), `Notification`, `PreToolUse(AskUserQuestion)`. Only `type: "assistant"`, not `isSidechain` (subagents), text blocks → code fences. Max. 30 per agent, the same code only once. Event `code:snippets` (full list), `code:snippets` query after a renderer reload. No cooperation by the agent needed (no MCP tool).
 
-**Worktrees** (`main/git.ts`, ohne Electron → per Skript testbar; immer `execFile('git', …)`): `prepareWorktree` vor dem ersten Start (`start`, Team-Worker in `startTeam`; der Orchestrator bleibt im Hauptordner und bekommt die Branch-Namen in den Prompt – `worktreeBranch(name, id)` ist vor dem Anlegen berechenbar; Worker sollen committen, er führt per `git merge` zusammen). `createWorktree` trägt `.devhub/` in `.git/info/exclude` ein. Beim Ende (`forget`): Worktree ohne Änderungen und ohne eigene Commits wird entfernt (`removeWorktreeIfUnused`), sonst bleibt er zum Prüfen stehen; Fortsetzen aus dem Verlauf legt einen entfernten am alten Pfad wieder an (`restoreWorktree`, Sitzungen lassen sich nur in ihrem Verzeichnis fortsetzen). Abzweigen teilt sich den Worktree des Originals.
+**Worktrees** (`main/git.ts`, without Electron → testable by script; always `execFile('git', …)`): `prepareWorktree` before the first start (`start`, team workers in `startTeam`; the orchestrator stays in the main folder and gets the branch names in its prompt – `worktreeBranch(name, id)` can be computed before creation; workers are supposed to commit, the orchestrator merges via `git merge`). `createWorktree` adds `.devhub/` to `.git/info/exclude`. On ending (`forget`): a worktree without changes and without own commits is removed (`removeWorktreeIfUnused`), otherwise it stays for review; resuming from the history re-creates a removed one at the old path (`restoreWorktree`, sessions can only be resumed in their directory). A fork shares the worktree of the original.
 
-**Review** (`git:*` in `index.ts`): Renderer nennt nur `(projectId, targetId)`, Main löst das Verzeichnis über `reviewTargets` auf (Hauptordner = `main`, Worktrees unter `<repo>/.devhub/worktrees` = `wt:<branch>`); Pfade prüft `insideWorkdir` (kein `..`, kein `.git`). Vergleichsbasis (`reviewRef`): Hauptordner = `HEAD`, Worktree = `merge-base(HEAD, base)` → auch Commits des Agents zählen; Repo ohne Commit = leerer Baum. `mergeWorktree`: `--no-ff` in den Branch, der im Hauptordner ausgecheckt ist; verlangt sauberen Worktree, bei Konflikt `merge --abort`.
+**Review** (`git:*` in `index.ts`): the renderer only names `(projectId, targetId)`, main resolves the directory via `reviewTargets` (main folder = `main`, worktrees under `<repo>/.devhub/worktrees` = `wt:<branch>`); paths are checked by `insideWorkdir` (no `..`, no `.git`). Comparison base (`reviewRef`): main folder = `HEAD`, worktree = `merge-base(HEAD, base)` → the agent's commits count too; repo without a commit = empty tree. `mergeWorktree`: `--no-ff` into the branch checked out in the main folder; requires a clean worktree, on conflict `merge --abort`.
 
-**Prüfungen** (`handleStop`): nur wenn der Agent seit der letzten Prüfung Dateien geändert hat (`editedThisTurn`, aus `PostToolUse`). Befehle laufen nacheinander per `exec` im Arbeitsverzeichnis (10 min je Befehl); erster Fehlschlag → `block` mit den letzten 6000 Zeichen der Ausgabe, höchstens 3-mal je Anweisung (`MAX_GATE_ROUNDS`). Meldet der Agent danach fertig, ohne etwas geändert zu haben (er erklärt z. B., warum er nicht korrigiert), wird nicht erneut geprüft. Statustext: „Fertig – Prüfungen grün“ / „… schlägt fehl“.
+**Checks** (`handleStop`): only if the agent has changed files since the last check (`editedThisTurn`, from `PostToolUse`). Commands run one after another via `exec` in the working directory (10 min per command); first failure → `block` with the last 6000 characters of the output, at most 3 times per instruction (`MAX_GATE_ROUNDS`). If the agent then reports done without having changed anything (e.g. it explains why it is not fixing it), no further check is run. Status text: "Done – checks green" / "… fails" („Fertig – Prüfungen grün“ / „… schlägt fehl“).
 
-**Freigaben** (`requestPermission`): 1. Regel des Projekts passt (`matchesRule`: `Tool` oder `Bash:<Anfang>`, verkettete/umgeleitete Befehle passen nie) → sofort `allow`. 2. Worker → Orchestrator (s. Teams). 3. `settings.permissionInbox` an → Eintrag im Eingang (`PermissionInfo`, Ereignis `inbox:permissions`), Antwort über `answerUserPermission` (`always` speichert `ruleFor(...)` in `project.permissionRules`). 4. sonst leere Antwort → claudes normaler Dialog im Terminal. Solange eine Freigabe offen ist, überschreiben `Notification`/`PostToolUse` den Status nicht.
+**Permission requests** (`requestPermission`): 1. A rule of the project matches (`matchesRule`: `Tool` or `Bash:<prefix>`, chained/redirected commands never match) → `allow` immediately. 2. Worker → orchestrator (see Teams). 3. `settings.permissionInbox` on → entry in the inbox (`PermissionInfo`, event `inbox:permissions`), answer via `answerUserPermission` (`always` saves `ruleFor(...)` in `project.permissionRules`). 4. Otherwise empty response → claude's normal dialog in the terminal. While a permission request is open, `Notification`/`PostToolUse` do not overwrite the status.
 
-**Aufträge/Aufgaben**: `enqueue` hängt an `agent.queue` (persistiert) und ruft `sendNextQueued`: abgeschickt wird nur, wenn der Zug beendet ist (`turnDone`, gesetzt im Stop) und `mustHold` nichts dagegen hat; sonst nach dem nächsten Stop bzw. alle 5 s erneut versucht. `agent.currentTaskId` → beim Stop wird die Aufgabe „erledigt“; endet der Agent vorher, geht sie zurück auf „offen“. Aufgaben liegen in `state.tasks`.
+**Queued instructions/tasks**: `enqueue` appends to `agent.queue` (persisted) and calls `sendNextQueued`: it is only sent when the turn has ended (`turnDone`, set in the stop) and `mustHold` has no objection; otherwise retried after the next stop or every 5 s. `agent.currentTaskId` → on stop the task becomes "done"; if the agent ends before that, it goes back to "open". Tasks are stored in `state.tasks`.
 
-**Zustellung härter gemacht** (`mustHold`): automatische Eingaben (Team-Nachrichten, Aufträge) warten, solange der Agent startet, der Editor-Tab offen ist, eine `AskUserQuestion` offen ist (`r.asking`, nicht mehr über den deutschen Statustext) oder der Nutzer gerade tippt (`r.draftAt`: druckbare Zeichen in `write()`, gelöscht bei Enter/Strg+C/Strg+U, gilt 45 s).
+**Hardened delivery** (`mustHold`): automatic inputs (team messages, queued instructions) wait while the agent is starting, the editor tab is open, an `AskUserQuestion` is open (`r.asking`, no longer via the status text) or the user is currently typing (`r.draftAt`: printable characters in `write()`, cleared on Enter/Ctrl+C/Ctrl+U, valid for 45 s).
 
-**Verlauf** (`state.archive`, max. 200): `forget` übernimmt regulär beendete Claude-Agents ohne Team mit vorhandenem Transkript (Titel = erste Anweisung, Verbrauch). `resumeArchived` startet mit derselben Session (Eintrag verschwindet) oder als Kopie. Suche (`main/history.ts`): Rohzeilen-Vorfilter, dann nur `user`/`assistant`-Texte, max. 3 Ausschnitte je Sitzung, Transkripte > 60 MB werden übersprungen.
+**History** (`state.archive`, max. 200): `forget` takes over regularly ended Claude agents without a team that have a transcript (title = first instruction, usage). `resumeArchived` starts with the same session (the entry disappears) or as a copy. Search (`main/history.ts`): raw-line pre-filter, then only `user`/`assistant` texts, max. 3 excerpts per session, transcripts > 60 MB are skipped.
 
-**Verbrauch** (`UsageTracker` in `main/snippets.ts`): `message.usage` der `assistant`-Zeilen, je `message.id` nur einmal gezählt (eine Antwort steht in mehreren Zeilen); Kontext = Eingabe + Cache der letzten Antwort (ohne Subagents); `byDay` in lokaler Zeit. Gelesen bei den Snippet-Anlässen und gedrosselt (4 s) bei `PostToolUse`. Kontext-Warnung ab `settings.contextWarnTokens`. Kosten nur aus `settings.priceInput/priceOutput` (Cache-Lesen 10 %, -Schreiben 125 %) – DevHub kennt keine Modellpreise.
+**Usage** (`UsageTracker` in `main/snippets.ts`): `message.usage` of the `assistant` lines, counted only once per `message.id` (one answer is spread over several lines); context = input + cache of the last answer (without subagents); `byDay` in local time. Read on the snippet occasions and throttled (4 s) on `PostToolUse`. Context warning from `settings.contextWarnTokens`. Costs only from `settings.priceInput/priceOutput` (cache read 10 %, cache write 125 %) – DevHub does not know any model prices.
 
-**Ausführen** (`main/runs.ts`): `spawn(command, { shell: true })` im Agent-Ordner, Ausgabe ohne ANSI, 300 KB je Befehl; Stopp per `taskkill /T /F`. Prozesse laufen bis zum App-Ende weiter. Vorschau = eigenes `BrowserWindow` (sandbox, kein Preload), nur `http(s)`.
+**Run** (`main/runs.ts`): `spawn(command, { shell: true })` in the agent folder, output without ANSI, 300 KB per command; stop via `taskkill /T /F`. Processes keep running until the app ends. Preview = own `BrowserWindow` (sandbox, no preload), only `http(s)`.
 
-**Fernzugriff** (`main/remote.ts`): HTTP auf `0.0.0.0:<settings.remotePort>`, alles unter `/<remoteToken>/` (sonst 404, Vergleich mit `timingSafeEqual`): Seite, `GET api/state`, `POST api/send`, `POST api/permission` (nur allow/deny/always). Unverschlüsselt – bewusst nur als Opt-in fürs eigene Netz/VPN; Token entsteht beim ersten Einschalten, leeren = neue Adresse.
+**Remote access** (`main/remote.ts`): HTTP on `0.0.0.0:<settings.remotePort>`, everything under `/<remoteToken>/` (otherwise 404, comparison with `timingSafeEqual`): page, `GET api/state`, `POST api/send`, `POST api/permission` (only allow/deny/always). Unencrypted – deliberately only as an opt-in for your own network/VPN; the token is created when first switched on, clearing it = new address.
 
-**Agent-Lebenszyklus**
+**Agent lifecycle**
 
-- Namen: kleinste freie Nummer **global** („Agent N“) → eindeutig für Sprachbefehle
-- Prozess endet (`/exit` oder ✕ in der Liste) → Agent aus Zustand entfernt (Sitzung → Verlauf), Ansicht schließt sich
-- Startfehler: endet ein Agent < 8 s nach Start mit Exit-Code ≠ 0 (nicht per ✕), meldet Main `agents:startFailed` mit den letzten Ausgabezeilen (ohne ANSI) → Toast
-- App wird beendet (`before-quit`) → Prozesse gestoppt, Agents bleiben gespeichert → beim nächsten Start `agents:restore` (einmal pro App-Start)
-- Wartezustand überlebt Neustarts: `setStatus` speichert `needsInput` (Hinweistext) am gespeicherten Agent; Wiederherstellung startet mit diesem Status, `SessionStart` mit `source: "resume"` setzt ihn nicht auf idle zurück (erst `UserPromptSubmit`/Tool-Hooks)
+- Names: smallest free number **globally** ("Agent N") → unique for voice commands
+- Process ends (`/exit` or ✕ in the list) → agent removed from the state (session → history), the view closes
+- Start failure: if an agent ends < 8 s after the start with an exit code ≠ 0 (not via ✕), main reports `agents:startFailed` with the last output lines (without ANSI) → toast
+- App is quit (`before-quit`) → processes stopped, agents stay saved → on the next start `agents:restore` (once per app start)
+- The waiting state survives restarts: `setStatus` saves `needsInput` (notice text) on the saved agent; the restore starts with this status, `SessionStart` with `source: "resume"` does not reset it to idle (only `UserPromptSubmit`/tool hooks do)
 
-**Terminals im Renderer** (`lib/terminals.ts`): ein xterm pro Agent, lebt unabhängig von React und sammelt Ausgabe auch unsichtbar; `attachTerminal()` hängt das DOM-Element in Einzelansicht oder Rasterzelle. Main hält zusätzlich 200 KB Ausgabe-Puffer (`agents:buffer`) für Renderer-Reloads.
+**Terminals in the renderer** (`lib/terminals.ts`): one xterm per agent, lives independently of React and collects output even when invisible; `attachTerminal()` attaches the DOM element in the single view or a grid cell. Main additionally keeps a 200 KB output buffer (`agents:buffer`) for renderer reloads.
 
-- **Kopieren/Einfügen wie im Windows-Terminal** (`clipboardKey`/`pasteInto`): Strg+C **mit** Auswahl kopiert (ohne Auswahl = ^C an den Agent), ebenso Strg+Shift+C/Strg+Einfg. Strg+V/Strg+Shift+V/Shift+Einfg: Main liest die Zwischenablage (`clipboard:read`) → Text per `term.paste` (Bracketed Paste); nur ein Bild → `ESC v` (= Alt+V, claudes Bild-Einfügen unter Windows, aus dem Binary; mit echtem claude geprüft → `[Image #1]`). `preventDefault`, sonst fügt der Browser zusätzlich ein. Ohne das schickt xterm.js bei Strg+V nur `^V`.
-- Electron 44: `clipboard` ist **asynchron** (W3C-Stil: `readText()`/`has(mime)`/`read()` liefern Promises, kein `readImage`); Windows-Bitmaps erscheinen als `image/png`.
+- **Copy/paste as in Windows Terminal** (`clipboardKey`/`pasteInto`): Ctrl+C **with** a selection copies (without a selection = ^C to the agent), likewise Ctrl+Shift+C/Ctrl+Insert. Ctrl+V/Ctrl+Shift+V/Shift+Insert: main reads the clipboard (`clipboard:read`) → text via `term.paste` (bracketed paste); only an image → `ESC v` (= Alt+V, claude's image paste on Windows, from the binary; checked with real claude → `[Image #1]`). `preventDefault`, otherwise the browser pastes additionally. Without this, xterm.js only sends `^V` on Ctrl+V.
+- Electron 44: `clipboard` is **asynchronous** (W3C style: `readText()`/`has(mime)`/`read()` return promises, no `readImage`); Windows bitmaps appear as `image/png`.
 
-**Sprachsteuerung**: Renderer nimmt WAV auf (`lib/recorder.ts`, 16 kHz mono) → `voice:transcribe` (whisper-cli, Priorität „niedriger als normal“, Threads = halbe Kerne) →
+**Voice control**: the renderer records WAV (`lib/recorder.ts`, 16 kHz mono) → `voice:transcribe` (whisper-cli, priority "below normal", threads = half the cores) →
 
-- **Feste Sprache** (`settings.voiceFixedLanguage`, Einstellungen „Gesprochene Sprache“: Automatisch / Immer Deutsch / Immer Englisch): immer `-l <code>`, keine Erkennung, Merken entfällt.
-- **Sprache merken** (`settings.voiceRememberLanguage`, Standard an; gemerkt in `settings.voiceLanguage`): zuerst `-l <gemerkt>` (≈1,5 s statt ≈3 s mit `auto`). Auswertung per `-ojf` (JSON: Sprache + Token-Wahrscheinlichkeit `p`). Leeres Ergebnis oder Ø p < 0,6 → zweiter Lauf mit `auto`, dessen Sprache gespeichert wird. **Englisch wird nie gemerkt/vorgegeben** (`canRememberLanguage` in `shared/voiceLanguage.ts`): bei `-l en` übersetzt whisper deutsche Sprache ins Englische mit p = 0,66 (gemessen, Modell small) → Prüfung greift nicht (war ein Nutzer-Bug). Erzwungenes `de` bei englischer Sprache ergibt dagegen p ≈ 0,5. Zur Sicherheit weiterhin jede 5. Aufnahme `auto`. Die Job-Karte zeigt die gemerkte Sprache vorab (`[DE] Wandle in Text um …`), ohne gemerkte Sprache „Erkenne Sprache und Text …“; nach einem `auto`-Lauf lädt der Renderer die Einstellungen neu.
-- **Hintergrund:** „Fertig“ beendet nur die Aufnahme; Erkennung/Zuordnung laufen als `VoiceJob` weiter (Karten unten in der Mitte, mehrere gleichzeitig), neue Aufnahmen sind sofort möglich. Overlay lässt Klicks durch (`.voice-stack` mit `pointer-events: none`).
-- **Abschicken oder nur eintragen:** `agents:sendVoice` entscheidet im Main: `agent.voiceAutoSend` (pro Agent, Rechtsklick-Menü, persistiert) → sonst global `settings.voiceAutoSend`. Gilt auch für globale Befehle (`send`).
-- aktiver Agent (Standard `Strg+Shift+Leertaste` / Mikrofon in der Mitte): Text an Agent (`sendLine` = Text, 150 ms, Enter)
-- global (Standard `Strg+Alt+Leertaste` per `globalShortcut` / Mikrofon links): `voice:command` → `claude -p --model haiku --output-format json --tools "" --strict-mcp-config --no-session-persistence` (Prompt via stdin) liefert JSON `send` | `start` (+ optional `model`: Alias `fable`/`opus`/`sonnet`/`haiku`, bei genannter Version voller Name wie `claude-opus-5-5`) | `none`
-- **Kürzel einstellbar** (Einstellungen → `HotkeyInput`): gespeichert als Electron-Accelerator in `settings.hotkeyAgentVoice` / `hotkeyGlobalVoice` / `hotkeyEditor` (alle drei müssen verschieden sein, prüft Main). `shared/hotkeys.ts` übersetzt Tastendrücke (layoutunabhängig über `KeyboardEvent.code`) und formatiert die Anzeige. Main registriert das globale Kürzel neu (`registerGlobalHotkey`; belegt → altes zurück + Fehler im Dialog); während der Aufnahme wird es per `settings:suspendGlobalHotkey` freigegeben. Agent- und Editor-Kürzel lässt das Terminal per `setAppHotkeys()` durch.
+- **Fixed language** (`settings.voiceFixedLanguage`, Settings "Spoken language": Automatic / Always German / Always English): always `-l <code>`, no detection, remembering does not apply.
+- **Remember language** (`settings.voiceRememberLanguage`, on by default; remembered in `settings.voiceLanguage`): first `-l <remembered>` (≈1.5 s instead of ≈3 s with `auto`). Evaluation via `-ojf` (JSON: language + token probability `p`). Empty result or avg. p < 0.6 → second run with `auto`, whose language is saved. **English is never remembered/preset** (`canRememberLanguage` in `shared/voiceLanguage.ts`): with `-l en` whisper translates German speech into English with p = 0.66 (measured, model small) → the check does not catch it (was a user bug). Forced `de` with English speech, on the other hand, yields p ≈ 0.5. To be safe, every 5th recording still uses `auto`. The job card shows the remembered language in advance (`[DE] Converting to text …`), without a remembered language "Detecting language and text …"; after an `auto` run the renderer reloads the settings.
+- **Background:** "Done" only ends the recording; recognition/routing continue as a `VoiceJob` (cards at the bottom of the center, several at once), new recordings are possible immediately. The overlay lets clicks through (`.voice-stack` with `pointer-events: none`).
+- **Send or only insert:** `agents:sendVoice` decides in main: `agent.voiceAutoSend` (per agent, context menu, persisted) → otherwise global `settings.voiceAutoSend`. Also applies to global commands (`send`).
+- active agent (default `Ctrl+Shift+Space` / microphone in the center): text to the agent (`sendLine` = text, 150 ms, Enter)
+- global (default `Ctrl+Alt+Space` via `globalShortcut` / microphone on the left): `voice:command` → `claude -p --model haiku --output-format json --tools "" --strict-mcp-config --no-session-persistence` (prompt via stdin) returns JSON `send` | `start` (+ optional `model`: alias `fable`/`opus`/`sonnet`/`haiku`, with a named version the full name such as `claude-opus-5-5`) | `none`
+- **Shortcuts configurable** (Settings → `HotkeyInput`): saved as an Electron accelerator in `settings.hotkeyAgentVoice` / `hotkeyGlobalVoice` / `hotkeyEditor` (all three must differ, checked by main). `shared/hotkeys.ts` translates key presses (layout-independent via `KeyboardEvent.code`) and formats the display. Main re-registers the global shortcut (`registerGlobalHotkey`; taken → old one back + error in the dialog); during a recording it is released via `settings:suspendGlobalHotkey`. The terminal lets the agent and editor shortcuts through via `setAppHotkeys()`.
 
-**Datenordner** (`main/dataPath.ts`, erster Import in `index.ts`): **alle Daten neben der .exe** in `<exe-Ordner>\data\` (`app.setPath('userData')` vor `ready`, also auch Chromium-Cache). Ordner der .exe (`PORTABLE_EXECUTABLE_DIR` nur, falls je wieder ein `portable`-Build läuft); Entwicklung: `<Projekt>\data\` (gitignored). Nicht beschreibbar → Fehlermeldung + Beenden. Einmalige Übernahme von `devhub-state.json` + `whisper\` aus dem alten `%APPDATA%\DevHub`. Im Folgenden `<data>`.
+**Languages (i18n)**: setting `settings.language` (`'system'` | language code, default `'system'` = OS language via `Intl`, fallback English), chosen in Settings → Language, saved in `devhub-state.json`, applied immediately without a restart (`applyLanguageSetting` in main at startup and in `settings:update`; renderer `syncLanguage` before the first render in `main.tsx` and after every settings change). Adding a language = copy `locales/en` to `locales/<code>`, translate, add one entry to `LANGUAGES` in `src/shared/i18n/index.ts` (it then appears in the settings automatically). Status texts created in main keep the language they were created in.
 
-**Persistenz** (`main/store.ts`): `<data>\devhub-state.json` (Projekte, laufende Agents, Einstellungen, `view` = zuletzt gezeigte Ansicht, dazu `tasks`, `archive`, `prompts`, `engines`), atomar geschrieben. Neue Agent-Felder, die Neustarts überleben sollen, in `persisted()` (`agents.ts`) aufnehmen; Laufzeit-Felder stehen im `Omit` von `PersistedAgent`.
+**Data folder** (`main/dataPath.ts`, first import in `index.ts`): **all data next to the .exe** in `<exe folder>\data\` (`app.setPath('userData')` before `ready`, so the Chromium cache too). Folder of the .exe (`PORTABLE_EXECUTABLE_DIR` only if a `portable` build ever runs again); development: `<project>\data\` (gitignored). Not writable → error message + quit. One-time takeover of `devhub-state.json` + `whisper\` from the old `%APPDATA%\DevHub`. Referred to as `<data>` below.
 
-- Ansicht (`Selection` in `shared/types.ts`): Renderer speichert jede Änderung per `view:set` (erst nachdem `view:get` beim Start geladen wurde, Ref `viewLoaded`); beim Start `savedView` → sonst erstes Projekt mit Agents. Nicht mehr laufende Agents filtert `selection` (useMemo) heraus → `agents` vor der Auswahl setzen.
+**Persistence** (`main/store.ts`): `<data>\devhub-state.json` (projects, running agents, settings, `view` = last shown view, plus `tasks`, `archive`, `prompts`, `engines`), written atomically. Add new agent fields that should survive restarts to `persisted()` (`agents.ts`); runtime fields are in the `Omit` of `PersistedAgent`.
 
-## Befehle
+- View (`Selection` in `shared/types.ts`): the renderer saves every change via `view:set` (only after `view:get` has been loaded at startup, ref `viewLoaded`); at startup `savedView` → otherwise the first project with agents. Agents that are no longer running are filtered out by `selection` (useMemo) → set `agents` before the selection.
 
-| Zweck                                                         | Befehl                            |
+## Commands
+
+| Purpose                                                       | Command                           |
 | ------------------------------------------------------------- | --------------------------------- |
-| Entwicklung (Hot Reload)                                      | `npm run dev`                     |
-| Typprüfung                                                    | `npm run typecheck`               |
-| Lint / Format                                                 | `npm run lint` / `npm run format` |
-| Build (Typcheck + Bundle nach `out/`)                         | `npm run build`                   |
-| Entpacktes Paket zum Testen (`dist/win-unpacked/DevHub.exe`)  | `npm run build:unpack`            |
-| ZIP des Programmordners nach `dist/` (`DevHub-<ver>-win.zip`) | `npm run build:win`               |
+| Development (hot reload)                                      | `npm run dev`                     |
+| Type check                                                    | `npm run typecheck`               |
+| Lint / format                                                 | `npm run lint` / `npm run format` |
+| Build (type check + bundle to `out/`)                         | `npm run build`                   |
+| Unpacked package for testing (`dist/win-unpacked/DevHub.exe`) | `npm run build:unpack`            |
+| ZIP of the program folder to `dist/` (`DevHub-<ver>-win.zip`) | `npm run build:win`               |
 
-**Debug-Umgebungsvariablen**
+**Debug environment variables**
 
-- `DEVHUB_DEBUG=1`: loggt Agent-Starts, Hook-Ereignisse und MCP-Aufrufe in die Konsole
-- `DEVHUB_SCREENSHOT=<pfad.png>` (+ `DEVHUB_SCREENSHOT_DELAY=<ms>`, Standard 8000): speichert ein Fensterbild und loggt den DOM-Zustand (Agent-Zeilen, Code-Notiz)
-- `DEVHUB_DATA_DIR=<ordner>`: eigener Datenordner → **zweite Instanz neben einer laufenden** (die Ein-Instanz-Sperre hängt am Datenordner), ohne Übernahme alter Daten. So lässt sich die Oberfläche testen, während DevHub offen ist: `devhub-state.json` vorbefüllen, `node_modules/electron/dist/electron.exe . --remote-debugging-port=<port>` starten (nach `npm run build`) und per DevTools-Protokoll (`/json` → WebSocket, `Runtime.evaluate`, `Page.captureScreenshot`) klicken und Bilder speichern
+- `DEVHUB_DEBUG=1`: logs agent starts, hook events and MCP calls to the console
+- `DEVHUB_SCREENSHOT=<path.png>` (+ `DEVHUB_SCREENSHOT_DELAY=<ms>`, default 8000): saves a window image and logs the DOM state (agent rows, code note)
+- `DEVHUB_DATA_DIR=<folder>`: own data folder → **second instance next to a running one** (the single-instance lock is tied to the data folder), without taking over old data. This allows testing the interface while DevHub is open: pre-fill `devhub-state.json`, start `node_modules/electron/dist/electron.exe . --remote-debugging-port=<port>` (after `npm run build`) and click and save images via the DevTools protocol (`/json` → WebSocket, `Runtime.evaluate`, `Page.captureScreenshot`)
 
-**Tests per Skript** (kein Test-Runner im Projekt): Module ohne Electron (`git.ts`, `snippets.ts`, `history.ts`, `shared/*`) mit `npx rolldown <test.ts> --file <out.mjs> --platform node` bündeln und mit node ausführen. `AgentManager` läuft auch unter node: `electron` per `resolve.alias` auf einen Stub (`app.getPath` → Testordner), `external: ['node-pty']`, Ausgabe unter `node_modules/` ablegen (sonst wird node-pty nicht gefunden) – so wurden Worktree, Freigaben, Prüfungen, Warteschlange, Abzweigen und Verlauf mit echtem claude geprüft.
+**Tests by script** (no test runner in the project): bundle modules without Electron (`git.ts`, `snippets.ts`, `history.ts`, `shared/*`) with `npx rolldown <test.ts> --file <out.mjs> --platform node` and run them with node. `AgentManager` also runs under node: `electron` via `resolve.alias` to a stub (`app.getPath` → test folder), `external: ['node-pty']`, put the output under `node_modules/` (otherwise node-pty is not found) – this is how worktree, permission requests, checks, queue, forking and history were checked with real claude.
 
-## Projektstruktur
+## Project structure
 
 ```
 src/
-  shared/types.ts          Gemeinsame Typen + DevHubApi
-  shared/hotkeys.ts        Kürzel: Standardwerte, Tastendruck → Accelerator, Anzeigeformat
-  shared/agentArgs.ts      Start-Flags: Tokenizer, Validierung, Zusammenführen global/Projekt
-  shared/voiceLanguage.ts  Welche Sprache gemerkt werden darf (nie Englisch), Auswahl feste Sprache
-  shared/permissions.ts    Freigabe-Regeln (`ruleFor`, `matchesRule`, `validateRule`), `describeTool` (Aktivität)
+  shared/types.ts          Shared types + DevHubApi
+  shared/hotkeys.ts        Shortcuts: defaults, key press → accelerator, display format
+  shared/agentArgs.ts      Start flags: tokenizer, validation, merging global/project
+  shared/voiceLanguage.ts  Which language may be remembered (never English), choice of the fixed language
+  shared/permissions.ts    Permission rules (`ruleFor`, `matchesRule`, `validateRule`), `describeTool` (activity)
+  shared/i18n/             Languages: index.ts = core (`t`, `LANGUAGES`, `getLocale`), locales/<code>/<namespace>.ts = texts (en = reference)
   main/
-    git.ts                 Worktrees + Review (Änderungen, Diff, Verwerfen, Commit, Merge), ohne Electron
-    runs.ts                Projekt-Befehle als verwaltete Prozesse (RunManager)
-    history.ts             Transkript finden, Volltextsuche über Sitzungen
-    reports.ts             Tagesbericht + Kurzfassung zum Vorlesen (`claude -p`)
-    remote.ts              Fernzugriff: HTTP-Server + Handy-Seite
-    index.ts               Fenster, IPC-Handler, globaler Hotkey, Mikrofon-Berechtigung
-    agents.ts              AgentManager: node-pty, Start/Stop/Rename/Restore, Hook-Status, show_code
-    agentBridge.ts         Lokaler HTTP-Server: Hooks + MCP (show_code)
-    dataPath.ts            Datenordner neben der .exe (vor allem anderen importiert)
-    store.ts               JSON-Persistenz, dataDir()
-    tools.ts               claude/VS-Code-Erkennung, claudeEnv(), openInVSCode(), openWithProgram()
-    claudeAuth.ts          `claude auth status --json`, Login-Konsole
-    voice.ts               whisper.cpp-Download/Transkription, Modellverwaltung
-    voiceCommands.ts       Globale Sprachbefehle via `claude -p`
-    voicePrompt.ts         Router-Prompt (rein, per esbuild-Skript mit echtem claude testbar)
-    snippets.ts            Transkript inkrementell: Code-Blöcke, bearbeitete Dateien, Verbrauch (`UsageTracker`); ohne Electron
+    git.ts                 Worktrees + review (changes, diff, discard, commit, merge), without Electron
+    runs.ts                Project commands as managed processes (RunManager)
+    history.ts             Find the transcript, full-text search across sessions
+    reports.ts             Daily report + short version for reading aloud (`claude -p`)
+    remote.ts              Remote access: HTTP server + phone page
+    index.ts               Window, IPC handlers, global hotkey, microphone permission
+    agents.ts              AgentManager: node-pty, start/stop/rename/restore, hook status, show_code
+    agentBridge.ts         Local HTTP server: hooks + MCP (show_code)
+    dataPath.ts            Data folder next to the .exe (imported before everything else)
+    store.ts               JSON persistence, dataDir()
+    tools.ts               claude/VS Code detection, claudeEnv(), openInVSCode(), openWithProgram()
+    claudeAuth.ts          `claude auth status --json`, login console
+    voice.ts               whisper.cpp download/transcription, model management
+    voiceCommands.ts       Global voice commands via `claude -p`
+    voicePrompt.ts         Router prompt (pure, testable with real claude via an esbuild script)
+    snippets.ts            Transcript incrementally: code blocks, edited files, usage (`UsageTracker`); without Electron
   preload/index.ts         window.api (contextBridge)
   renderer/src/
-    App.tsx                Auth-Gate → Workspace; Typ `Selection`
-    Workspace.tsx          Zustand, Auswahl, Sprachablauf, Hotkeys, Dialoge
+    App.tsx                Auth gate → Workspace; type `Selection`
+    Workspace.tsx          State, selection, voice flow, hotkeys, dialogs
     lib/                   terminals.ts, recorder.ts, errors.ts, hotkeyCapture.ts, selection.ts,
-                           monaco.ts (schlanker Monaco-Import, Theme, Sprache für Datei/Code-Zaun),
-                           editorText.ts (Anhänge `@"pfad"` im Editor-Tab),
-                           format.ts (Tokens, Kosten, Datum, Prompt-Platzhalter)
-    assets/workbench.css   Styles der Workbench (Eingang, Review, Aufgaben, Verlauf, Ausführen, Markdown)
+                           monaco.ts (slim Monaco import, theme, language for file/code fence),
+                           editorText.ts (attachments `@"path"` in the editor tab),
+                           format.ts (tokens, costs, date, prompt placeholders),
+                           i18n.ts (`useT()` hook for components, `syncLanguage()`)
+    assets/workbench.css   Styles of the workbench (inbox, review, tasks, history, run, Markdown)
     components/            Sidebar, CenterPane, EditorTab, TerminalView, CodePane, SnippetList, ProjectDialog, SettingsDialog,
                            VoiceSetupDialog, VoiceModels, VoiceOverlay, HotkeyInput, ProgramInput, AgentArgsHelp, Modal,
                            AgentTemplateDialog, TeamTemplateDialog, DictationButton, DictationTextarea,
                            ContextMenu, AuthGate, Icons, ImportProjectsDialog,
                            InboxPanel, ReviewDialog, TaskBoardDialog, HistoryDialog, RunDialog, ReportDialog,
                            QueueDialog, LibraryDialogs (PromptDialog, EngineDialog), Markdown
-electron-builder.yml       Windows-Ziele, asarUnpack node-pty, nur Sprachen de/en-US
+electron-builder.yml       Windows targets, asarUnpack node-pty, only languages de/en-US
 ```
 
-**IPC-Muster:** Kanal `bereich:aktion` (z. B. `agents:start`) → Handler in `main/index.ts`, Methode in `preload/index.ts`,
-Typ in `DevHubApi` (`shared/types.ts`). Alle drei immer zusammen anpassen. Ereignisse Main→Renderer: `agents:data`,
-`agents:changed` (Agents + laufende Teams; trägt auch die nicht gespeicherten Felder `activity`, `progress`, `usage`, `lastMessage`), `agents:startFailed`, `agents:focusRequest`, `code:focus`, `code:snippets`, `code:edits`, `code:plan`, `code:showDiff`, `inbox:permissions`, `inbox:notice`, `tasks:changed`, `runs:changed`, `runs:output`, `editor:opened`, `editor:append`, `voice:progress`, `voice:globalHotkey`, `voice:speak` (Abo liefert Abmelde-Funktion).
+**IPC pattern:** channel `area:action` (e.g. `agents:start`) → handler in `main/index.ts`, method in `preload/index.ts`,
+type in `DevHubApi` (`shared/types.ts`). Always adjust all three together. Events main→renderer: `agents:data`,
+`agents:changed` (agents + running teams; also carries the non-persisted fields `activity`, `progress`, `usage`, `lastMessage`), `agents:startFailed`, `agents:focusRequest`, `code:focus`, `code:snippets`, `code:edits`, `code:plan`, `code:showDiff`, `inbox:permissions`, `inbox:notice`, `tasks:changed`, `runs:changed`, `runs:output`, `editor:opened`, `editor:append`, `voice:progress`, `voice:globalHotkey`, `voice:speak` (subscribing returns an unsubscribe function).
 
-## Stand
+## Status
 
-- [x] Login-Prüfung beim Start (blockiert App bis eingeloggt)
-- [x] Projekte anlegen/bearbeiten/entfernen (3 Pfade), Projektdatei / Ordner öffnen mit wählbarem Programm (global + pro Projekt; Start mit Leerzeichen-Pfaden getestet, **Dialoge in der UI noch nicht getestet**)
-- [x] Agents starten/umbenennen (Rechtsklick)/beenden, Terminal, Raster-Ansicht, Selbstbeendigung schließt Ansicht
-- [x] Input-Erkennung via Hooks, Hervorhebung links — **getestet**
-- [x] Code-Ansicht + MCP `show_code` — **Ende-zu-Ende getestet**
-- [x] Snippets mit Kopier-Button — Auswertung an echten Transkripten getestet, `transcript_path` im Stop-Hook per `claude -p` geprüft, Build ok; **Anzeige/Kopieren in der App noch nicht getestet**
-- [x] Datei-Reiter für bearbeitete Dateien + Splitter zur Code-Spalte — Auswertung an echtem Hook-Log/Transkript getestet, Build/Lint ok, App startet; **Reiter/Splitter in der App-UI noch nicht getestet**
-- [x] Strg+G-Editor-Tab — echter `AgentBridge` + echter claude per node-pty getestet (Anfangstext kommt an, neuer Text wird übernommen, Abschicken → Antwort), `@"pfad mit leerzeichen"` hängt Bilder an (`claude -p`); **Tab/Sperre/Bilder in der App-UI noch nicht getestet**
-- [x] Session-Wiederherstellung — Speichern/Neustart getestet; `--resume` mit echtem Transkript noch **nicht** getestet
-- [x] Sprachsteuerung inkl. Download-Dialog — Routing via `claude -p` getestet; **whisper-Download/Transkription + Mikrofon noch nicht getestet**
-- [x] Sprach-Kürzel in den Einstellungen änderbar — Build/Typcheck ok, **in der UI noch nicht getestet**
-- [x] Start-Flags global + pro Projekt — Parser getestet, claude-Verhalten per PTY geprüft (unbekanntes Flag → Exit 1, `--enable-auto-mode` ist gültig, aber undokumentiert); **in der UI noch nicht getestet**
-- [x] Freies Raster per Strg+Klick — Auswahl-Logik per Skript getestet, **in der UI noch nicht getestet**
-- [x] Projekte/Agents sortieren (Drag & Drop, A→Z) — Build/Lint ok, App startet; **Ziehen in der UI noch nicht getestet**
-- [x] Team-Orchestrator + nur beobachtbare Worker — Freigabe-Weg (Hook → Bridge → allow/deny) mit echtem claude getestet, Build/Typcheck/Lint ok; **Orchestrator-Prompt/Zusammenspiel und UI in der App noch nicht getestet**
-- [x] Teams (fest + temporär per Sprache, Kommunikation per MCP) — Router mit echtem `claude -p` getestet (6 Fälle: Team-Vorlage, Ad-hoc-Team mit Aufgabe/Name/„zwei Entwickler“/normale Agents, Einzelstart bleibt `start`, Team ansprechen → Leitung); Team-Tools über den echten Bridge von `claude -p` aufgerufen; **Zustellung zwischen laufenden Agents und UI in der App noch nicht getestet**
-- [x] Vordefinierte Agents (Vorlagen) — Router mit echtem `claude -p` getestet (7 Fälle: Vorlage de/en, verhörter Name, Modell aus Sprache, laufender Agent wird angesprochen statt neu gestartet), mehrzeilige Richtlinien per node-pty an claude getestet; **UI/Diktat in der App noch nicht getestet**
-- [x] Modell per Sprachbefehl („Starte mit Opus einen Agent für …“) — Router-Prompt mit echtem `claude -p` getestet (de/en, „Sonett“, Version), Flag-Zusammenführung getestet; **Agent-Start in der App noch nicht getestet**
-- [x] Gemerkte Sprache für schnellere Erkennung — Ablauf mit TTS-Dateien (de/en) per Skript getestet, **in der App noch nicht getestet**
-- [x] Spracherkennung im Hintergrund + Auto-Abschicken pro Agent — Build/Lint ok, whisper mit niedriger Priorität getestet (Datei-Test); **Mikrofon/UI noch nicht getestet**
-- [x] Automatische `.sln`-Suche beim Projekt-Anlegen — Suche getestet, **in der UI noch nicht getestet**
-- [x] Paketierung (`build:unpack`) getestet: `app.asar` ~8 MB, ZIP ~147 MB (Rest Electron), Start aus dem entpackten Ordner ≈1,3 s
-- [x] Initialer Git-Commit (nach Durchsicht durch den Nutzer)
-- [x] **Workbench** (Branch `feature/workbench`) – Build/Typcheck/Lint ok. Geprüft:
-  - per Skript (47 Fälle): Git/Worktrees (anlegen, Änderungen, Diff, Verwerfen, Teil-Commit, Merge, Konflikt-Abbruch, Entfernen/Wiederanlegen, Repo ohne Commit), Freigabe-Regeln, Verbrauch (auch an einem echten Transkript), Suche
-  - **mit echtem claude über den echten `AgentManager`**: Worktree-Agent, Freigabe über den Eingang + „Immer“-Regel (zweiter Aufruf automatisch erlaubt), Prüfung schlägt fehl → Agent korrigiert → „Prüfungen grün“, Aufgabe per Warteschlange → „erledigt“, Abzweigen (`--fork-session`, Kopie kennt die Unterhaltung), Verlauf + Fortsetzen; Standardfall Eingang aus → claudes Dialog im Terminal, danach Regel → ohne Nachfrage
-  - per Skript: MCP-Tools `show_plan`/`show_diff`/`notify_user`/`report_progress`/`run_*` über den echten Bridge, andere Engine (Start, Aufgabe/Auftrag eingetippt), Fernzugriff (Token, Seite, Zustand, Senden, Abschalten)
-  - Oberfläche in einer zweiten Instanz per DevTools-Protokoll durchgeklickt (ohne Renderer-Fehler): Eingang, Aufgaben, Verlauf mit Kosten, Review mit Diff, Ausführen mit Live-Ausgabe, Auftrag-Dialog, Projekt-Dialog, Einstellungen, Tagesbericht (echtes Haiku)
-  - **noch nicht getestet:** Teams mit Worktrees (Prompts/Merge durch den Orchestrator), Sprach-Router mit `promptId`, Vorschau-Fenster + Screenshot, Windows-Benachrichtigung/Blinken, Vorlesen, Reiter „Plan“/„Aktivität“ und Datei-Konflikt in der Oberfläche, Freigabe-Karten im Eingang (nur die Logik dahinter), Fernzugriff von einem echten Handy
-- **Releases nur von Hand** (Nutzerwunsch: nichts automatisch bei Push): `npm run release -- <notizen.md> [x.y.z]` (`scripts/release.mjs`). Prüft: Branch `main`, keine offenen Änderungen, gleich mit `origin/main`, Tag/Release noch nicht vorhanden. Dann Version = Patch +1 aus `package.json` (oder angegebene x.y.z für Minor/Major) → `npm version --no-git-tag-version` → `npm run build:win` (Fehler → Version zurück) → Commit „Version x.y.z“ + Tag `vx.y.z` pushen → GitHub-Release zu diesem Tag im Hauptrepo + ZIP hochladen (GitHub-API, Anmeldung aus dem Git Credential Manager). Release-Notizen schreibt Claude für Tester (Deutsch, Funktionen statt Commit-Liste) in eine Datei im Scratchpad und zeigt sie vorher. v1.0.0 = Tag auf 0aecc72 (von Hand veröffentlicht), ab v1.0.1 per Skript (Ende-zu-Ende gelaufen). Download-Infos für Nutzer: `README.md`.
-- Lokales Test-ZIP: `npm run build:win` → `dist/DevHub-<ver>-win.zip` (enthält `LIESMICH.txt`)
+- [x] Login check at startup (blocks the app until logged in)
+- [x] Create/edit/remove projects (3 paths), open project file / folder with a selectable program (global + per project; start with paths containing spaces tested, **dialogs not yet tested in the UI**)
+- [x] Start/rename (right-click)/stop agents, terminal, grid view, self-termination closes the view
+- [x] Input detection via hooks, highlighting on the left — **tested**
+- [x] Code view + MCP `show_code` — **tested end to end**
+- [x] Snippets with copy button — evaluation tested on real transcripts, `transcript_path` in the Stop hook checked via `claude -p`, build ok; **display/copying not yet tested in the app**
+- [x] File tabs for edited files + splitter for the code column — evaluation tested on a real hook log/transcript, build/lint ok, app starts; **tabs/splitter not yet tested in the app UI**
+- [x] Ctrl+G editor tab — real `AgentBridge` + real claude via node-pty tested (initial text arrives, new text is taken over, send → answer), `@"path with spaces"` attaches images (`claude -p`); **tab/lock/images not yet tested in the app UI**
+- [x] Session restore — saving/restart tested; `--resume` with a real transcript **not** yet tested
+- [x] Voice control incl. download dialog — routing via `claude -p` tested; **whisper download/transcription + microphone not yet tested**
+- [x] Voice shortcuts changeable in the settings — build/type check ok, **not yet tested in the UI**
+- [x] Start flags global + per project — parser tested, claude's behaviour checked via PTY (unknown flag → exit 1, `--enable-auto-mode` is valid but undocumented); **not yet tested in the UI**
+- [x] Free grid via Ctrl+click — selection logic tested by script, **not yet tested in the UI**
+- [x] Sorting projects/agents (drag & drop, A→Z) — build/lint ok, app starts; **dragging not yet tested in the UI**
+- [x] Team orchestrator + watch-only workers — permission path (hook → bridge → allow/deny) tested with real claude, build/type check/lint ok; **orchestrator prompt/interplay and UI not yet tested in the app**
+- [x] Teams (fixed + temporary by voice, communication via MCP) — router tested with real `claude -p` (6 cases: team template, ad-hoc team with task/name/"two developers"/normal agents, a single start stays `start`, addressing a team → lead); team tools called by `claude -p` through the real bridge; **delivery between running agents and UI not yet tested in the app**
+- [x] Predefined agents (templates) — router tested with real `claude -p` (7 cases: template de/en, misheard name, model from speech, a running agent is addressed instead of started anew), multi-line guidelines passed to claude via node-pty tested; **UI/dictation not yet tested in the app**
+- [x] Model by voice command („Starte mit Opus einen Agent für …“ = "Start an agent with Opus for …") — router prompt tested with real `claude -p` (de/en, „Sonett“, version), flag merging tested; **agent start not yet tested in the app**
+- [x] Remembered language for faster recognition — flow tested by script with TTS files (de/en), **not yet tested in the app**
+- [x] Speech recognition in the background + auto-send per agent — build/lint ok, whisper with low priority tested (file test); **microphone/UI not yet tested**
+- [x] Automatic `.sln` search when creating a project — search tested, **not yet tested in the UI**
+- [x] Packaging (`build:unpack`) tested: `app.asar` ~8 MB, ZIP ~147 MB (the rest is Electron), start from the unpacked folder ≈1.3 s
+- [x] Initial Git commit (after review by the user)
+- [x] **Workbench** (branch `feature/workbench`) – build/type check/lint ok. Checked:
+  - by script (47 cases): Git/worktrees (create, changes, diff, discard, partial commit, merge, conflict abort, remove/re-create, repo without a commit), permission rules, usage (also on a real transcript), search
+  - **with real claude through the real `AgentManager`**: worktree agent, permission request via the inbox + "Always" rule (second call allowed automatically), check fails → agent fixes → "checks green", task via the queue → "done", forking (`--fork-session`, the copy knows the conversation), history + resume; default case inbox off → claude's dialog in the terminal, afterwards rule → without asking
+  - by script: MCP tools `show_plan`/`show_diff`/`notify_user`/`report_progress`/`run_*` through the real bridge, other engine (start, task/queued instruction typed in), remote access (token, page, state, send, switch off)
+  - Interface clicked through in a second instance via the DevTools protocol (without renderer errors): inbox, tasks, history with costs, review with diff, run with live output, queue dialog, project dialog, settings, daily report (real Haiku)
+  - **not yet tested:** teams with worktrees (prompts/merge by the orchestrator), voice router with `promptId`, preview window + screenshot, Windows notification/flashing, read aloud, tabs "Plan"/"Activity" and file conflict in the interface, permission cards in the inbox (only the logic behind them), remote access from a real phone
+- [x] **Languages English + German** (branch `feature/i18n`) – build/type check/lint ok. By script: all keys present in `de` with the same placeholders, no unused keys, plurals, fallback. In a second instance via the DevTools protocol: start in the saved language, switch in Settings → Language changes sidebar, tooltips and dialog immediately, choice survives a restart. **Not yet tested:** the English texts of most dialogs in the interface (only settings and main window were looked at), agent status texts and the phone page in English, texts with a running agent
+- **Releases by hand only** (user's wish: nothing automatic on push): `npm run release -- <notes.md> [x.y.z]` (`scripts/release.mjs`). Checks: notes contain the non-empty sections `## English` and `## Deutsch` (`NOTE_LANGUAGES` in the script), branch `main`, no open changes, in sync with `origin/main`, tag/release does not exist yet. Then version = patch +1 from `package.json` (or the given x.y.z for minor/major) → `npm version --no-git-tag-version` → `npm run build:win` (failure → version reset) → push commit "Version x.y.z" + tag `vx.y.z` → GitHub release for this tag in the main repo + upload the ZIP (GitHub API, login from the Git Credential Manager). Claude writes the release notes for testers **in English and German** (one file: `## English` first, then `## Deutsch` with the same content, sub-headings `###`; features instead of a commit list) into a file in the scratchpad and shows them beforehand. v1.0.0 = tag on 0aecc72 (published by hand), from v1.0.1 on by script (ran end to end). Download info for users: `README.md`.
+- Local test ZIP: `npm run build:win` → `dist/DevHub-<ver>-win.zip` (contains `README.txt`)
 
-## Konventionen
+## Conventions
 
-- Umgebung: Windows 11, PowerShell / Git Bash
-- Vorhanden: Node 26, npm 11, .NET 10, Claude Code 2.1 (am 2026-11-13: npm-Installation `%APPDATA%\npm\claude.cmd`, kein `claude.exe` im PATH), Git, VS Code, Visual Studio 2022 Community (ohne C++-Buildtools)
-- **Sprache im Quellcode: Englisch** (Open-Source-Projekt): Code-Kommentare (inkl. JSDoc, CSS/YAML/HTML-Kommentare), Bezeichner, Prompts/Tool-Beschreibungen für Claude. Neue und geänderte Kommentare immer auf Englisch schreiben.
-  - Ausnahme vorerst: **UI-Texte bleiben Deutsch** (Oberfläche ist deutschsprachig, noch keine Mehrsprachigkeit)
+- Environment: Windows 11, PowerShell / Git Bash
+- Available: Node 26, npm 11, .NET 10, Claude Code 2.1 (on 2026-11-13: npm installation `%APPDATA%\npm\claude.cmd`, no `claude.exe` in the PATH), Git, VS Code, Visual Studio 2022 Community (without C++ build tools)
+- **Language: English** (open-source project): source code, comments (incl. JSDoc, CSS/YAML/HTML comments), identifiers, prompts/tool descriptions for Claude, console messages, docs. Always write new and changed comments in English.
+- **UI texts are never hard-coded**: every user-visible text goes through `t('namespace.key')`. Components use `const t = useT()` (`renderer/src/lib/i18n.ts`); main, `shared/` and non-component helpers import `t` from `shared/i18n`. Texts live in `src/shared/i18n/locales/<code>/<namespace>.ts`; English (`locales/en`) is the reference and runtime fallback, `de` is typed `typeof en` (missing key = type error). Placeholders `{name}`, plurals via `key_one`/`key_other` + `t(key, { count })`. No module-level constants with translated text (evaluated once → would not switch). Dates/numbers use `getLocale()`.
+- Texts sent to Claude/agents (prompts, terminal messages, MCP tool descriptions) are fixed English and not translated.
 
-## Bekannte Stolpersteine
+## Known pitfalls
 
-- **Nur eine Instanz** (`requestSingleInstanceLock` in `main/index.ts`): zwei Instanzen würden dieselben Agents/Sessions wiederherstellen. `npm run dev` beendet sich daher sofort, wenn DevHub schon läuft → vorher das offene Fenster schließen. `electron-vite dev` lädt Main-Änderungen **nicht** neu (kein `-w`) → nach Änderungen in `src/main` App neu starten.
+- **Only one instance** (`requestSingleInstanceLock` in `main/index.ts`): two instances would restore the same agents/sessions. `npm run dev` therefore exits immediately if DevHub is already running → close the open window first. `electron-vite dev` does **not** reload main changes (no `-w`) → restart the app after changes in `src/main`.
 
-- **Vertrauens-Dialog von claude:** In einem Ordner, dem noch nicht vertraut wurde, zeigt claude beim Start „Is this a project you trust?“ – Vorauswahl **„No, exit“** (Enter beendet den Agent mit Code 1). Unterordner eines vertrauten Ordners gelten als vertraut. Deshalb liegen Worktrees **im Repository** (`<repo>/.devhub/worktrees/`), nicht im Datenordner; nie automatisch Tasten in diesen Dialog schicken. Folge: Werkzeuge, die den Hauptordner komplett durchlaufen, sehen die Worktrees – `.devhub` bei Bedarf ausnehmen (hier: `.gitignore`, `.prettierignore`, eslint `ignores`, electron-builder `files`).
-- **Auto-Modus = keine Freigabe-Anfragen:** Mit `--permission-mode auto` (oder global eingestelltem Auto-Modus) löst claude für Edits keinen `PermissionRequest` aus → Eingang und Regeln greifen dann nicht. Zum Testen `--permission-mode default` in die Start-Flags.
-- **claude als `.cmd` (npm-Installation):** dann läuft der Agent über `cmd.exe /c` und die Zeichen `" % ^ & | < >` sowie Zeilenumbrüche in Argumenten (Aufgabe, System-Prompt) werden durch Leerzeichen ersetzt – in Prompts für claude also nicht darauf angewiesen sein.
-- node-pty schreibt beim Beenden eines Agents gelegentlich „AttachConsole failed“ (Hilfsprozess `conpty_console_list_agent`) nach stderr – harmlos.
-- Tests mit `DEVHUB_SCREENSHOT`: App **nicht hart beenden** (`timeout`/kill): ohne `before-quit` enden die pty-Prozesse als „Agent beendet“ → Agents werden aus dem Zustand gelöscht. Fenster normal schließen.
-- Pakete in `dist/` werden nicht automatisch neu gebaut → vor dem Testen neuer Funktionen mit der .exe `npm run build:unpack` ausführen (sonst läuft ein alter Stand).
-- **Kein Native-Rebuild:** `postinstall` ist nur `install-electron`. `electron-builder install-app-deps` würde node-pty aus dem Quellcode bauen und scheitert ohne C++-Buildtools; die N-API-Prebuilds funktionieren direkt in Electron. Nach fehlgeschlagenem Rebuild: `rm -rf node_modules/node-pty && npm install`.
-- Keinen Installer (NSIS o. ä.) wieder einführen: Er würde beim Deinstallieren/Aktualisieren `data\` mitlöschen, und unter „Programme“ fehlen Schreibrechte.
-- node-pty muss in `asarUnpack` stehen (DLLs/OpenConsole.exe nicht aus asar ladbar).
-- `data\` im Projektordner (Entwicklungs-Datenordner) muss in `electron-builder.yml` unter `files` ausgeschlossen bleiben (`!data{,/**}`): sonst landen Chromium-Caches, whisper-Modell und der eigene Zustand in `app.asar` (war 270 MB statt ~8 MB → deutlich langsamerer Start).
-- Wird DevHub aus einem Claude-Terminal gestartet, erben Agents sonst `CLAUDE_CODE_CHILD_SESSION` usw. → „Transcript saving is off“ → keine Wiederherstellung. Immer `claudeEnv()` für Claude-Prozesse nutzen.
-- Hooks: `curl.exe` mit `.exe` (in PowerShell 5.1 ist `curl` ein Alias). Kein `|| exit 0` (Syntaxfehler in PS 5.1); Fehlercodes ≠ 2 blockieren nicht.
-- **Monaco bringt eine eigene DOMPurify-Kopie mit** (`esm/vs/base/browser/dompurify/dompurify.js`, 0.57 = 3.4.15 mit Sicherheitslücken). Ein npm-`overrides` allein reicht nicht: `electron.vite.config.ts` leitet den Import `./dompurify/dompurify.js` per Alias auf `node_modules/dompurify` um, Version über `overrides.dompurify` in `package.json`. Prüfen: `grep -o "@license DOMPurify [0-9.]*" out/renderer/assets/*.js`. Mit Monacos `sanitizeHtml` in Electron getestet. Bei Monaco-Update prüfen, ob die Umleitung noch nötig ist.
-- Monaco 0.57 hat eine Export-Map: Pfade ohne `esm/vs/` (z. B. `monaco-editor/editor/editor.worker?worker`). Voller `monaco-editor`-Import bündelt ~15 MB Sprach-Worker.
-- `.cmd`/`.bat` mit Leerzeichen im Pfad: `cmd.exe /d /s /c ""prog" "arg""` + `windowsVerbatimArguments: true` (Node-Standard-Quoting bricht bei `cmd /c`).
-- `claude` mit `exec` + Kommando-String aufrufen (nicht `execFile` + `shell: true` → DEP0190). Nur feste Argumente.
-- Lint `react-refresh/only-export-components`: Komponenten-Dateien exportieren nur Komponenten → geteilten Zustand/Funktionen nach `lib/` auslagern (z. B. `hotkeyCapture.ts`).
-- Lint `react-hooks/set-state-in-effect`: kein synchrones `setState` in `useEffect` — Zustand ableiten (`useMemo`, siehe `selection` in Workspace) oder im `.then()` setzen.
-- React StrictMode führt Effekte im Dev-Modus doppelt aus → Seiteneffekte im Main idempotent halten (z. B. `restore()` nur einmal).
-- `capturePage` liefert bei verdecktem Fenster ein veraltetes Bild → Fenster vorher `show()/focus()/invalidate()`.
-- Heredocs im Bash-Tool verfälschen `\\`, `\r`/`\n` in Strings und Umlaute (Python-stdin) → Code/JSON mit Backslashes oder Umlauten per Edit/Write-Tool schreiben.
-- Zeilenenden: überall **LF** (`.gitattributes`: `* text=auto eol=lf`, Prettier erwartet LF). Python `open(..., 'w')` schreibt unter Windows CRLF → Dateien per Edit-Tool ändern (oder `newline=''`, danach `npx prettier --write`). Prüfen: `git ls-files --eol | grep w/crlf`.
-- Git: Standard-Branch ist `main`, Remote `origin` = https://github.com/CocoNybbles/DevHub (**öffentlich** – keine Geheimnisse committen). `main` ist per Ruleset „main schützen“ geschützt: Änderungen nur per Pull Request mit 1 Freigabe (Mitarbeiter mit Schreibrecht), kein Force-Push/Löschen; nur der Besitzer (Repository-Admin) umgeht das und pusht direkt (auch `npm run release`). Zweites Ruleset „Release-Tags schützen“: Tags `v*` anlegen/ändern/löschen nur der Besitzer. Außerdem an: Secret Scanning + Push Protection, Dependabot-Warnungen + -Sicherheitsupdates (PRs), privates Melden von Lücken (`SECURITY.md`), Branch löschen nach Merge. **GitHub Actions sind abgeschaltet** (keine Workflows) – für einen Workflow erst wieder einschalten. `gh` ist nicht installiert.
+- **claude's trust dialog:** in a folder that has not been trusted yet, claude shows "Is this a project you trust?" on start – preselected **"No, exit"** (Enter ends the agent with code 1). Subfolders of a trusted folder count as trusted. That is why worktrees are located **inside the repository** (`<repo>/.devhub/worktrees/`), not in the data folder; never send keys into this dialog automatically. Consequence: tools that walk the whole main folder see the worktrees – exclude `.devhub` where needed (here: `.gitignore`, `.prettierignore`, eslint `ignores`, electron-builder `files`).
+- **Auto mode = no permission requests:** with `--permission-mode auto` (or a globally configured auto mode) claude does not trigger a `PermissionRequest` for edits → the inbox and the rules then have no effect. For testing put `--permission-mode default` into the start flags.
+- **claude as `.cmd` (npm installation):** the agent then runs via `cmd.exe /c` and the characters `" % ^ & | < >` as well as line breaks in arguments (task, system prompt) are replaced by spaces – so do not rely on them in prompts for claude.
+- node-pty occasionally writes "AttachConsole failed" (helper process `conpty_console_list_agent`) to stderr when an agent ends – harmless.
+- Tests with `DEVHUB_SCREENSHOT`: do **not kill the app hard** (`timeout`/kill): without `before-quit` the pty processes end as "agent ended" → the agents are deleted from the state. Close the window normally.
+- Packages in `dist/` are not rebuilt automatically → run `npm run build:unpack` before testing new features with the .exe (otherwise an old build runs).
+- **No native rebuild:** `postinstall` is only `install-electron`. `electron-builder install-app-deps` would build node-pty from source and fails without C++ build tools; the N-API prebuilds work directly in Electron. After a failed rebuild: `rm -rf node_modules/node-pty && npm install`.
+- Do not reintroduce an installer (NSIS or similar): it would delete `data\` on uninstall/update, and there are no write permissions under "Program Files".
+- node-pty must be listed in `asarUnpack` (DLLs/OpenConsole.exe cannot be loaded from asar).
+- `data\` in the project folder (development data folder) must stay excluded in `electron-builder.yml` under `files` (`!data{,/**}`): otherwise Chromium caches, the whisper model and the app's own state end up in `app.asar` (was 270 MB instead of ~8 MB → noticeably slower start).
+- If DevHub is started from a Claude terminal, agents otherwise inherit `CLAUDE_CODE_CHILD_SESSION` etc. → "Transcript saving is off" → no restore. Always use `claudeEnv()` for Claude processes.
+- Hooks: `curl.exe` with `.exe` (in PowerShell 5.1 `curl` is an alias). No `|| exit 0` (syntax error in PS 5.1); exit codes ≠ 2 do not block.
+- **Monaco ships its own copy of DOMPurify** (`esm/vs/base/browser/dompurify/dompurify.js`, 0.57 = 3.4.15 with security vulnerabilities). An npm `overrides` alone is not enough: `electron.vite.config.ts` redirects the import `./dompurify/dompurify.js` via an alias to `node_modules/dompurify`, version via `overrides.dompurify` in `package.json`. Check: `grep -o "@license DOMPurify [0-9.]*" out/renderer/assets/*.js`. Tested with Monaco's `sanitizeHtml` in Electron. On a Monaco update, check whether the redirect is still needed.
+- Monaco 0.57 has an export map: paths without `esm/vs/` (e.g. `monaco-editor/editor/editor.worker?worker`). A full `monaco-editor` import bundles ~15 MB of language workers.
+- `.cmd`/`.bat` with spaces in the path: `cmd.exe /d /s /c ""prog" "arg""` + `windowsVerbatimArguments: true` (Node's default quoting breaks with `cmd /c`).
+- Call `claude` with `exec` + a command string (not `execFile` + `shell: true` → DEP0190). Fixed arguments only.
+- Lint `react-refresh/only-export-components`: component files export only components → move shared state/functions to `lib/` (e.g. `hotkeyCapture.ts`).
+- Lint `react-hooks/set-state-in-effect`: no synchronous `setState` in `useEffect` — derive the state (`useMemo`, see `selection` in Workspace) or set it in the `.then()`.
+- React StrictMode runs effects twice in dev mode → keep side effects in main idempotent (e.g. `restore()` only once).
+- `capturePage` returns a stale image when the window is covered → `show()/focus()/invalidate()` the window beforehand.
+- Heredocs in the Bash tool corrupt `\\`, `\r`/`\n` in strings and umlauts (Python stdin) → write code/JSON with backslashes or umlauts using the Edit/Write tool.
+- Line endings: **LF** everywhere (`.gitattributes`: `* text=auto eol=lf`, Prettier expects LF). Python `open(..., 'w')` writes CRLF on Windows → change files with the Edit tool (or `newline=''`, then `npx prettier --write`). Check: `git ls-files --eol | grep w/crlf`.
+- Git: default branch is `main`, remote `origin` = https://github.com/CocoNybbles/DevHub (**public** – do not commit secrets). `main` is protected by the ruleset „main schützen“ ("protect main"): changes only via pull request with 1 approval (collaborators with write access), no force push/deletion; only the owner (repository admin) bypasses this and pushes directly (also `npm run release`). Second ruleset „Release-Tags schützen“ ("protect release tags"): creating/changing/deleting tags `v*` only by the owner. Also enabled: secret scanning + push protection, Dependabot alerts + security updates (PRs), private vulnerability reporting (`SECURITY.md`), delete branch after merge. **GitHub Actions are disabled** (no workflows) – re-enable them first for a workflow. `gh` is not installed.

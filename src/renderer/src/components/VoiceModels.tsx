@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import type { DownloadProgress, VoiceStatus, WhisperModelId } from '../../../shared/types'
 import { errorText } from '../lib/errors'
+import { useT } from '../lib/i18n'
 
 interface Props {
   status: VoiceStatus
@@ -14,6 +15,7 @@ const ENGINE_MB = 9
 
 /** Model selection + download with progress; used in the setup dialog and in the settings. */
 function VoiceModels({ status, onChanged, onDownloaded }: Props): React.JSX.Element {
+  const t = useT()
   const [selected, setSelected] = useState<WhisperModelId>(status.activeModel ?? 'small')
   const [progress, setProgress] = useState<DownloadProgress | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -43,7 +45,7 @@ function VoiceModels({ status, onChanged, onDownloaded }: Props): React.JSX.Elem
   }
 
   const remove = async (id: WhisperModelId): Promise<void> => {
-    if (!confirm('Modell wirklich löschen?')) return
+    if (!confirm(t('voiceUi.confirmDeleteModel'))) return
     await window.api.voice.deleteModel(id)
     onChanged()
   }
@@ -71,13 +73,15 @@ function VoiceModels({ status, onChanged, onDownloaded }: Props): React.JSX.Elem
             <small className="muted">{m.description}</small>
           </span>
           <span className="model-state">
-            {m.installed && status.activeModel === m.id && <span className="badge ok">aktiv</span>}
+            {m.installed && status.activeModel === m.id && (
+              <span className="badge ok">{t('voiceUi.modelActive')}</span>
+            )}
             {m.installed && status.activeModel !== m.id && (
-              <span className="badge">installiert</span>
+              <span className="badge">{t('voiceUi.modelInstalled')}</span>
             )}
             {m.installed && !busy && (
               <button className="link danger" onClick={(e) => (e.preventDefault(), remove(m.id))}>
-                löschen
+                {t('voiceUi.modelDelete')}
               </button>
             )}
           </span>
@@ -87,7 +91,7 @@ function VoiceModels({ status, onChanged, onDownloaded }: Props): React.JSX.Elem
       {busy && progress && (
         <div className="progress">
           <div className="progress-label">
-            {progress.phase === 'engine' ? 'Lade Spracherkennung …' : 'Lade Sprachmodell …'}
+            {progress.phase === 'engine' ? t('voiceUi.loadingEngine') : t('voiceUi.loadingModel')}
             <span>
               {(progress.receivedBytes / 1e6).toFixed(0)} / {(progress.totalBytes / 1e6).toFixed(0)}{' '}
               MB
@@ -108,11 +112,11 @@ function VoiceModels({ status, onChanged, onDownloaded }: Props): React.JSX.Elem
             disabled={busy || status.activeModel === selected}
             onClick={activate}
           >
-            {status.activeModel === selected ? 'Aktiv' : 'Dieses Modell verwenden'}
+            {status.activeModel === selected ? t('voiceUi.activeButton') : t('voiceUi.useModel')}
           </button>
         ) : (
           <button className="primary" disabled={busy} onClick={download}>
-            {busy ? 'Lädt …' : `Herunterladen (~${downloadMB} MB)`}
+            {busy ? t('voiceUi.downloading') : t('voiceUi.download', { size: downloadMB })}
           </button>
         )}
       </div>

@@ -29,8 +29,8 @@ win:
     - zip
   artifactName: ${productName}-${version}-win.${ext}
 extraFiles:
-  - from: build/LIESMICH.txt
-    to: LIESMICH.txt
+  - from: build/README.txt
+    to: README.txt
   # DevHub license + license texts of the included libraries (scripts/notices.mjs)
   - from: LICENSE
     to: LICENSE.txt

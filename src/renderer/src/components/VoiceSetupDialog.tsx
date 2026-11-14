@@ -1,4 +1,5 @@
 import type { VoiceStatus } from '../../../shared/types'
+import { useT } from '../lib/i18n'
 import Modal from './Modal'
 import VoiceModels from './VoiceModels'
 
@@ -11,19 +12,18 @@ interface Props {
 
 /** Appears on the first attempt to use voice control while no model is installed. */
 function VoiceSetupDialog({ status, onChanged, onReady, onClose }: Props): React.JSX.Element {
+  const t = useT()
   return (
     <Modal
-      title="Sprachsteuerung einrichten"
+      title={t('voiceUi.setupTitle')}
       onClose={onClose}
-      footer={<button onClick={onClose}>Später</button>}
+      footer={<button onClick={onClose}>{t('voiceUi.setupLater')}</button>}
     >
-      <p>
-        Für die Sprachsteuerung muss zuerst ein Sprachmodell heruntergeladen werden. Die Erkennung
-        läuft danach komplett lokal und offline, Deutsch und Englisch werden automatisch erkannt.
-      </p>
+      <p>{t('voiceUi.setupIntro')}</p>
       <p className="muted small">
-        Wähle ein Modell. Das Modell lässt sich später unter <em>Einstellungen</em> wechseln oder
-        löschen.
+        {t('voiceUi.setupHintBefore')}
+        <em>{t('common.settings')}</em>
+        {t('voiceUi.setupHintAfter')}
       </p>
       <VoiceModels status={status} onChanged={onChanged} onDownloaded={onReady} />
     </Modal>

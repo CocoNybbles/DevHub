@@ -60,6 +60,8 @@ import { Recorder } from './lib/recorder'
 import { errorText } from './lib/errors'
 import { shownAgentIds, toggleAgent, toggleAgents, toggleProject } from './lib/selection'
 import { canRememberLanguage } from '../../shared/voiceLanguage'
+import { translate } from '../../shared/i18n'
+import { syncLanguage, useT } from './lib/i18n'
 
 type VoiceTarget = { kind: 'agent'; agentId: string } | { kind: 'global' }
 
@@ -69,6 +71,7 @@ const EDITOR_REDRAW_MS = 400
 const EDITOR_OPEN_TIMEOUT_MS = 4000
 
 function Workspace(): React.JSX.Element {
+  const t = useT()
   const [projects, setProjects] = useState<Project[]>([])
   const [agents, setAgents] = useState<Agent[]>([])
   const [rawSelection, setSelection] = useState<Selection>(null)
@@ -89,6 +92,7 @@ function Workspace(): React.JSX.Element {
   const [drafts, setDrafts] = useState<Record<string, string>>({})
   const [vscodeInstalled, setVscodeInstalled] = useState(false)
   const [settings, setSettings] = useState<Settings>({
+    language: 'system',
     voiceModel: null,
     voiceAutoSend: true,
     hotkeyAgentVoice: DEFAULT_HOTKEYS.agentVoice,
@@ -154,6 +158,14 @@ function Workspace(): React.JSX.Element {
   const [voiceJobs, setVoiceJobs] = useState<VoiceJob[]>([])
 
   const showError = useCallback((e: unknown) => setToast(errorText(e)), [])
+  /**
+   * Settings that came from main: apply their interface language, then store them.
+   * (The initial state above is only a placeholder and must never be synced.)
+   */
+  const applySettings = useCallback((s: Settings) => {
+    syncLanguage(s.language)
+    setSettings(s)
+  }, [])
   const refreshVoice = useCallback(() => window.api.voice.status().then(setVoiceStatus), [])
 
   // ---------------------------------------------------------------- Loading & events
@@ -163,8 +175,13 @@ function Workspace(): React.JSX.Element {
       setAgents(list)
       setTeams(teamList)
     })
+    // `translate` instead of the hook's `t`: this effect must not re-run when the language changes
     const offFailed = window.api.agents.onStartFailed((name, output) =>
-      setToast(output ? `${name} konnte nicht starten:\n${output}` : `${name} konnte nicht starten`)
+      setToast(
+        output
+          ? translate('workspace.startFailedWithOutput', { name, output })
+          : translate('workspace.startFailed', { name })
+      )
     )
     const offFocus = window.api.code.onFocus((f) =>
       setFocusByAgent((m) => ({ ...m, [f.agentId]: f }))
@@ -189,7 +206,7 @@ function Workspace(): React.JSX.Element {
     )
     const offPermissions = window.api.inbox.onPermissions((list) => {
       setPermissions(list)
-      // "Immer" (always) may have saved a rule on the project → reload the projects
+      // "Always" may have saved a rule on the project → reload the projects
       window.api.projects.list().then(setProjects)
     })
     const offNotice = window.api.inbox.onNotice((n) =>
@@ -226,7 +243,7 @@ function Workspace(): React.JSX.Element {
     ;(async () => {
       setProjects(await window.api.projects.list())
       window.api.tools.vscodeInstalled().then(setVscodeInstalled)
-      window.api.settings.get().then(setSettings)
+      window.api.settings.get().then(applySettings)
       window.api.templates.list().then(setTemplates)
       window.api.teamTemplates.list().then(setTeamTemplates)
       window.api.teams.list().then(setTeams)
@@ -279,7 +296,7 @@ function Workspace(): React.JSX.Element {
       offFocusRequest()
       offSpeak()
     }
-  }, [refreshVoice, showError])
+  }, [refreshVoice, showError, applySettings])
 
   // Exited agents: release the terminal
   useEffect(() => {
@@ -316,8 +333,8 @@ function Workspace(): React.JSX.Element {
 
   useEffect(() => {
     if (!toast) return
-    const t = setTimeout(() => setToast(null), toast.length > 120 ? 15000 : 6000)
-    return () => clearTimeout(t)
+    const timer = setTimeout(() => setToast(null), toast.length > 120 ? 15000 : 6000)
+    return () => clearTimeout(timer)
   }, [toast])
 
   // ---------------------------------------------------------------- Derived values
@@ -486,36 +503,36 @@ function Workspace(): React.JSX.Element {
   const stopTeam = useCallback(
     (team: Team) => {
       const count = agents.filter((a) => a.teamId === team.id).length
-      if (!confirm(`Team „${team.name}“ mit ${count} Agent(s) beenden?`)) return
+      if (!confirm(t('workspace.confirmStopTeam', { name: team.name, count }))) return
       window.api.teams.stop(team.id).catch(showError)
     },
-    [agents, showError]
+    [agents, showError, t]
   )
 
   const stopAgent = useCallback(
     (agent: Agent) => {
       const question =
         agent.teamRole === 'orchestrator'
-          ? `„${agent.name}“ steuert ein Team – das ganze Team beenden?`
-          : `„${agent.name}“ beenden?`
+          ? t('workspace.confirmStopOrchestrator', { name: agent.name })
+          : t('workspace.confirmStopAgent', { name: agent.name })
       if (!confirm(question)) return
       window.api.agents.stop(agent.id).catch(showError)
     },
-    [showError]
+    [showError, t]
   )
 
   const removeProject = useCallback(
     async (p: Project) => {
       const count = agents.filter((a) => a.projectId === p.id).length
       const msg = count
-        ? `Projekt „${p.name}“ entfernen? ${count} laufende Agent(s) werden beendet.`
-        : `Projekt „${p.name}“ entfernen? (Die Dateien bleiben unverändert.)`
+        ? t('workspace.confirmRemoveProjectRunning', { name: p.name, count })
+        : t('workspace.confirmRemoveProject', { name: p.name })
       if (!confirm(msg)) return
       await window.api.projects.remove(p.id).catch(showError)
       setProjects(await window.api.projects.list())
       setSelection((s) => (s?.kind === 'project' && s.projectId === p.id ? null : s))
     },
-    [agents, showError]
+    [agents, showError, t]
   )
 
   // ---------------------------------------------------------------- Voice control
@@ -545,8 +562,8 @@ function Workspace(): React.JSX.Element {
     const id = nextJobId.current++
     const targetName =
       target.kind === 'agent'
-        ? (agents.find((a) => a.id === target.agentId)?.name ?? 'Agent')
-        : 'Sprachbefehl'
+        ? (agents.find((a) => a.id === target.agentId)?.name ?? t('common.agent'))
+        : t('workspace.voiceCommandTarget')
     // Show the remembered language so it is visible that automatic detection is skipped
     const knownLanguage =
       settings.voiceFixedLanguage ??
@@ -560,7 +577,7 @@ function Workspace(): React.JSX.Element {
         state: 'processing',
         target: targetName,
         language: knownLanguage ?? undefined,
-        message: knownLanguage ? 'Wandle in Text um …' : 'Erkenne Sprache und Text …'
+        message: knownLanguage ? t('workspace.voiceTranscribing') : t('workspace.voiceDetecting')
       }
     ])
     const fail = (message: string, text?: string): void =>
@@ -568,25 +585,31 @@ function Workspace(): React.JSX.Element {
 
     try {
       const wav = await rec.stop()
-      if (!wav) return fail('Aufnahme zu kurz.')
+      if (!wav) return fail(t('workspace.voiceTooShort'))
       const { text, language, remembered } = await window.api.voice.transcribe(wav)
       // Auto-detected → main may have remembered a new language; refresh the display
-      if (!remembered) window.api.settings.get().then(setSettings)
-      if (!text) return fail('Nichts verstanden.')
+      if (!remembered) window.api.settings.get().then(applySettings)
+      if (!text) return fail(t('workspace.voiceNothingUnderstood'))
       if (language) updateJob(id, { language })
 
       if (target.kind === 'agent') {
         const sent = await window.api.agents.sendVoice(target.agentId, text)
-        updateJob(id, { state: 'done', text, message: sent ? '→ gesendet' : '→ eingetragen' })
+        updateJob(id, {
+          state: 'done',
+          text,
+          message: sent ? t('workspace.voiceSent') : t('workspace.voiceEntered')
+        })
         return
       }
 
-      updateJob(id, { text, message: 'Claude ordnet den Befehl zu …' })
+      updateJob(id, { text, message: t('workspace.voiceRouting') })
       const result = await window.api.voice.command(text)
       if (result.kind === 'sent') {
         updateJob(id, {
           state: 'done',
-          message: `→ an ${result.agentName} ${result.sent ? 'gesendet' : 'eingetragen'}`
+          message: t(result.sent ? 'workspace.voiceSentTo' : 'workspace.voiceEnteredFor', {
+            agent: result.agentName
+          })
         })
       } else if (result.kind === 'teamStarted') {
         // Show the grid with all team members
@@ -597,14 +620,36 @@ function Workspace(): React.JSX.Element {
         if (ids.length) setSelection({ kind: 'agents', agentIds: ids })
         updateJob(id, {
           state: 'done',
-          message: `${result.temporary ? 'Temporäres Team' : 'Team'} „${result.teamName}“ in „${result.projectName}“ gestartet: ${result.agentNames.join(', ')}${result.task ? ' (mit Aufgabe)' : ''}`
+          message: t(
+            result.temporary
+              ? result.task
+                ? 'workspace.voiceTempTeamStartedWithTask'
+                : 'workspace.voiceTempTeamStarted'
+              : result.task
+                ? 'workspace.voiceTeamStartedWithTask'
+                : 'workspace.voiceTeamStarted',
+            {
+              team: result.teamName,
+              project: result.projectName,
+              agents: result.agentNames.join(', ')
+            }
+          )
         })
       } else if (result.kind === 'started') {
         const started = (await window.api.agents.list()).find((a) => a.name === result.agentName)
         if (started) setSelection({ kind: 'agent', agentId: started.id })
         updateJob(id, {
           state: 'done',
-          message: `${result.agentName} in „${result.projectName}“ gestartet${result.model ? ` (Modell ${result.model})` : ''}${result.task ? ' mit Aufgabe' : ''}`
+          message: t(
+            result.model
+              ? result.task
+                ? 'workspace.voiceAgentStartedWithModelAndTask'
+                : 'workspace.voiceAgentStartedWithModel'
+              : result.task
+                ? 'workspace.voiceAgentStartedWithTask'
+                : 'workspace.voiceAgentStarted',
+            { agent: result.agentName, project: result.projectName, model: result.model ?? '' }
+          )
         })
       } else {
         fail(result.message, text)
@@ -615,9 +660,11 @@ function Workspace(): React.JSX.Element {
   }, [
     agents,
     updateJob,
+    applySettings,
     settings.voiceRememberLanguage,
     settings.voiceLanguage,
-    settings.voiceFixedLanguage
+    settings.voiceFixedLanguage,
+    t
   ])
 
   const cancelVoice = useCallback(() => {
@@ -627,10 +674,16 @@ function Workspace(): React.JSX.Element {
     setRecording(null)
   }, [])
 
-  const showVoiceError = useCallback((message: string) => {
-    const id = nextJobId.current++
-    setVoiceJobs((jobs) => [...jobs, { id, state: 'error', target: 'Sprache', message }])
-  }, [])
+  const showVoiceError = useCallback(
+    (message: string) => {
+      const id = nextJobId.current++
+      setVoiceJobs((jobs) => [
+        ...jobs,
+        { id, state: 'error', target: t('workspace.voiceErrorTarget'), message }
+      ])
+    },
+    [t]
+  )
 
   /** Starts recording, or stops it if a recording is already running. */
   const toggleVoice = useCallback(
@@ -650,32 +703,31 @@ function Workspace(): React.JSX.Element {
       if (kind === 'agent') {
         let agent = agents.find((a) => a.id === (agentId ?? activeAgentId))
         if (!agent) {
-          setToast('Kein aktiver Agent ausgewählt.')
+          setToast(t('workspace.noActiveAgent'))
           return
         }
         // Team workers can only be observed → instruction goes to their orchestrator
         const watched = isTeamWorker(agent) ? agent : null
         if (watched) agent = teamLead(agents, watched.teamId!) ?? agent
         if (isTeamWorker(agent)) {
-          setToast(`${agent.name} kann nur beobachtet werden – kein Orchestrator läuft.`)
+          setToast(t('workspace.workerNoOrchestrator', { name: agent.name }))
           return
         }
         // Target stays the worker: main forwards the text to the orchestrator, referring to the worker
         target = { kind: 'agent', agentId: (watched ?? agent).id }
         label = watched
-          ? `Anweisung an ${agent.name} (zu ${watched.name})`
-          : `Anweisung an ${agent.name}`
+          ? t('workspace.voiceInstructionAbout', { name: agent.name, worker: watched.name })
+          : t('workspace.voiceInstructionFor', { name: agent.name })
       } else {
         target = { kind: 'global' }
-        label =
-          'z. B. „Agent 2, schreib Tests für den Login“ oder „Starte einen Agent für DevHub …“'
+        label = t('workspace.voiceGlobalExample')
       }
 
       const rec = new Recorder()
       try {
         await rec.start()
       } catch (e) {
-        showVoiceError(`Mikrofon nicht verfügbar: ${errorText(e)}`)
+        showVoiceError(t('workspace.micUnavailable', { error: errorText(e) }))
         return
       }
       recorder.current = rec
@@ -687,7 +739,7 @@ function Workspace(): React.JSX.Element {
         startedAt: Date.now()
       })
     },
-    [agents, activeAgentId, finishVoice, showVoiceError]
+    [agents, activeAgentId, finishVoice, showVoiceError, t]
   )
 
   /**
@@ -701,9 +753,7 @@ function Workspace(): React.JSX.Element {
       if (!agent) return
       if (agent.editing) return setEditorTab(agentId)
       if (isTeamWorker(agent)) {
-        setToast(
-          `${agent.name} kann nur beobachtet werden – Anweisungen gehen an den Orchestrator.`
-        )
+        setToast(t('workspace.workerObserveOnly', { name: agent.name }))
         return
       }
       clearTimeout(prepareTimers.current[agentId])
@@ -718,13 +768,11 @@ function Workspace(): React.JSX.Element {
           if (agentsRef.current.find((a) => a.id === agentId)?.editing) return
           dropSnapshot(agentId)
           setPreparing((p) => (p === agentId ? null : p))
-          setToast(
-            `${agent.name} hat den Editor nicht geöffnet – evtl. ist im Terminal gerade eine Auswahl offen.`
-          )
+          setToast(t('workspace.editorNotOpened', { name: agent.name }))
         }, EDITOR_OPEN_TIMEOUT_MS)
       }, EDITOR_REDRAW_MS)
     },
-    [agents]
+    [agents, t]
   )
 
   // Hotkeys: agent recording + editor tab (in the app), global voice command (from the main process), Esc
@@ -765,8 +813,8 @@ function Workspace(): React.JSX.Element {
   useEffect(() => {
     if (!finishedJobIds) return
     const ids = new Set(finishedJobIds.split(',').map(Number))
-    const t = setTimeout(() => setVoiceJobs((jobs) => jobs.filter((j) => !ids.has(j.id))), 6000)
-    return () => clearTimeout(t)
+    const timer = setTimeout(() => setVoiceJobs((jobs) => jobs.filter((j) => !ids.has(j.id))), 6000)
+    return () => clearTimeout(timer)
   }, [finishedJobIds])
 
   const recordingTarget = recording?.target ?? null
@@ -861,7 +909,7 @@ function Workspace(): React.JSX.Element {
           onOpenTasks={(id) => {
             const projectId = id ?? currentProjectId
             if (projectId) setTasksFor(projectId)
-            else setToast('Lege zuerst ein Projekt an.')
+            else setToast(t('workspace.createProjectFirst'))
           }}
           onOpenHistory={() => setHistoryOpen(true)}
           onOpenReport={() => setReportOpen(true)}
@@ -875,12 +923,12 @@ function Workspace(): React.JSX.Element {
               .catch(showError)
           }
           usageText={(a) => usageLine(a.usage, settings)}
-          openTaskCount={tasks.filter((t) => t.status === 'open').length}
+          openTaskCount={tasks.filter((task) => task.status === 'open').length}
           onGlobalVoice={() => toggleVoice('global')}
           onOpenSettings={() => {
             refreshVoice()
             // remembered language is updated in main → reload
-            window.api.settings.get().then(setSettings)
+            window.api.settings.get().then(applySettings)
             setSettingsOpen(true)
           }}
         />
@@ -891,19 +939,19 @@ function Workspace(): React.JSX.Element {
                 className={`center-tab ${activeEditor ? '' : 'active'}`}
                 onClick={() => setEditorTab(null)}
               >
-                <GridIcon size={12} /> Agents
+                <GridIcon size={12} /> {t('common.agents')}
               </button>
               {tabAgents.map((a) => (
                 <div
                   key={a.id}
                   className={`center-tab ${activeEditor?.id === a.id ? 'active' : ''}`}
                   onClick={() => setEditorTab(a.id)}
-                  title={`Anweisung für ${a.name} – der Agent ist gesperrt, bis der Tab geschlossen wird`}
+                  title={t('workspace.editorTabTooltip', { name: a.name })}
                 >
                   <EditIcon size={12} /> {a.name}
                   <button
                     className="icon"
-                    title="Schließen – Text in den Prompt übernehmen, ohne abzuschicken"
+                    title={t('workspace.editorTabCloseTooltip')}
                     onClick={(e) => {
                       e.stopPropagation()
                       finishEditor(a.id, drafts[a.id] ?? null, false)
@@ -1059,7 +1107,7 @@ function Workspace(): React.JSX.Element {
           onClose={() => setImportOpen(false)}
           onImported={async (added) => {
             setProjects(await window.api.projects.list())
-            if (added.length) setToast(`${added.length} Projekt(e) importiert.`)
+            if (added.length) setToast(t('workspace.projectsImported', { count: added.length }))
           }}
         />
       )}
@@ -1073,7 +1121,7 @@ function Workspace(): React.JSX.Element {
           onSaved={async (p) => {
             setProjectDialog(null)
             setProjects(await window.api.projects.list())
-            // Edited from within "Ausführen" (run) → back to it, the view stays
+            // Edited from within the run dialog → back to it, the view stays
             if (!runFor) setSelection({ kind: 'project', projectId: p.id })
           }}
         />
@@ -1127,17 +1175,17 @@ function Workspace(): React.JSX.Element {
             vscodeInstalled={vscodeInstalled}
             templates={templates}
             onEditTemplate={(template) => setTemplateDialog({ template })}
-            onRemoveTemplate={async (t) => {
-              await window.api.templates.remove(t.id).catch(showError)
+            onRemoveTemplate={async (template) => {
+              await window.api.templates.remove(template.id).catch(showError)
               setTemplates(await window.api.templates.list())
             }}
             teamTemplates={teamTemplates}
             onEditTeam={(team) => setTeamDialog({ team })}
-            onRemoveTeam={async (t) => {
-              await window.api.teamTemplates.remove(t.id).catch(showError)
+            onRemoveTeam={async (team) => {
+              await window.api.teamTemplates.remove(team.id).catch(showError)
               setTeamTemplates(await window.api.teamTemplates.list())
             }}
-            onSettingsChanged={setSettings}
+            onSettingsChanged={applySettings}
             onVoiceChanged={refreshVoice}
             onClose={() => setSettingsOpen(false)}
           />
@@ -1149,7 +1197,7 @@ function Workspace(): React.JSX.Element {
           onChanged={refreshVoice}
           onReady={() => {
             setVoiceSetupOpen(false)
-            setToast('Sprachsteuerung ist bereit.')
+            setToast(t('workspace.voiceReady'))
           }}
           onClose={() => setVoiceSetupOpen(false)}
         />

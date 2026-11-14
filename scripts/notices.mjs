@@ -21,7 +21,7 @@ while (queue.length) {
   if (seen.has(name)) continue
   const dir = pkgDir(name)
   if (!existsSync(join(dir, 'package.json'))) {
-    console.error(`notices: Paket ${name} nicht gefunden`)
+    console.error(`notices: package ${name} not found`)
     process.exit(1)
   }
   const pkg = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8'))
@@ -37,23 +37,23 @@ const legalFiles = (dir) =>
 
 const sep = '='.repeat(78)
 const parts = [
-  'DevHub – Hinweise zu Drittanbieter-Software / Third-party notices',
+  'DevHub – Third-party notices',
   '',
-  'DevHub enthält die folgenden Open-Source-Bibliotheken. Ihre Lizenztexte stehen unten.',
-  'Electron und Chromium: siehe LICENSE.electron.txt und LICENSES.chromium.html.',
-  'Zur Laufzeit nachgeladen (nicht enthalten): whisper.cpp und Sprachmodelle (MIT).',
+  'DevHub includes the following open-source libraries. Their license texts are below.',
+  'Electron and Chromium: see LICENSE.electron.txt and LICENSES.chromium.html.',
+  'Downloaded at runtime (not included): whisper.cpp and speech models (MIT).',
   ''
 ]
 const names = [...seen.keys()].sort()
 for (const name of names) {
   const { pkg } = seen.get(name)
-  parts.push(`- ${name} ${pkg.version} (${pkg.license ?? 'siehe unten'})`)
+  parts.push(`- ${name} ${pkg.version} (${pkg.license ?? 'see below'})`)
 }
 for (const name of names) {
   const { pkg, dir } = seen.get(name)
   const files = legalFiles(dir)
   if (!files.length) {
-    console.error(`notices: ${name} hat keine Lizenzdatei`)
+    console.error(`notices: ${name} has no license file`)
     process.exit(1)
   }
   parts.push('', sep, `${name} ${pkg.version} – ${pkg.license ?? ''}`.trim(), sep)
@@ -68,4 +68,4 @@ writeFileSync(
   join('out', 'THIRD_PARTY_NOTICES.txt'),
   parts.join('\n').replace(/\n/g, '\r\n') + '\r\n'
 )
-console.log(`notices: ${names.length} Pakete → out/THIRD_PARTY_NOTICES.txt`)
+console.log(`notices: ${names.length} packages → out/THIRD_PARTY_NOTICES.txt`)

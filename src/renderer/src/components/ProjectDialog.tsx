@@ -3,6 +3,7 @@ import type { Project } from '../../../shared/types'
 import Modal from './Modal'
 import { errorText } from '../lib/errors'
 import { validateAgentArgs } from '../../../shared/agentArgs'
+import { useT } from '../lib/i18n'
 import AgentArgsHelp from './AgentArgsHelp'
 import ProgramInput from './ProgramInput'
 
@@ -32,18 +33,19 @@ function ProjectDialog({
   onSaved,
   onClose
 }: Props): React.JSX.Element {
+  const t = useT()
   const [name, setName] = useState(project?.name ?? '')
   const [agentPath, setAgentPath] = useState(project?.agentPath ?? '')
   const [projectFile, setProjectFile] = useState(project?.projectFile ?? '')
   const [projectFileApp, setProjectFileApp] = useState(project?.projectFileApp ?? '')
   const [folderPath, setFolderPath] = useState(project?.folderPath ?? '')
   const [folderApp, setFolderApp] = useState(project?.folderApp ?? '')
-  const folderDefault = vscodeInstalled ? 'VS Code' : 'Windows-Explorer'
+  const folderDefault = vscodeInstalled ? 'VS Code' : t('project.windowsExplorer')
   const [agentArgs, setAgentArgs] = useState(project?.agentArgs ?? '')
   const argsError = validateAgentArgs(agentArgs)
   const [useWorktrees, setUseWorktrees] = useState(project?.useWorktrees ?? false)
   const [checks, setChecks] = useState(project?.checks ?? '')
-  /** Befehle als Text: je Zeile „Name = Befehl“ */
+  /** Commands as text: one "name = command" per line */
   const [runText, setRunText] = useState(
     (project?.runCommands ?? []).map((c) => `${c.name} = ${c.command}`).join('\n')
   )
@@ -109,61 +111,61 @@ function ProjectDialog({
 
   return (
     <Modal
-      title={project ? 'Projekt bearbeiten' : 'Projekt hinzufügen'}
+      title={project ? t('project.editTitle') : t('project.addTitle')}
       onClose={onClose}
       width={600}
       footer={
         <>
-          <button onClick={onClose}>Abbrechen</button>
+          <button onClick={onClose}>{t('common.cancel')}</button>
           <button
             className="primary"
             onClick={save}
             disabled={saving || !agentPath.trim() || !!argsError}
           >
-            Speichern
+            {t('common.save')}
           </button>
         </>
       }
     >
       <div className="form">
         <label>
-          <span>Name</span>
+          <span>{t('common.name')}</span>
           <input
             value={name}
             onChange={(e) => setName(e.target.value)}
-            placeholder={agentPath ? folderName(agentPath) : 'z. B. MeinProjekt'}
+            placeholder={agentPath ? folderName(agentPath) : t('project.namePlaceholder')}
             autoFocus
           />
         </label>
 
         <label>
           <span>
-            1 · Agent-Ordner <em>(Pflicht)</em>
+            {t('project.agentFolderLabel')} <em>{t('project.requiredTag')}</em>
           </span>
-          <small className="muted">Hier werden Claude und andere KI-Coding-Agents gestartet.</small>
+          <small className="muted">{t('project.agentFolderHint')}</small>
           <div className="path-input">
             <input
               value={agentPath}
               onChange={(e) => setAgentPath(e.target.value)}
               onBlur={() => detectSolution(agentPath)}
-              placeholder="C:\Dev\MeinProjekt"
+              placeholder={t('project.agentFolderPlaceholder')}
             />
-            <button onClick={pickAgentPath}>Durchsuchen …</button>
+            <button onClick={pickAgentPath}>{t('common.browse')}</button>
           </div>
         </label>
 
         <label>
-          <span>2 · Projektdatei</span>
+          <span>{t('project.projectFileLabel')}</span>
           <small className="muted">
             {autoFile && projectFile === autoFile
-              ? 'Automatisch im Agent-Ordner gefunden.'
-              : '.sln oder Projektdatei, z. B. zum Öffnen in Visual Studio oder Rider.'}
+              ? t('project.projectFileFoundHint')
+              : t('project.projectFileHint')}
           </small>
           <div className="path-input">
             <input
               value={projectFile}
               onChange={(e) => setProjectFile(e.target.value)}
-              placeholder="optional"
+              placeholder={t('common.optional')}
             />
             <button
               onClick={async () => {
@@ -176,7 +178,7 @@ function ProjectDialog({
                 }
               }}
             >
-              Durchsuchen …
+              {t('common.browse')}
             </button>
           </div>
         </label>
@@ -184,36 +186,36 @@ function ProjectDialog({
         {projectFile.trim() && (
           <label>
             <span>
-              Öffnen mit <em>(optional)</em>
+              {t('project.openWithLabel')} <em>{t('project.optionalTag')}</em>
             </span>
             <small className="muted">
-              {`Programm für die Projektdatei, z. B. Rider oder eine bestimmte Visual-Studio-Version. Leer = ${
-                globalProjectFileApp ? 'Programm aus den Einstellungen' : 'Windows-Standardprogramm'
-              }.`}
+              {globalProjectFileApp
+                ? t('project.projectFileAppHintSettings')
+                : t('project.projectFileAppHintDefault')}
             </small>
             <ProgramInput
               value={projectFileApp}
               onChange={setProjectFileApp}
-              placeholder={globalProjectFileApp || 'Windows-Standardprogramm'}
+              placeholder={globalProjectFileApp || t('project.windowsDefaultProgram')}
             />
           </label>
         )}
 
         <label>
-          <span>3 · Ordner</span>
-          <small className="muted">Ordner, der in einem Editor geöffnet wird, z. B. VS Code.</small>
+          <span>{t('project.folderLabel')}</span>
+          <small className="muted">{t('project.folderHint')}</small>
           <div className="path-input">
             <input
               value={folderPath}
               onChange={(e) => setFolderPath(e.target.value)}
-              placeholder="optional"
+              placeholder={t('common.optional')}
             />
             <button
               disabled={!agentPath}
-              title="Agent-Ordner übernehmen"
+              title={t('project.useAgentFolderTooltip')}
               onClick={() => setFolderPath(agentPath)}
             >
-              = Pfad 1
+              {t('project.useAgentFolder')}
             </button>
             <button
               onClick={async () => {
@@ -221,7 +223,7 @@ function ProjectDialog({
                 if (p) setFolderPath(p)
               }}
             >
-              Durchsuchen …
+              {t('common.browse')}
             </button>
           </div>
         </label>
@@ -229,12 +231,12 @@ function ProjectDialog({
         {folderPath.trim() && (
           <label>
             <span>
-              Öffnen mit <em>(optional)</em>
+              {t('project.openWithLabel')} <em>{t('project.optionalTag')}</em>
             </span>
             <small className="muted">
-              {`Programm für den Ordner, z. B. Cursor oder ein anderer Editor. Leer = ${
-                globalFolderApp ? 'Programm aus den Einstellungen' : folderDefault
-              }.`}
+              {globalFolderApp
+                ? t('project.folderAppHintSettings')
+                : t('project.folderAppHintDefault', { program: folderDefault })}
             </small>
             <ProgramInput
               value={folderApp}
@@ -246,13 +248,13 @@ function ProjectDialog({
 
         <label>
           <span>
-            Start-Flags <em>(optional)</em>
+            {t('project.startFlagsLabel')} <em>{t('project.optionalTag')}</em>
           </span>
           <input
             className="mono"
             value={agentArgs}
             onChange={(e) => setAgentArgs(e.target.value)}
-            placeholder="z. B. --permission-mode plan"
+            placeholder={t('project.startFlagsPlaceholder')}
             spellCheck={false}
           />
           {argsError ? (
@@ -268,17 +270,13 @@ function ProjectDialog({
             checked={useWorktrees}
             onChange={(e) => setUseWorktrees(e.target.checked)}
           />
-          Jeder Agent arbeitet in einem eigenen Git-Worktree (eigener Branch)
+          {t('project.useWorktrees')}
         </label>
-        <small className="muted">
-          Mehrere Agents stören sich so nicht gegenseitig; ihre Änderungen prüfst und führst du über
-          „Änderungen prüfen“ zusammen. Braucht ein Git-Repository mit mindestens einem Commit.
-          Nicht versionierte Dateien (z. B. node_modules, .env) fehlen im Worktree.
-        </small>
+        <small className="muted">{t('project.useWorktreesHint')}</small>
 
         <label>
           <span>
-            Prüfungen bei „Fertig“ <em>(optional)</em>
+            {t('project.checksLabel')} <em>{t('project.optionalTag')}</em>
           </span>
           <textarea
             className="mono"
@@ -288,16 +286,12 @@ function ProjectDialog({
             placeholder={'npm run typecheck\nnpm run lint'}
             spellCheck={false}
           />
-          <small className="muted">
-            Ein Befehl je Zeile. Hat ein Agent Dateien geändert und meldet fertig, laufen sie in
-            seinem Arbeitsverzeichnis; schlägt einer fehl, bekommt der Agent die Ausgabe und bessert
-            nach (höchstens dreimal je Anweisung).
-          </small>
+          <small className="muted">{t('project.checksHint')}</small>
         </label>
 
         <label>
           <span>
-            Befehle zum Ausführen <em>(optional)</em>
+            {t('project.runCommandsLabel')} <em>{t('project.optionalTag')}</em>
           </span>
           <textarea
             className="mono"
@@ -307,15 +301,12 @@ function ProjectDialog({
             placeholder={'dev = npm run dev\ntest = npm test'}
             spellCheck={false}
           />
-          <small className="muted">
-            Je Zeile „Name = Befehl“. Start/Stopp und Ausgabe unter „Ausführen“ (Rechtsklick aufs
-            Projekt); Agents können die Ausgabe lesen.
-          </small>
+          <small className="muted">{t('project.runCommandsHint')}</small>
         </label>
 
         <label>
           <span>
-            Web-Vorschau <em>(optional)</em>
+            {t('project.previewLabel')} <em>{t('project.optionalTag')}</em>
           </span>
           <input
             className="mono"
@@ -328,7 +319,7 @@ function ProjectDialog({
 
         <label>
           <span>
-            Freigabe-Regeln <em>(optional)</em>
+            {t('project.permissionRulesLabel')} <em>{t('project.optionalTag')}</em>
           </span>
           <textarea
             className="mono"
@@ -338,11 +329,7 @@ function ProjectDialog({
             placeholder={'Bash:npm test\nBash:git status\nEdit'}
             spellCheck={false}
           />
-          <small className="muted">
-            Eine Regel je Zeile: Tool-Name (z. B. Edit) oder „Bash:Befehlsanfang“. Passende Aufrufe
-            werden für Agents dieses Projekts ohne Nachfrage erlaubt; verkettete Befehle
-            (&amp;&amp;, |, ; …) passen nie. „Immer“ im Eingang trägt hier Regeln ein.
-          </small>
+          <small className="muted">{t('project.permissionRulesHint')}</small>
         </label>
 
         {error && <p className="error">{error}</p>}

@@ -1,4 +1,5 @@
 import { MicIcon } from './Icons'
+import { useT } from '../lib/i18n'
 
 /** Running recording (at most one at a time). */
 export interface VoiceRecording {
@@ -13,9 +14,9 @@ export interface VoiceRecording {
 export interface VoiceJob {
   id: number
   state: 'processing' | 'done' | 'error'
-  /** e.g. "Wandle in Text um …" or the result */
+  /** e.g. "Transcribing …" or the result (already translated) */
   message: string
-  /** Who was addressed ("Agent 2", "Sprachbefehl") */
+  /** Who was addressed ("Agent 2", "Voice command") */
   target: string
   text?: string
   /** Detected language (whisper code, e.g. "de") */
@@ -41,6 +42,7 @@ function VoiceOverlay({
   onCancel,
   onDismiss
 }: Props): React.JSX.Element | null {
+  const t = useT()
   if (!recording && jobs.length === 0) return null
 
   return (
@@ -56,22 +58,26 @@ function VoiceOverlay({
               {job.target}
               {job.language && ` [${job.language.toUpperCase()}]`}:{' '}
             </span>
-            {job.text && <span className="muted">„{job.text}“ </span>}
+            {job.text && (
+              <span className="muted">{t('workspace.voiceQuoted', { text: job.text })} </span>
+            )}
             <strong>{job.message}</strong>
           </span>
-          {job.state !== 'processing' && <button onClick={() => onDismiss(job.id)}>OK</button>}
+          {job.state !== 'processing' && (
+            <button onClick={() => onDismiss(job.id)}>{t('common.ok')}</button>
+          )}
         </div>
       ))}
       {recording && (
         <div className="voice-overlay recording">
           <span className="rec-dot" />
           <span className="voice-text">
-            <strong>Aufnahme</strong> · {recording.label}
+            <strong>{t('workspace.voiceRecording')}</strong> · {recording.label}
           </span>
           <button className="primary" onClick={onStop}>
-            <MicIcon /> Fertig
+            <MicIcon /> {t('common.done')}
           </button>
-          <button onClick={onCancel}>Abbrechen</button>
+          <button onClick={onCancel}>{t('common.cancel')}</button>
         </div>
       )}
     </div>

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { acceleratorFromEvent, formatAccelerator } from '../../../shared/hotkeys'
 import { errorText } from '../lib/errors'
 import { setCapturingHotkey } from '../lib/hotkeyCapture'
+import { useT } from '../lib/i18n'
 
 interface Props {
   value: string
@@ -14,8 +15,9 @@ interface Props {
 
 const MODIFIER_CODES = /^(Control|Shift|Alt|Meta|OS)(Left|Right)?$/
 
-/** Shortcut field: click "Ändern", then press the key combination (Esc cancels). */
+/** Shortcut field: click "Change", then press the key combination (Esc cancels). */
 function HotkeyInput({ value, defaultValue, global, onChange }: Props): React.JSX.Element {
+  const t = useT()
   const [recording, setRecording] = useState(false)
   const [hint, setHint] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -53,7 +55,7 @@ function HotkeyInput({ value, defaultValue, global, onChange }: Props): React.JS
       }
       const acc = acceleratorFromEvent(e)
       if (acc) finish(acc)
-      else setHint('Mit Strg, Alt oder Win kombinieren (oder eine F-Taste verwenden)')
+      else setHint(t('settings.hotkeyNeedsModifier'))
     }
     // Capture phase: before Modal (Esc would otherwise close the dialog) and all other hotkeys
     window.addEventListener('keydown', onKey, true)
@@ -68,7 +70,7 @@ function HotkeyInput({ value, defaultValue, global, onChange }: Props): React.JS
       // after saving or cancelling, re-register the (possibly new) saved shortcut
       if (global) window.api.settings.suspendGlobalHotkey(false)
     }
-  }, [recording, global])
+  }, [recording, global, t])
 
   const start = (): void => {
     setHint(null)
@@ -89,18 +91,18 @@ function HotkeyInput({ value, defaultValue, global, onChange }: Props): React.JS
     <div className="hotkey-input">
       <div className="hotkey-row">
         {recording ? (
-          <kbd className="recording">Tastenkombination drücken … (Esc = Abbrechen)</kbd>
+          <kbd className="recording">{t('settings.hotkeyPress')}</kbd>
         ) : (
           <kbd>{formatAccelerator(value)}</kbd>
         )}
         {!recording && (
           <>
             <button className="link" onClick={start}>
-              Ändern
+              {t('settings.hotkeyChange')}
             </button>
             {value !== defaultValue && (
               <button className="link" onClick={reset} title={formatAccelerator(defaultValue)}>
-                Standard
+                {t('common.default')}
               </button>
             )}
           </>
