@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import type { Project } from '../../../shared/types'
 import { errorText } from '../lib/errors'
+import { useT } from '../lib/i18n'
 import Markdown from './Markdown'
 import Modal from './Modal'
 
@@ -11,6 +12,7 @@ interface Props {
 
 /** Daily report: Claude (Haiku) summarizes what the agents did today and what is still open. */
 function ReportDialog({ projects, onClose }: Props): React.JSX.Element {
+  const t = useT()
   const [projectId, setProjectId] = useState('')
   const [report, setReport] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -29,7 +31,7 @@ function ReportDialog({ projects, onClose }: Props): React.JSX.Element {
 
   return (
     <Modal
-      title="Tagesbericht"
+      title={t('report.title')}
       onClose={onClose}
       width={720}
       footer={
@@ -41,15 +43,15 @@ function ReportDialog({ projects, onClose }: Props): React.JSX.Element {
               setCopied(true)
             }}
           >
-            {copied ? 'Kopiert' : 'Als Markdown kopieren'}
+            {copied ? t('common.copied') : t('report.copyMarkdown')}
           </button>
-          <button onClick={onClose}>Schließen</button>
+          <button onClick={onClose}>{t('common.close')}</button>
         </>
       }
     >
       <div className="form">
         <label>
-          <span>Projekt</span>
+          <span>{t('common.project')}</span>
           <select
             value={projectId}
             onChange={(e) => {
@@ -59,7 +61,7 @@ function ReportDialog({ projects, onClose }: Props): React.JSX.Element {
               setProjectId(e.target.value)
             }}
           >
-            <option value="">Alle Projekte</option>
+            <option value="">{t('report.allProjects')}</option>
             {projects.map((p) => (
               <option key={p.id} value={p.id}>
                 {p.name}
@@ -71,7 +73,7 @@ function ReportDialog({ projects, onClose }: Props): React.JSX.Element {
       {error ? (
         <p className="error">{error}</p>
       ) : report === null ? (
-        <p className="muted">Claude fasst den Tag zusammen …</p>
+        <p className="muted">{t('report.loading')}</p>
       ) : (
         <Markdown text={report} />
       )}

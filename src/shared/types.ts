@@ -1,4 +1,5 @@
 /** Types shared by the main, preload and renderer processes. */
+import type { LanguageSetting } from './i18n'
 
 export type ClaudeAuthState =
   | { kind: 'notInstalled' }
@@ -81,6 +82,8 @@ export interface Agent {
   sessionId: string
   status: AgentStatus
   statusMessage?: string
+  /** The agent finished its turn and waits for the next instruction (language-independent "done") */
+  turnDone?: boolean
   createdAt: number
   /** Auto-send voice text: overrides `Settings.voiceAutoSend`, undefined = global */
   voiceAutoSend?: boolean
@@ -99,7 +102,7 @@ export interface Agent {
   editing?: boolean
   /** The agent's own Git worktree (project with `useWorktrees`) */
   worktree?: AgentWorktree
-  /** Engine other than Claude Code (settings → "Weitere Engines"); without hooks/status */
+  /** Engine other than Claude Code (settings → further engines); without hooks/status */
   engineId?: string
   /** Session to fork from on the first start (`--fork-session`) */
   forkFrom?: string
@@ -447,6 +450,8 @@ export type VoiceCommandResult =
   | { kind: 'none'; message: string }
 
 export interface Settings {
+  /** Language of the interface: a code from `LANGUAGES` (shared/i18n) or 'system' */
+  language: LanguageSetting
   voiceModel: WhisperModelId | null
   /** Send transcribed text right away with Enter */
   voiceAutoSend: boolean

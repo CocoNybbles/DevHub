@@ -2,6 +2,7 @@ import { exec, spawn } from 'child_process'
 import { existsSync, statSync } from 'fs'
 import { readdir } from 'fs/promises'
 import { basename, dirname, isAbsolute, join } from 'path'
+import { t } from '../shared/i18n'
 
 /** Runs a shell command and returns the first output line (or null on error). */
 function firstLine(command: string): Promise<string | null> {
@@ -79,12 +80,12 @@ export function isVSCodeInstalled(): Promise<boolean> {
 
 /** Windows paths cannot contain " – so quoting with " is safe. */
 function quote(path: string): string {
-  if (path.includes('"')) throw new Error('Ungültiger Pfad')
+  if (path.includes('"')) throw new Error(t('main.invalidPath'))
   return `"${path}"`
 }
 
 export function openInVSCode(path: string, line?: number): void {
-  if (!existsSync(path)) throw new Error(`Pfad nicht gefunden: ${path}`)
+  if (!existsSync(path)) throw new Error(t('main.pathNotFound', { path }))
   const cmd = line ? `code -g ${quote(`${path}:${line}`)}` : `code ${quote(path)}`
   exec(cmd, { windowsHide: true })
 }
@@ -92,9 +93,9 @@ export function openInVSCode(path: string, line?: number): void {
 /** Validates a program path entered by the user; returns an error message or null. */
 export function validateProgram(exe: string | undefined): string | null {
   if (!exe) return null
-  if (!isAbsolute(exe)) return 'Programm: bitte den vollständigen Pfad angeben'
-  if (!/\.(exe|cmd|bat)$/i.test(exe)) return 'Programm: muss eine .exe (oder .cmd/.bat) sein'
-  if (!existsSync(exe)) return `Programm nicht gefunden: ${exe}`
+  if (!isAbsolute(exe)) return t('main.programFullPath')
+  if (!/\.(exe|cmd|bat)$/i.test(exe)) return t('main.programExtension')
+  if (!existsSync(exe)) return t('main.programNotFound', { path: exe })
   return null
 }
 
@@ -120,7 +121,7 @@ export function openWithProgram(exe: string, file: string): Promise<void> {
         })
       : spawn(exe, [file], { cwd, detached: true, stdio: 'ignore' })
     child.once('error', (e) =>
-      reject(new Error(`Programm konnte nicht gestartet werden: ${e.message}`))
+      reject(new Error(t('main.programStartFailed', { error: e.message })))
     )
     child.once('spawn', () => {
       child.unref()

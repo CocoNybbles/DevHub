@@ -6,6 +6,7 @@
 import { app, dialog } from 'electron'
 import { cpSync, existsSync, mkdirSync, rmSync, writeFileSync } from 'fs'
 import { dirname, join } from 'path'
+import { t } from '../shared/i18n'
 
 /** Folder containing the .exe (portable: the real location, not the extraction folder in %TEMP%). */
 function exeDir(): string {
@@ -24,7 +25,7 @@ function migrateFromAppData(target: string): void {
       cpSync(join(old, 'whisper'), join(target, 'whisper'), { recursive: true })
     }
   } catch (err) {
-    console.error('Übernahme der alten Daten fehlgeschlagen:', err)
+    console.error('[DevHub] Migrating the old data failed:', err)
   }
 }
 
@@ -40,11 +41,8 @@ try {
   writeFileSync(probe, '')
   rmSync(probe)
 } catch {
-  dialog.showErrorBox(
-    'DevHub',
-    `DevHub speichert seine Daten neben der Programmdatei, hat aber keine Schreibrechte für:\n${dir}\n\n` +
-      'Bitte DevHub in einen beschreibbaren Ordner verschieben (z. B. nicht unter „Programme“).'
-  )
+  // The saved language is not loaded yet: this text uses the system language
+  dialog.showErrorBox('DevHub', t('main.dataDirNotWritable', { dir }))
   app.exit(1)
 }
 if (!override) migrateFromAppData(dir)

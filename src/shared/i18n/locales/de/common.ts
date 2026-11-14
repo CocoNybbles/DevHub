@@ -1,0 +1,45 @@
+import type en from '../en/common'
+
+/** German texts: namespace `common` */
+const de: typeof en = {
+  ok: 'OK',
+  cancel: 'Abbrechen',
+  save: 'Speichern',
+  close: 'Schließen',
+  delete: 'Löschen',
+  remove: 'Entfernen',
+  edit: 'Bearbeiten',
+  rename: 'Umbenennen',
+  copy: 'Kopieren',
+  copied: 'Kopiert',
+  stop: 'Stoppen',
+  send: 'Abschicken',
+  discard: 'Verwerfen',
+  browse: 'Durchsuchen …',
+  done: 'Fertig',
+  allow: 'Erlauben',
+  deny: 'Ablehnen',
+  always: 'Immer',
+  all: 'Alle',
+  optional: 'optional',
+  default: 'Standard',
+  name: 'Name',
+  model: 'Modell',
+  project: 'Projekt',
+  projects: 'Projekte',
+  agent: 'Agent',
+  agents: 'Agents',
+  team: 'Team',
+  teams: 'Teams',
+  orchestrator: 'Orchestrator',
+  task: 'Aufgabe',
+  tasks: 'Aufgaben',
+  settings: 'Einstellungen',
+  error: 'Fehler',
+  moveUp: 'Nach oben',
+  moveDown: 'Nach unten',
+  dictate: 'Diktieren',
+  stopRecording: 'Aufnahme beenden'
+}
+
+export default de

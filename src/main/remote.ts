@@ -5,6 +5,7 @@ import type { PermissionAnswer, RemoteInfo, Settings } from '../shared/types'
 import { isTeamWorker } from '../shared/types'
 import type { AgentManager } from './agents'
 import { getState } from './store'
+import { getLocale, t } from '../shared/i18n'
 
 /**
  * Remote access for the phone (can be turned off, off by default): small HTTP server in the
@@ -16,7 +17,8 @@ export class RemoteServer {
   private server: Server | null = null
   private port = 0
   private token = ''
-  private error: string | undefined
+  /** Translated when read, so a language switch also applies to an existing error */
+  private error: (() => string) | undefined
 
   constructor(private agents: AgentManager) {}
 
@@ -33,11 +35,14 @@ export class RemoteServer {
     this.port = settings.remotePort
     this.token = settings.remoteToken
     const server = createServer((req, res) => {
-      this.handle(req, res).catch(() => send(res, 500, 'text/plain', 'Fehler'))
+      this.handle(req, res).catch(() =>
+        send(res, 500, 'text/plain; charset=utf-8', t('common.error'))
+      )
     })
     server.on('error', (e: NodeJS.ErrnoException) => {
-      this.error =
-        e.code === 'EADDRINUSE' ? `Port ${this.port} ist bereits belegt` : String(e.message)
+      const port = this.port
+      const message = String(e.message)
+      this.error = e.code === 'EADDRINUSE' ? () => t('remote.portInUse', { port }) : () => message
       if (this.server === server) this.server = null
     })
     server.listen(this.port, '0.0.0.0')
@@ -50,7 +55,7 @@ export class RemoteServer {
   }
 
   info(): RemoteInfo {
-    if (!this.server) return { running: false, urls: [], error: this.error }
+    if (!this.server) return { running: false, urls: [], error: this.error?.() }
     const urls: string[] = []
     for (const list of Object.values(networkInterfaces())) {
       for (const net of list ?? []) {
@@ -58,7 +63,7 @@ export class RemoteServer {
           urls.push(`http://${net.address}:${this.port}/${this.token}/`)
       }
     }
-    return { running: true, urls, error: this.error }
+    return { running: true, urls, error: this.error?.() }
   }
 
   private authorized(token: string): boolean {
@@ -72,13 +77,14 @@ export class RemoteServer {
     if (!token || !this.authorized(token)) return send(res, 404, 'text/plain', 'Not found')
     const path = rest.join('/')
 
-    if (req.method === 'GET' && path === '') return send(res, 200, 'text/html; charset=utf-8', PAGE)
+    if (req.method === 'GET' && path === '')
+      return send(res, 200, 'text/html; charset=utf-8', page())
     if (req.method === 'GET' && path === 'api/state') return json(res, this.state())
 
     if (req.method === 'POST' && path === 'api/send') {
       const body = await readJson(req)
       const text = String(body.text ?? '').trim()
-      if (!text) return json(res, { error: 'Text fehlt' }, 400)
+      if (!text) return json(res, { error: t('remote.textMissing') }, 400)
       try {
         await this.agents.sendLine(String(body.agentId ?? ''), text)
         return json(res, { ok: true })
@@ -91,7 +97,7 @@ export class RemoteServer {
       const body = await readJson(req)
       const answer = String(body.answer ?? '') as PermissionAnswer
       if (!['allow', 'deny', 'always'].includes(answer))
-        return json(res, { error: 'Ungültige Antwort' }, 400)
+        return json(res, { error: t('remote.invalidAnswer') }, 400)
       try {
         this.agents.answerUserPermission(Number(body.id), answer, String(body.message ?? ''))
         return json(res, { ok: true })
@@ -105,7 +111,11 @@ export class RemoteServer {
   private state(): object {
     const projects = getState().projects
     const list = this.agents.list()
+    const waiting = list.filter((a) => a.status === 'needsInput').length
     return {
+      summary: waiting
+        ? t('remote.summaryWaiting', { count: list.length, waiting })
+        : t('remote.summary', { count: list.length }),
       agents: list.map((a) => ({
         id: a.id,
         name: a.name,
@@ -154,9 +164,32 @@ function readJson(req: IncomingMessage): Promise<Record<string, unknown>> {
   })
 }
 
-/** Page for the phone: polls the state every 3 s; content is only inserted as text. */
-const PAGE = `<!doctype html>
-<html lang="de">
+/**
+ * Texts used by the page's script. Placeholders like `{agent}` are filled in the browser
+ * (`fmt`), so they are passed on untouched here.
+ */
+function pageTexts(): Record<string, string> {
+  return {
+    permissionTitle: t('remote.permissionTitle'),
+    allow: t('common.allow'),
+    deny: t('common.deny'),
+    alwaysRule: t('remote.alwaysRule'),
+    instructionPlaceholder: t('remote.instructionPlaceholder'),
+    send: t('remote.send'),
+    noAgents: t('remote.noAgents'),
+    noConnection: t('remote.noConnection')
+  }
+}
+
+/**
+ * Page for the phone: polls the state every 3 s; content is only inserted as text.
+ * Built per request, so a language switch takes effect on reload.
+ */
+function page(): string {
+  // `<` escaped so a text can never close the script element
+  const texts = JSON.stringify(pageTexts()).replace(/</g, '\\u003c')
+  return `<!doctype html>
+<html lang="${getLocale()}">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -188,6 +221,10 @@ const PAGE = `<!doctype html>
 <header>DevHub <span class="muted" id="info"></span></header>
 <main id="list"></main>
 <script>
+var T = ${texts};
+function fmt(text, params) {
+  return text.replace(/\\{(\\w+)\\}/g, function (m, k) { return k in params ? params[k] : m; });
+}
 var drafts = {};
 function el(tag, cls, text) {
   var e = document.createElement(tag);
@@ -207,16 +244,16 @@ function render(state) {
   list.textContent = '';
   state.permissions.forEach(function (p) {
     var c = el('div', 'card wait');
-    c.appendChild(el('div', 'name', 'Freigabe: ' + p.agent + ' → ' + p.tool));
+    c.appendChild(el('div', 'name', fmt(T.permissionTitle, { agent: p.agent, tool: p.tool })));
     c.appendChild(el('code', '', p.summary));
     var row = el('div', 'row');
-    var yes = el('button', 'ok', 'Erlauben');
+    var yes = el('button', 'ok', T.allow);
     yes.onclick = function () { post('api/permission', { id: p.id, answer: 'allow' }); };
-    var no = el('button', 'no', 'Ablehnen');
+    var no = el('button', 'no', T.deny);
     no.onclick = function () { post('api/permission', { id: p.id, answer: 'deny' }); };
     row.appendChild(yes); row.appendChild(no);
     if (p.rule) {
-      var always = el('button', '', 'Immer (' + p.rule + ')');
+      var always = el('button', '', fmt(T.alwaysRule, { rule: p.rule }));
       always.onclick = function () { post('api/permission', { id: p.id, answer: 'always' }); };
       row.appendChild(always);
     }
@@ -235,11 +272,11 @@ function render(state) {
     if (!a.readOnly) {
       var row = el('div', 'row');
       var input = el('input');
-      input.placeholder = 'Anweisung an ' + a.name;
+      input.placeholder = fmt(T.instructionPlaceholder, { name: a.name });
       input.dataset.agent = a.id;
       input.value = drafts[a.id] || '';
       input.oninput = function () { drafts[a.id] = input.value; };
-      var go = el('button', '', 'Senden');
+      var go = el('button', '', T.send);
       var sendNow = function () {
         if (!input.value.trim()) return;
         var text = input.value; drafts[a.id] = ''; input.value = '';
@@ -252,19 +289,17 @@ function render(state) {
     }
     list.appendChild(c);
   });
-  if (!state.agents.length) list.appendChild(el('div', 'muted', 'Keine Agents laufen.'));
+  if (!state.agents.length) list.appendChild(el('div', 'muted', T.noAgents));
   if (focused) {
     var again = document.querySelector('input[data-agent="' + focused + '"]');
     if (again) again.focus();
   }
-  var waiting = state.agents.filter(function (a) { return a.status === 'needsInput'; }).length;
-  document.getElementById('info').textContent =
-    state.agents.length + ' Agents' + (waiting ? ' · ' + waiting + ' warten' : '');
+  document.getElementById('info').textContent = state.summary;
 }
 function load() {
   // Do not rebuild while typing (the on-screen keyboard would not stay open otherwise)
   fetch('api/state').then(function (r) { return r.json(); }).then(render).catch(function () {
-    document.getElementById('info').textContent = 'keine Verbindung';
+    document.getElementById('info').textContent = T.noConnection;
   });
 }
 load();
@@ -275,3 +310,4 @@ setInterval(function () {
 </script>
 </body>
 </html>`
+}

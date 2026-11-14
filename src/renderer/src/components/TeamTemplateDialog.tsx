@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import type { AgentTemplate, TeamMember, TeamTemplate } from '../../../shared/types'
 import { errorText } from '../lib/errors'
+import { useT } from '../lib/i18n'
 import DictationTextarea from './DictationTextarea'
 import Modal from './Modal'
 
@@ -17,6 +18,7 @@ const MAX_MEMBERS = 8
 
 /** Assemble a team from predefined agents: name, members (+ automatic orchestrator), guidelines. */
 function TeamTemplateDialog({ team, templates, onSaved, onClose }: Props): React.JSX.Element {
+  const t = useT()
   const [name, setName] = useState(team?.name ?? '')
   // New team: prefill with the first two predefined agents
   const [members, setMembers] = useState<TeamMember[]>(
@@ -56,43 +58,41 @@ function TeamTemplateDialog({ team, templates, onSaved, onClose }: Props): React
 
   return (
     <Modal
-      title={team ? `Team: ${team.name}` : 'Neues Team'}
+      title={team ? t('templates.teamTitleEdit', { name: team.name }) : t('templates.teamTitleNew')}
       onClose={onClose}
       width={640}
       footer={
         <>
-          <button onClick={onClose}>Abbrechen</button>
+          <button onClick={onClose}>{t('common.cancel')}</button>
           <button
             className="primary"
             onClick={save}
             disabled={saving || !name.trim() || members.length < 2}
           >
-            Speichern
+            {t('common.save')}
           </button>
         </>
       }
     >
       <div className="form">
         <label>
-          <span>Name</span>
+          <span>{t('common.name')}</span>
           <small className="muted">
-            Per Sprache startbar, z. B. „Starte das Team {name.trim() || 'Feature'} für DevHub“.
+            {t('templates.teamNameHelp', {
+              name: name.trim() || t('templates.teamNameExample')
+            })}
           </small>
           <input
             value={name}
             onChange={(e) => setName(e.target.value)}
-            placeholder="z. B. Feature, Bugfix, Review"
+            placeholder={t('templates.teamNamePlaceholder')}
             autoFocus
           />
         </label>
 
         <div className="field">
-          <span>Mitglieder</span>
-          <small className="muted">
-            Zusätzlich startet automatisch ein Orchestrator: Er bekommt die Aufgabe, verteilt sie an
-            die Mitglieder, entscheidet über ihre Freigaben und berichtet dir. Die Mitglieder kannst
-            du nur beobachten.
-          </small>
+          <span>{t('templates.membersLabel')}</span>
+          <small className="muted">{t('templates.membersHelp')}</small>
           <div className="member-list">
             {members.map((m, i) => (
               <div key={i} className="member-row">
@@ -101,17 +101,17 @@ function TeamTemplateDialog({ team, templates, onSaved, onClose }: Props): React
                   value={m.templateId ?? ''}
                   onChange={(e) => update(i, { templateId: e.target.value || undefined })}
                 >
-                  <option value="">Normaler Agent</option>
-                  {templates.map((t) => (
-                    <option key={t.id} value={t.id}>
-                      {t.name}
-                      {t.model ? ` (${t.model})` : ''}
+                  <option value="">{t('templates.normalAgent')}</option>
+                  {templates.map((tpl) => (
+                    <option key={tpl.id} value={tpl.id}>
+                      {tpl.name}
+                      {tpl.model ? ` (${tpl.model})` : ''}
                     </option>
                   ))}
                 </select>
                 <button
                   className="icon"
-                  title="Nach oben"
+                  title={t('common.moveUp')}
                   disabled={i === 0}
                   onClick={() => move(i, -1)}
                 >
@@ -119,7 +119,7 @@ function TeamTemplateDialog({ team, templates, onSaved, onClose }: Props): React
                 </button>
                 <button
                   className="icon"
-                  title="Nach unten"
+                  title={t('common.moveDown')}
                   disabled={i === members.length - 1}
                   onClick={() => move(i, 1)}
                 >
@@ -127,7 +127,7 @@ function TeamTemplateDialog({ team, templates, onSaved, onClose }: Props): React
                 </button>
                 <button
                   className="icon"
-                  title="Entfernen"
+                  title={t('common.remove')}
                   disabled={members.length <= 2}
                   onClick={() => setMembers((list) => list.filter((_, j) => j !== i))}
                 >
@@ -141,33 +141,24 @@ function TeamTemplateDialog({ team, templates, onSaved, onClose }: Props): React
               disabled={members.length >= MAX_MEMBERS}
               onClick={() => setMembers((list) => [...list, { templateId: templates[0]?.id }])}
             >
-              + Mitglied
+              {t('templates.addMember')}
             </button>
           </div>
           {templates.length === 0 && (
-            <small className="muted">
-              Tipp: Lege zuerst vordefinierte Agents (z. B. Entwickler, Reviewer) an, um ihnen
-              Rollen zu geben.
-            </small>
+            <small className="muted">{t('templates.noTemplatesTip')}</small>
           )}
         </div>
 
         <div className="field">
           <span>
-            Gemeinsame Richtlinien <em>(optional)</em>
+            {t('templates.sharedGuidelinesLabel')} <em>({t('common.optional')})</em>
           </span>
-          <small className="muted">
-            Gilt für alle Mitglieder zusätzlich zu ihren eigenen Richtlinien, z. B. Ablauf und
-            Übergaben. Mit dem Mikrofon diktieren.
-          </small>
+          <small className="muted">{t('templates.sharedGuidelinesHelp')}</small>
           <DictationTextarea
             value={instructions}
             onChange={setInstructions}
             minHeight={130}
-            placeholder={
-              'z. B. Der Entwickler setzt um und übergibt dann an den Reviewer. Der Reviewer ' +
-              'prüft und meldet Befunde zurück, bis alles passt. Erst dann wird committet.'
-            }
+            placeholder={t('templates.sharedGuidelinesPlaceholder')}
           />
         </div>
 

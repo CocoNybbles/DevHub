@@ -6,6 +6,7 @@ import { ClearIcon, CloseIcon, EditIcon, EyeIcon, LockIcon, MicIcon, PlayIcon } 
 import { focusTerminal, hasSnapshot } from '../lib/terminals'
 import { formatAccelerator } from '../../../shared/hotkeys'
 import { formatTokens } from '../lib/format'
+import { useT } from '../lib/i18n'
 
 /** Reported progress (`report_progress`), otherwise the agent's current step */
 const activityText = (a: Agent): string =>
@@ -46,11 +47,12 @@ interface Props {
  */
 function CenterPane(props: Props): React.JSX.Element {
   const { selection, projects, agents } = props
+  const t = useT()
 
-  const voiceButton = (title: string): React.JSX.Element => (
+  const voiceButton = (): React.JSX.Element => (
     <button
       className={`icon ${props.agentVoiceActive ? 'recording' : ''}`}
-      title={`${title} (${formatAccelerator(props.agentHotkey)})`}
+      title={t('center.voiceToActive', { hotkey: formatAccelerator(props.agentHotkey) })}
       onClick={props.onAgentVoice}
     >
       <MicIcon />
@@ -69,18 +71,18 @@ function CenterPane(props: Props): React.JSX.Element {
               {agent.name}
               <span className="muted"> · {project?.name}</span>
               {agent.worktree && (
-                <span className="muted" title={`Eigener Worktree: ${agent.worktree.path}`}>
+                <span
+                  className="muted"
+                  title={t('center.worktreeTooltip', { path: agent.worktree.path })}
+                >
                   {' '}
                   · {agent.worktree.branch}
                 </span>
               )}
               {agent.usage && (
-                <span
-                  className="muted"
-                  title="Tokens im Kontext der Unterhaltung (bei der letzten Antwort)"
-                >
+                <span className="muted" title={t('center.contextTooltip')}>
                   {' '}
-                  · Kontext {formatTokens(agent.usage.context)}
+                  · {t('center.contextSize', { tokens: formatTokens(agent.usage.context) })}
                 </span>
               )}
               {agent.status === 'working' && activityText(agent) && (
@@ -92,7 +94,9 @@ function CenterPane(props: Props): React.JSX.Element {
               {!agent.editing && !isTeamWorker(agent) && (
                 <button
                   className="icon"
-                  title={`Anweisung in einem Tab schreiben – mit Bildern und Diktat (${formatAccelerator(props.editorHotkey)})`}
+                  title={t('center.editPromptTooltip', {
+                    hotkey: formatAccelerator(props.editorHotkey)
+                  })}
                   onClick={() => props.onEditPrompt(agent.id)}
                 >
                   <EditIcon />
@@ -120,16 +124,13 @@ function CenterPane(props: Props): React.JSX.Element {
       <main className="pane center">
         <header className="pane-header">
           <span className="title">
-            {shown.length} Agents
+            {t('center.agentCount', { count: shown.length })}
             <span className="muted">
               {' '}
-              · {projectCount === 1 ? '1 Projekt' : `${projectCount} Projekte`} · Strg+Klick links
-              ändert die Auswahl
+              · {t('center.projectCount', { count: projectCount })} · {t('center.gridHint')}
             </span>
           </span>
-          <div className="header-actions">
-            {props.activeAgentId && voiceButton('Sprach-Anweisung an den aktiven Agent')}
-          </div>
+          <div className="header-actions">{props.activeAgentId && voiceButton()}</div>
         </header>
         <AgentGrid {...props} shown={shown} showProject={projectCount > 1} />
       </main>
@@ -145,10 +146,10 @@ function CenterPane(props: Props): React.JSX.Element {
         <header className="pane-header">
           <span className="title">{project?.name}</span>
           <div className="header-actions">
-            {props.activeAgentId && voiceButton('Sprach-Anweisung an den aktiven Agent')}
+            {props.activeAgentId && voiceButton()}
             <button
               className="icon"
-              title="Neuen Agent starten"
+              title={t('center.startNewAgent')}
               onClick={() => props.onStartAgent(selection.projectId)}
             >
               <PlayIcon size={12} />
@@ -159,10 +160,10 @@ function CenterPane(props: Props): React.JSX.Element {
         {projectAgents.length === 0 ? (
           <div className="empty muted">
             <div>
-              Keine Agents in diesem Projekt.
+              {t('center.noAgents')}
               <br />
               <button className="link" onClick={() => props.onStartAgent(selection.projectId)}>
-                Agent starten
+                {t('center.startAgent')}
               </button>
             </div>
           </div>
@@ -176,14 +177,14 @@ function CenterPane(props: Props): React.JSX.Element {
   return (
     <main className="pane center">
       <header className="pane-header">
-        <span>Terminal</span>
+        <span>{t('center.terminal')}</span>
       </header>
       <div className="empty muted">
-        Projekt oder Agent links auswählen.
+        {t('center.emptySelect')}
         <br />
-        Projekt anklicken zeigt alle Agents im Raster.
+        {t('center.emptyProjectHint')}
         <br />
-        Strg+Klick auf Agents/Projekte stellt ein eigenes Raster zusammen.
+        {t('center.emptyGridHint')}
       </div>
     </main>
   )
@@ -192,6 +193,7 @@ function CenterPane(props: Props): React.JSX.Element {
 /** Grid of terminals; click activates a cell, double-click on the header opens the single view. */
 function AgentGrid(props: Props & { shown: Agent[]; showProject: boolean }): React.JSX.Element {
   const { shown, projects } = props
+  const t = useT()
   const cols = Math.ceil(Math.sqrt(shown.length || 1))
   const rows = Math.ceil((shown.length || 1) / cols)
 
@@ -219,7 +221,7 @@ function AgentGrid(props: Props & { shown: Agent[]; showProject: boolean }): Rea
         >
           <header
             className="cell-header"
-            title="Doppelklick: Einzelansicht"
+            title={t('center.cellHeaderTooltip')}
             onDoubleClick={() => props.onOpenAgent(a.id)}
           >
             <span className={`dot ${a.status}`} />
@@ -229,7 +231,7 @@ function AgentGrid(props: Props & { shown: Agent[]; showProject: boolean }): Rea
                 <span className="muted"> · {projects.find((p) => p.id === a.projectId)?.name}</span>
               )}
               {a.status === 'needsInput' ? (
-                <span className="row-sub">{a.statusMessage || 'Wartet auf Eingabe'}</span>
+                <span className="row-sub">{a.statusMessage || t('center.waitingForInput')}</span>
               ) : (
                 a.status === 'working' &&
                 activityText(a) && <span className="row-sub info">{activityText(a)}</span>
@@ -260,10 +262,11 @@ function LockedTerminal({
   agent: Agent
   onOpen: () => void
 }): React.JSX.Element {
+  const t = useT()
   return (
     <div
       className="locked-terminal"
-      title={`${agent.name} ist gesperrt – Klick wechselt zum Editor-Tab`}
+      title={t('center.lockedTooltip', { name: agent.name })}
       // Capture: the terminal itself must not get the click (no selection, no focus)
       onMouseDownCapture={(e) => {
         e.preventDefault()
@@ -276,8 +279,8 @@ function LockedTerminal({
       {/* Overlaid (does not shrink the terminal): dimmed + notice instead of the input field */}
       <div className="locked-overlay">
         <span className="locked-pill">
-          <LockIcon size={12} /> Eingabe gesperrt – die Anweisung wird im Tab geschrieben
-          <span className="link">Zum Tab</span>
+          <LockIcon size={12} /> {t('center.lockedNotice')}
+          <span className="link">{t('center.toTab')}</span>
         </span>
       </div>
     </div>
@@ -286,18 +289,19 @@ function LockedTerminal({
 
 /**
  * Right side of the agent header: microphone · /clear · stop (in the grid the click does not activate the cell).
- * Team workers: no controls, only the "beobachten" (observe) notice.
+ * Team workers: no controls, only the "watching" notice.
  */
 function AgentButtons(props: Props & { agent: Agent }): React.JSX.Element {
   const a = props.agent
+  const t = useT()
   if (isTeamWorker(a)) {
     const lead = teamLead(props.agents, a.teamId!)
     return (
       <span
         className="watch-badge"
-        title={`Teammitglied – nur beobachten. Anweisungen gehen an ${lead?.name ?? 'den Orchestrator'}.`}
+        title={lead ? t('center.watchTooltipNamed', { name: lead.name }) : t('center.watchTooltip')}
       >
-        <EyeIcon size={12} /> beobachten
+        <EyeIcon size={12} /> {t('center.watching')}
       </span>
     )
   }
@@ -306,7 +310,7 @@ function AgentButtons(props: Props & { agent: Agent }): React.JSX.Element {
     <span className="agent-actions">
       <button
         className={`icon ${props.recordingAgentId === a.id ? 'recording' : ''}`}
-        title={`Sprach-Anweisung an ${a.name}`}
+        title={t('center.voiceToAgent', { name: a.name })}
         onMouseDown={(e) => e.stopPropagation()}
         onClick={() => props.onAgentVoiceFor(a.id)}
       >
@@ -314,7 +318,7 @@ function AgentButtons(props: Props & { agent: Agent }): React.JSX.Element {
       </button>
       <button
         className="icon"
-        title={`Unterhaltung von ${a.name} leeren (/clear)`}
+        title={t('center.clearConversation', { name: a.name })}
         onMouseDown={(e) => e.stopPropagation()}
         onClick={() => props.onClearAgent(a.id)}
       >
@@ -322,7 +326,7 @@ function AgentButtons(props: Props & { agent: Agent }): React.JSX.Element {
       </button>
       <button
         className="icon"
-        title={orchestrator ? 'Team beenden (Orchestrator und alle Mitglieder)' : 'Agent beenden'}
+        title={orchestrator ? t('center.stopTeamTooltip') : t('center.stopAgentTooltip')}
         onMouseDown={(e) => e.stopPropagation()}
         onClick={() => props.onStopAgent(a)}
       >
@@ -334,14 +338,15 @@ function AgentButtons(props: Props & { agent: Agent }): React.JSX.Element {
 
 /** Notice in the header: instruction is being written in the editor tab (click → tab) */
 function LockedBadge({ onOpen }: { onOpen: () => void }): React.JSX.Element {
+  const t = useT()
   return (
     <button
       className="locked-badge"
-      title="Gesperrt, bis der Editor-Tab geschlossen wird – Klick wechselt dorthin"
+      title={t('center.lockedBadgeTooltip')}
       onMouseDown={(e) => e.stopPropagation()}
       onClick={onOpen}
     >
-      <LockIcon size={11} /> im Tab
+      <LockIcon size={11} /> {t('center.lockedBadge')}
     </button>
   )
 }

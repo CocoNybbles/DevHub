@@ -10,6 +10,8 @@ import type {
 } from '../../../shared/types'
 import { languageForPath, monaco } from '../lib/monaco'
 import { fileTabKey } from '../lib/codeTabs'
+import { getLocale, type TFunction } from '../../../shared/i18n'
+import { useT } from '../lib/i18n'
 import { CloseIcon, CodeIcon } from './Icons'
 import SnippetList from './SnippetList'
 import Markdown from './Markdown'
@@ -33,12 +35,13 @@ interface Props {
   /** Plan shown by the agent (MCP `show_plan`), null = none or closed */
   plan: CodePlan | null
   planKey: string
-  /** Active agent: "Aktivität" (activity) tab with its latest steps */
+  /** Active agent: "Activity" tab with its latest steps */
   activityAgent?: Agent
 }
 
 /** The agent's latest steps (tool calls); reloads as soon as it does something new */
 function ActivityList({ agent }: { agent: Agent }): React.JSX.Element {
+  const t = useT()
   const [log, setLog] = useState<ActivityEntry[]>([])
   const stamp = `${agent.id}|${agent.activity ?? ''}|${agent.status}`
   useEffect(() => {
@@ -50,13 +53,11 @@ function ActivityList({ agent }: { agent: Agent }): React.JSX.Element {
   }, [agent.id, stamp])
   return (
     <div className="activity-list">
-      {log.length === 0 && (
-        <div className="muted activity-empty">Noch keine Schritte in dieser Sitzung.</div>
-      )}
+      {log.length === 0 && <div className="muted activity-empty">{t('code.activityEmpty')}</div>}
       {log.map((e, i) => (
         <div key={`${e.at}-${i}`} className="activity-item">
           <span className="muted">
-            {new Date(e.at).toLocaleTimeString('de-DE', {
+            {new Date(e.at).toLocaleTimeString(getLocale(), {
               hour: '2-digit',
               minute: '2-digit',
               second: '2-digit'
@@ -129,6 +130,7 @@ function CodePane({
   planKey,
   activityAgent
 }: Props): React.JSX.Element {
+  const t = useT()
   // ---- Assemble tabs
   const files: FileTab[] = edits.map((e) => ({
     key: fileKey(e.filePath),
@@ -141,7 +143,7 @@ function CodePane({
     const tab = files.find((f) => f.key === fileKey(focus.filePath))
     const range = { start: focus.startLine, end: focus.endLine }
     if (!tab) {
-      // Shown location first (like the former "Datei" tab)
+      // Shown location first (like the former "File" tab)
       files.unshift({
         key: fileKey(focus.filePath),
         filePath: focus.filePath,
@@ -242,7 +244,7 @@ function CodePane({
     >
       <div
         className="pane-splitter"
-        title="Breite ziehen · Doppelklick = Standardbreite"
+        title={t('code.splitterTooltip')}
         onPointerDown={startDrag}
         onDoubleClick={resetWidth}
       />
@@ -252,7 +254,7 @@ function CodePane({
             <div
               key={f.key}
               className={`tab file-tab ${tab === f.key ? 'active' : ''}`}
-              title={tabTitle(f)}
+              title={tabTitle(f, t)}
               onClick={() => choose(f.key)}
               onAuxClick={(e) => e.button === 1 && close(f)}
             >
@@ -260,7 +262,7 @@ function CodePane({
               <span className="file-tab-name">{baseName(f.filePath)}</span>
               <button
                 className="icon"
-                title="Reiter schließen (erscheint bei der nächsten Änderung wieder)"
+                title={t('code.closeFileTab')}
                 onClick={(e) => {
                   e.stopPropagation()
                   close(f)
@@ -273,14 +275,14 @@ function CodePane({
           {plan && (
             <div
               className={`tab closable-tab ${tab === PLAN ? 'active' : ''}`}
-              title={`Vom Agent gezeigt: ${plan.title}`}
+              title={t('code.planTooltip', { title: plan.title })}
               onClick={() => choose(PLAN)}
               onAuxClick={(e) => e.button === 1 && closeTab(PLAN, plan.at)}
             >
               <span className="file-tab-name">{plan.title}</span>
               <button
                 className="icon"
-                title="Reiter schließen (erscheint wieder, wenn der Agent ihn aktualisiert)"
+                title={t('code.closePlanTab')}
                 onClick={(e) => {
                   e.stopPropagation()
                   closeTab(PLAN, plan.at)
@@ -293,23 +295,23 @@ function CodePane({
           {activityAgent && (
             <div
               className={`tab ${tab === ACTIVITY ? 'active' : ''}`}
-              title={`Letzte Schritte von ${activityAgent.name}`}
+              title={t('code.activityTooltip', { name: activityAgent.name })}
               onClick={() => choose(ACTIVITY)}
             >
-              Aktivität
+              {t('code.activity')}
             </div>
           )}
           {snippets.length > 0 && (
             <div
               className={`tab closable-tab ${tab === SNIPPETS ? 'active' : ''}`}
-              title="Code-Blöcke aus den Antworten des Agents"
+              title={t('code.snippetsTooltip')}
               onClick={() => choose(SNIPPETS)}
               onAuxClick={(e) => e.button === 1 && closeTab(SNIPPETS, snippetsAt)}
             >
-              Snippets <span className="count">{snippets.length}</span>
+              {t('code.snippets')} <span className="count">{snippets.length}</span>
               <button
                 className="icon"
-                title="Reiter schließen (erscheint beim nächsten Snippet wieder)"
+                title={t('code.closeSnippetsTab')}
                 onClick={(e) => {
                   e.stopPropagation()
                   closeTab(SNIPPETS, snippetsAt)
@@ -324,7 +326,7 @@ function CodePane({
           <div className="header-actions">
             <button
               className="icon"
-              title="In VS Code öffnen"
+              title={t('code.openInVSCode')}
               onClick={() =>
                 window.api.code.openInVSCode(current.filePath, current.ranges[0]?.start ?? 1)
               }
@@ -343,7 +345,7 @@ function CodePane({
               <span className="code-file" title={current.filePath}>
                 {current.filePath}
               </span>
-              <div>{describe(current, current.focus ? agentName : editsAgentName)}</div>
+              <div>{describe(current, t, current.focus ? agentName : editsAgentName)}</div>
             </div>
           )}
           {current && (
@@ -362,38 +364,37 @@ function CodePane({
   )
 }
 
-function tabTitle(f: FileTab): string {
-  if (f.focus) return `${f.filePath}\nVom Agent gezeigt`
-  return `${f.filePath}\n${f.edit?.created ? 'Vom Agent angelegt' : 'Vom Agent bearbeitet'}`
+function tabTitle(f: FileTab, t: TFunction): string {
+  if (f.focus) return `${f.filePath}\n${t('code.shownByAgent')}`
+  return `${f.filePath}\n${f.edit?.created ? t('code.createdByAgent') : t('code.editedByAgent')}`
 }
 
 const time = (at: number): string =>
-  new Date(at).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' })
+  new Date(at).toLocaleTimeString(getLocale(), { hour: '2-digit', minute: '2-digit' })
 
-function linesText(ranges: LineRange[]): string {
+function linesText(ranges: LineRange[], t: TFunction): string {
   if (!ranges.length) return ''
   const parts = ranges.slice(0, 4).map((r) => (r.end > r.start ? `${r.start}–${r.end}` : r.start))
-  return `Z. ${parts.join(', ')}${ranges.length > 4 ? ' …' : ''}`
+  return t('code.lines', { lines: `${parts.join(', ')}${ranges.length > 4 ? ' …' : ''}` })
 }
 
 /** Line below the path: who, what, when */
-function describe(f: FileTab, name?: string): React.ReactNode {
+function describe(f: FileTab, t: TFunction, name?: string): React.ReactNode {
   const who = name ? <strong>{name}: </strong> : null
   if (f.focus) {
     return (
       <>
         {who}
-        {linesText(f.ranges)}
+        {linesText(f.ranges, t)}
         {f.focus.note ? ` · ${f.focus.note}` : ''}
       </>
     )
   }
-  const what = f.edit?.created ? 'angelegt' : 'bearbeitet'
-  const lines = linesText(f.ranges)
+  const lines = linesText(f.ranges, t)
   return (
     <>
       {who}
-      {what} um {time(f.at)}
+      {t(f.edit?.created ? 'code.createdAt' : 'code.editedAt', { time: time(f.at) })}
       {lines && ` · ${lines}`}
     </>
   )

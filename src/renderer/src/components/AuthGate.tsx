@@ -1,4 +1,5 @@
 import type { ClaudeAuthState } from '../../../shared/types'
+import { useT } from '../lib/i18n'
 
 interface Props {
   state: ClaudeAuthState | null
@@ -8,12 +9,14 @@ interface Props {
 
 /** Start screen: blocks the app until Claude Code is installed and logged in. */
 function AuthGate({ state, checking, onRecheck }: Props): React.JSX.Element {
+  const t = useT()
+
   if (!state) {
     return (
       <div className="gate">
         <div className="gate-card">
           <h1>DevHub</h1>
-          <p className="muted">Prüfe Claude-Anmeldung …</p>
+          <p className="muted">{t('auth.checkingLogin')}</p>
         </div>
       </div>
     )
@@ -26,43 +29,39 @@ function AuthGate({ state, checking, onRecheck }: Props): React.JSX.Element {
 
         {state.kind === 'notInstalled' && (
           <>
-            <h2>Claude Code wurde nicht gefunden</h2>
-            <p>
-              DevHub benötigt die Claude-Code-CLI. Bitte installiere sie und starte danach die
-              Prüfung erneut.
-            </p>
+            <h2>{t('auth.notInstalledTitle')}</h2>
+            <p>{t('auth.notInstalledText')}</p>
             <p className="muted">
-              Anleitung: <code>docs.claude.com/claude-code</code>
+              {t('auth.instructions')} <code>docs.claude.com/claude-code</code>
             </p>
           </>
         )}
 
         {state.kind === 'loggedOut' && (
           <>
-            <h2>Bitte bei Claude anmelden</h2>
+            <h2>{t('auth.loggedOutTitle')}</h2>
             <p>
-              {state.reason ?? 'Du bist aktuell nicht bei Claude angemeldet.'} Melde dich zuerst an,
-              danach geht es weiter.
+              {state.reason ?? t('auth.notLoggedIn')} {t('auth.loginFirst')}
             </p>
             <button className="primary" onClick={() => window.api.claude.startLogin()}>
-              Anmelden …
+              {t('auth.loginButton')}
             </button>
             <p className="muted small">
-              Es öffnet sich ein Konsolenfenster mit <code>claude auth login</code>. Nach dem Login
-              hier auf „Erneut prüfen“ klicken.
+              {t('auth.loginHintBefore')} <code>claude auth login</code>
+              {t('auth.loginHintAfter')}
             </p>
           </>
         )}
 
         {state.kind === 'error' && (
           <>
-            <h2>Prüfung fehlgeschlagen</h2>
+            <h2>{t('auth.checkFailedTitle')}</h2>
             <p className="error">{state.message}</p>
           </>
         )}
 
         <button onClick={onRecheck} disabled={checking}>
-          {checking ? 'Prüfe …' : 'Erneut prüfen'}
+          {checking ? t('auth.checking') : t('auth.recheck')}
         </button>
       </div>
     </div>

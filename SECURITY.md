@@ -1,26 +1,26 @@
-# Sicherheit
+# Security
 
-## Sicherheitslücke melden
+## Reporting a vulnerability
 
-Bitte **kein öffentliches Issue** anlegen. Melde Sicherheitslücken vertraulich über
-[„Report a vulnerability“](https://github.com/CocoNybbles/DevHub/security/advisories/new)
-(Reiter „Security“ im Repository).
+Please **do not open a public issue**. Report vulnerabilities confidentially via
+["Report a vulnerability"](https://github.com/CocoNybbles/DevHub/security/advisories/new)
+("Security" tab of the repository).
 
-Hilfreich sind:
+Helpful details:
 
-- betroffene Version (siehe [Releases](https://github.com/CocoNybbles/DevHub/releases))
-- Beschreibung und Auswirkung der Lücke
-- Schritte zum Nachvollziehen
+- affected version (see [Releases](https://github.com/CocoNybbles/DevHub/releases))
+- description and impact of the vulnerability
+- steps to reproduce
 
-Du bekommst eine Rückmeldung, sobald die Meldung geprüft ist. Behobene Lücken werden mit einem
-neuen Release ausgeliefert.
+You will get a reply as soon as the report has been reviewed. Fixed vulnerabilities are shipped
+with a new release.
 
-## Unterstützte Versionen
+## Supported versions
 
-Sicherheitskorrekturen gibt es nur für die jeweils [neueste Version](https://github.com/CocoNybbles/DevHub/releases/latest).
+Security fixes are only provided for the [latest version](https://github.com/CocoNybbles/DevHub/releases/latest).
 
-## Hinweise
+## Notes
 
-- DevHub startet das lokal installierte Claude Code mit den Rechten des angemeldeten Windows-Benutzers.
-  Agents können in ihrem Projektordner Dateien ändern und Befehle ausführen – so wie Claude Code selbst.
-- Der Rückkanal der Agents zur App lauscht nur auf `127.0.0.1` und ist mit einem zufälligen Token geschützt.
+- DevHub starts the locally installed Claude Code with the rights of the signed-in Windows user.
+  Agents can change files and run commands in their project folder – just like Claude Code itself.
+- The agents' back channel to the app only listens on `127.0.0.1` and is protected by a random token.

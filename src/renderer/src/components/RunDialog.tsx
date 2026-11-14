@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { Agent, Project, RunInfo } from '../../../shared/types'
 import { errorText } from '../lib/errors'
+import { useT } from '../lib/i18n'
 import Modal from './Modal'
 
 interface Props {
@@ -20,6 +21,7 @@ const MAX_SHOWN = 200_000
  * Plus the web preview in its own window, with a screenshot to the agent.
  */
 function RunDialog({ project, agent, onEditProject, onClose }: Props): React.JSX.Element {
+  const t = useT()
   const [runs, setRuns] = useState<RunInfo[]>([])
   const [selected, setSelected] = useState<string | null>(null)
   const [output, setOutput] = useState('')
@@ -77,48 +79,45 @@ function RunDialog({ project, agent, onEditProject, onClose }: Props): React.JSX
 
   return (
     <Modal
-      title={`Ausführen · ${project.name}`}
+      title={t('run.title', { project: project.name })}
       onClose={onClose}
       width={Math.min(1100, window.innerWidth - 60)}
-      footer={<button onClick={onClose}>Schließen</button>}
+      footer={<button onClick={onClose}>{t('common.close')}</button>}
     >
       <div className="run-bar">
         <button
           disabled={!project.previewUrl}
-          title={project.previewUrl ?? 'Keine Vorschau-Adresse eingetragen (Projekt bearbeiten)'}
+          title={project.previewUrl ?? t('run.noPreviewUrl')}
           onClick={() => guard(window.api.preview.open(project.id))}
         >
-          Vorschau öffnen
+          {t('run.openPreview')}
         </button>
         <button
           disabled={!project.previewUrl || !agent}
           title={
             agent
-              ? `Bild der Vorschau als Anhang in den Prompt von ${agent.name} eintragen (noch nicht abgeschickt)`
-              : 'Dafür muss ein Agent dieses Projekts ausgewählt sein'
+              ? t('run.screenshotTooltip', { name: agent.name })
+              : t('run.screenshotNoAgentTooltip')
           }
           onClick={() =>
             agent &&
             guard(
               window.api.preview.screenshot(project.id, agent.id),
-              `Screenshot steht im Prompt von ${agent.name}.`
+              t('run.screenshotDone', { name: agent.name })
             )
           }
         >
-          Screenshot an {agent?.name ?? 'Agent'}
+          {t('run.screenshotTo', { name: agent?.name ?? t('common.agent') })}
         </button>
         <span className="muted">{project.previewUrl}</span>
         <button className="link" onClick={onEditProject}>
-          Befehle und Vorschau einrichten …
+          {t('run.setup')}
         </button>
       </div>
       {note && <p className={note.error ? 'error' : 'muted'}>{note.text}</p>}
 
       {runs.length === 0 ? (
-        <p className="muted">
-          Für dieses Projekt sind noch keine Befehle eingerichtet (z. B. „dev = npm run dev“, „test
-          = npm test“). Sie laufen im Agent-Ordner; Agents können ihre Ausgabe lesen.
-        </p>
+        <p className="muted">{t('run.empty')}</p>
       ) : (
         <div className="run-main">
           <div className="run-list">
@@ -139,10 +138,10 @@ function RunDialog({ project, agent, onEditProject, onClose }: Props): React.JSX
                   {r.name}
                   <span className="row-sub run-state">
                     {r.running
-                      ? 'läuft'
+                      ? t('run.stateRunning')
                       : r.exitCode === undefined
-                        ? 'nicht gestartet'
-                        : `beendet (${r.exitCode ?? '?'})`}
+                        ? t('run.stateNotStarted')
+                        : t('run.stateExited', { code: r.exitCode ?? '?' })}
                   </span>
                 </span>
                 {r.running ? (
@@ -152,7 +151,7 @@ function RunDialog({ project, agent, onEditProject, onClose }: Props): React.JSX
                       guard(window.api.runs.stop(project.id, r.name))
                     }}
                   >
-                    Stopp
+                    {t('run.stop')}
                   </button>
                 ) : (
                   <button
@@ -163,7 +162,7 @@ function RunDialog({ project, agent, onEditProject, onClose }: Props): React.JSX
                       guard(window.api.runs.start(project.id, r.name))
                     }}
                   >
-                    Start
+                    {t('run.start')}
                   </button>
                 )}
               </div>
