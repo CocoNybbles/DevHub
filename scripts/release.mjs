@@ -6,7 +6,7 @@
 //              RELEASE_PR)
 //
 // Release notes = all PRs merged into main since the last tag (title + full description;
-// release PR first), below the optional notes file. --dry-run only prints version and notes.
+// release PR first; label "no-changelog" hides a PR), below the optional notes file. --dry-run only prints version and notes.
 //
 // 1. Version: highest tag v* on GitHub, patch +1 (or the given x.y.z, e.g. for 1.1.0).
 //    package.json in the repo is NOT authoritative – the version is only set for the build.
@@ -128,12 +128,19 @@ if (latest !== '0.0.0') {
   }
 }
 if (releasePr && !prs.has(releasePr)) prs.set(releasePr, await read(`/pulls/${releasePr}`))
+// PRs labelled "no-changelog" are left out of the notes (their code is still in the release)
+const hidden = (pr) => pr.labels.some((l) => l.name === 'no-changelog')
+for (const pr of prs.values()) {
+  if (hidden(pr)) console.log(`Ohne Changelog (no-changelog): #${pr.number} ${pr.title}`)
+}
 // Release PR first, then the others newest first
-const ordered = [...prs.values()].sort(
-  (a, b) =>
-    (b.number === releasePr) - (a.number === releasePr) ||
-    Date.parse(b.merged_at) - Date.parse(a.merged_at)
-)
+const ordered = [...prs.values()]
+  .filter((pr) => !hidden(pr))
+  .sort(
+    (a, b) =>
+      (b.number === releasePr) - (a.number === releasePr) ||
+      Date.parse(b.merged_at) - Date.parse(a.merged_at)
+  )
 const clean = (body) =>
   (body ?? '')
     .replace(/\r\n/g, '\n')
