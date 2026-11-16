@@ -14,6 +14,7 @@ on:
 
 permissions:
   contents: write
+  pull-requests: read # release notes: PRs merged since the last release
 
 # Never two releases at once (same version number)
 concurrency:
@@ -41,7 +42,7 @@ jobs:
           # RELEASE_TOKEN: owner's fine-grained PAT – GitHub Actions can't be added to the
           # bypass list of the tag ruleset in a personal repo, the owner (repository admin) can
           GITHUB_TOKEN: ${{ secrets.RELEASE_TOKEN || github.token }}
+          # Reading PRs: the PAT only has Contents permission
+          GITHUB_READ_TOKEN: ${{ github.token }}
           RELEASE_SHA: ${{ github.event.pull_request.merge_commit_sha }}
-          RELEASE_TITLE: ${{ github.event.pull_request.title }}
-          RELEASE_NOTES: ${{ github.event.pull_request.body }}
           RELEASE_PR: ${{ github.event.pull_request.number }}
