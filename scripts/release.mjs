@@ -151,7 +151,13 @@ const sections = ordered.map((pr) => {
   return `### ${pr.title} (#${pr.number})` + (body ? `\n\n${body}` : '')
 })
 const notes = [intro, ...sections].filter(Boolean).join('\n\n')
-if (!notes.trim()) fail('Keine Release-Notizen: keine gemergten PRs seit dem letzten Release')
+if (!notes.trim()) {
+  const skipped = [...prs.values()].filter(hidden).map((pr) => `#${pr.number}`)
+  fail(
+    'Keine Release-Notizen: keine PRs für den Changelog seit dem letzten Release' +
+      (skipped.length ? ` (ausgeblendet: ${skipped.join(', ')})` : '')
+  )
+}
 console.log(`Release-Notizen (${ordered.length} PRs):\n\n${notes}\n`)
 if (dryRun) {
   console.log('--dry-run: nichts gebaut, nichts veröffentlicht')
