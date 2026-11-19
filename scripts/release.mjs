@@ -1,103 +1,196 @@
-// New release – manual only: `npm run release -- <notes.md> [x.y.z]`
+// Build a new release and publish it on GitHub.
 //
-// 1. Version: patch +1 over package.json (or the given x.y.z, e.g. for 1.1.0)
-// 2. Set package.json/-lock to the new version and build the ZIP (`npm run build:win`)
-// 3. Commit "Version x.y.z" + tag vX.Y.Z, push both
-// 4. Create the GitHub release for this tag (notes from the file) + upload the ZIP
+//   Manual:    npm run release -- [notes.md] [x.y.z] [--dry-run]
+//   Workflow:  node scripts/release.mjs --ci   (.github/workflows/release.yml, after merging a
+//              PR labelled "release"; env: GITHUB_TOKEN, GITHUB_READ_TOKEN, RELEASE_SHA,
+//              RELEASE_PR)
 //
-// GitHub login: the one stored with Git (Git Credential Manager), never printed.
+// Release notes = all PRs merged into main since the last tag (title + full description;
+// release PR first; label "no-changelog" hides a PR), below the optional notes file. --dry-run only prints version and notes.
+//
+// 1. Version: highest tag v* on GitHub, patch +1 (or the given x.y.z, e.g. for 1.1.0).
+//    package.json in the repo is NOT authoritative – the version is only set for the build.
+// 2. Build the ZIP (`npm run build:win`)
+// 3. Create the GitHub release; this creates tag vX.Y.Z on exactly the built commit
+//    (no commit on main needed – main is protected)
+// 4. Upload the ZIP; if that fails, release and tag are removed again
+//
+// GitHub login: manually the one stored with Git (Git Credential Manager), in the workflow
+// GITHUB_TOKEN. Never printed.
 /* eslint-disable @typescript-eslint/explicit-function-return-type -- plain JS script */
 import { execSync } from 'child_process'
 import { existsSync, readFileSync, statSync } from 'fs'
 import { basename } from 'path'
 
-const RELEASE_REPO = 'CocoNybbles/DevHub'
+const flags = process.argv.slice(2).filter((a) => a.startsWith('--'))
+const args = process.argv.slice(2).filter((a) => !a.startsWith('--'))
+const ci = flags.includes('--ci')
+const dryRun = flags.includes('--dry-run')
+const repo = process.env.GITHUB_REPOSITORY || 'CocoNybbles/DevHub'
 
-const run = (cmd, opts = {}) => execSync(cmd, { stdio: 'inherit', ...opts })
+const run = (cmd) => execSync(cmd, { stdio: 'inherit' })
 const out = (cmd) => execSync(cmd).toString().trim()
 const fail = (msg) => {
   console.error(`\n✖ ${msg}`)
   process.exit(1)
 }
 
-const [notesFile, wanted] = process.argv.slice(2)
-if (!notesFile || !existsSync(notesFile)) {
-  fail('Aufruf: npm run release -- <notizen.md> [x.y.z]  (Notizen-Datei fehlt)')
+// --- Inputs: commit, optional intro text, requested version, release PR
+let sha, intro, wanted, releasePr
+if (ci) {
+  sha = process.env.RELEASE_SHA
+  if (!sha) fail('RELEASE_SHA fehlt')
+  if (out('git rev-parse HEAD') !== sha) fail(`Ausgecheckt ist nicht ${sha}`)
+  wanted = process.env.RELEASE_VERSION || undefined
+  releasePr = Number(process.env.RELEASE_PR) || undefined
+} else {
+  // Arguments in any order: a notes file (optional, goes above the PR list) and/or x.y.z
+  wanted = args.find((a) => /^\d+\.\d+\.\d+$/.test(a))
+  const notesFile = args.find((a) => a !== wanted)
+  if (notesFile) {
+    if (!existsSync(notesFile)) fail(`Notizen-Datei ${notesFile} gibt es nicht`)
+    intro = readFileSync(notesFile, 'utf8').trim()
+  }
+  if (out('git rev-parse --abbrev-ref HEAD') !== 'main') fail('Nur vom Branch main aus')
+  if (!dryRun && out('git status --porcelain')) {
+    fail('Es gibt nicht committete Änderungen – erst committen')
+  }
+  run('git fetch -q origin main')
+  sha = out('git rev-parse HEAD')
+  if (sha !== out('git rev-parse origin/main')) {
+    fail('main ist nicht auf dem Stand von origin/main – erst pushen bzw. pullen')
+  }
 }
-const notes = readFileSync(notesFile, 'utf8').trim()
-if (!notes) fail('Die Notizen-Datei ist leer')
 
-// --- Preconditions
-if (out('git rev-parse --abbrev-ref HEAD') !== 'main') fail('Nur vom Branch main aus')
-if (out('git status --porcelain')) fail('Es gibt nicht committete Änderungen – erst committen')
-run('git fetch -q origin main --tags')
-if (out('git rev-parse HEAD') !== out('git rev-parse origin/main')) {
-  fail('main ist nicht auf dem Stand von origin/main – erst pushen bzw. pullen')
+// --- Version from the tags on GitHub
+const parse = (v) => v.split('.').map(Number)
+const newer = (a, b) => {
+  const [x, y] = [parse(a), parse(b)]
+  for (let i = 0; i < 3; i++) if (x[i] !== y[i]) return x[i] > y[i]
+  return false
 }
-
-// --- Version
-const current = JSON.parse(readFileSync('package.json', 'utf8')).version
-const [maj, min, pat] = current.split('.').map(Number)
+const tags = out(`git ls-remote --tags origin "refs/tags/v*"`)
+  .split('\n')
+  .map((l) => /refs\/tags\/v(\d+\.\d+\.\d+)$/.exec(l)?.[1])
+  .filter(Boolean)
+const latest = tags.reduce((a, b) => (newer(b, a) ? b : a), '0.0.0')
+const [maj, min, pat] = parse(latest)
 const version = wanted ?? `${maj}.${min}.${pat + 1}`
 if (!/^\d+\.\d+\.\d+$/.test(version)) fail(`Ungültige Version: ${version}`)
+if (!newer(version, latest)) fail(`Version ${version} ist nicht neuer als v${latest}`)
 const tag = `v${version}`
-if (out(`git tag -l ${tag}`)) fail(`Tag ${tag} gibt es schon`)
-console.log(`\nRelease ${current} → ${version}\n`)
+console.log(`\nRelease v${latest} → ${tag} (Commit ${sha.slice(0, 7)})\n`)
 
-// --- GitHub-API
-const cred = execSync('git credential fill', {
-  input: 'protocol=https\nhost=github.com\n\n'
-}).toString()
-const token = /^password=(.*)$/m.exec(cred)?.[1]
-if (!token) fail('Keine GitHub-Anmeldung bei Git gespeichert')
+// --- GitHub API
+let token = process.env.GITHUB_TOKEN
+if (!ci) {
+  const cred = execSync('git credential fill', {
+    input: 'protocol=https\nhost=github.com\n\n'
+  }).toString()
+  token = /^password=(.*)$/m.exec(cred)?.[1]
+}
+if (!token) fail('Keine GitHub-Anmeldung vorhanden')
 const headers = {
   Authorization: `Bearer ${token}`,
   Accept: 'application/vnd.github+json',
   'X-GitHub-Api-Version': '2022-11-28',
   'User-Agent': 'devhub-release-script'
 }
-const existing = await fetch(`https://api.github.com/repos/${RELEASE_REPO}/releases/tags/${tag}`, {
-  headers
+const api = (path, init = {}) =>
+  fetch(`https://api.github.com/repos/${repo}${path}`, {
+    ...init,
+    headers: { ...headers, ...init.headers }
+  })
+if ((await api(`/releases/tags/${tag}`)).ok) fail(`Release ${tag} gibt es in ${repo} schon`)
+
+// --- Release notes: every PR merged into main since the last release, with its full description.
+// Read with GITHUB_READ_TOKEN if set (workflow: github.token with pull-requests: read – the
+// fine-grained RELEASE_TOKEN only has Contents permission).
+const readHeaders = process.env.GITHUB_READ_TOKEN
+  ? { ...headers, Authorization: `Bearer ${process.env.GITHUB_READ_TOKEN}` }
+  : headers
+const read = async (path) => {
+  const r = await fetch(`https://api.github.com/repos/${repo}${path}`, { headers: readHeaders })
+  if (!r.ok) fail(`GitHub ${path}: ${r.status} ${await r.text()}`)
+  return r.json()
+}
+const prs = new Map()
+if (latest !== '0.0.0') {
+  // Commits since the last tag → their PRs (works for merge, squash and rebase merges)
+  for (let page = 1; ; page++) {
+    const cmp = await read(`/compare/v${latest}...${sha}?per_page=100&page=${page}`)
+    for (const c of cmp.commits) {
+      for (const pr of await read(`/commits/${c.sha}/pulls`)) {
+        if (pr.merged_at && pr.base.ref === 'main') prs.set(pr.number, pr)
+      }
+    }
+    if (cmp.commits.length < 100) break
+  }
+}
+if (releasePr && !prs.has(releasePr)) prs.set(releasePr, await read(`/pulls/${releasePr}`))
+// PRs labelled "no-changelog" are left out of the notes (their code is still in the release)
+const hidden = (pr) => pr.labels.some((l) => l.name === 'no-changelog')
+for (const pr of prs.values()) {
+  if (hidden(pr)) console.log(`Ohne Changelog (no-changelog): #${pr.number} ${pr.title}`)
+}
+// Release PR first, then the others newest first
+const ordered = [...prs.values()]
+  .filter((pr) => !hidden(pr))
+  .sort(
+    (a, b) =>
+      (b.number === releasePr) - (a.number === releasePr) ||
+      Date.parse(b.merged_at) - Date.parse(a.merged_at)
+  )
+const clean = (body) =>
+  (body ?? '')
+    .replace(/\r\n/g, '\n')
+    .replace(/^🤖 Generated with \[Claude Code\].*$/gm, '') // attribution line, not for testers
+    .trim()
+const sections = ordered.map((pr) => {
+  const body = clean(pr.body)
+  return `### ${pr.title} (#${pr.number})` + (body ? `\n\n${body}` : '')
 })
-if (existing.ok) fail(`Release ${tag} gibt es in ${RELEASE_REPO} schon`)
-
-// --- Build (reset the version on failure)
-run(`npm version ${version} --no-git-tag-version`)
-try {
-  run('npm run build:win')
-} catch {
-  run('git checkout -- package.json package-lock.json')
-  fail('Build fehlgeschlagen – Version zurückgesetzt')
+const notes = [intro, ...sections].filter(Boolean).join('\n\n')
+if (!notes.trim()) {
+  const skipped = [...prs.values()].filter(hidden).map((pr) => `#${pr.number}`)
+  fail(
+    'Keine Release-Notizen: keine PRs für den Changelog seit dem letzten Release' +
+      (skipped.length ? ` (ausgeblendet: ${skipped.join(', ')})` : '')
+  )
 }
+console.log(`Release-Notizen (${ordered.length} PRs):\n\n${notes}\n`)
+if (dryRun) {
+  console.log('--dry-run: nichts gebaut, nichts veröffentlicht')
+  process.exit(0)
+}
+
+// --- Build; always restore package.json/-lock afterwards (the version lives only in the tag)
 const zip = `dist/DevHub-${version}-win.zip`
-if (!existsSync(zip)) {
-  run('git checkout -- package.json package-lock.json')
-  fail(`${zip} wurde nicht gebaut – Version zurückgesetzt`)
+let built = true
+try {
+  run(`npm version ${version} --no-git-tag-version --allow-same-version`)
+  // --publish never: otherwise electron-builder may publish on its own in CI (GITHUB_TOKEN is set)
+  run('npm run build:win -- --publish never')
+} catch {
+  built = false
 }
+run('git checkout -- package.json package-lock.json') // before fail(): process.exit skips finally
+if (!built) fail('Build fehlgeschlagen')
+if (!existsSync(zip)) fail(`${zip} wurde nicht gebaut`)
 
-// --- Record the version: commit + tag (the release points to exactly this state)
-run('git add package.json package-lock.json')
-run(`git commit -q -m "Version ${version}"`)
-run(`git tag ${tag}`)
-run(`git push -q origin main ${tag}`)
-
-// --- Publish
-const res = await fetch(`https://api.github.com/repos/${RELEASE_REPO}/releases`, {
+// --- Publish (creates the tag on `sha`)
+const res = await api('/releases', {
   method: 'POST',
-  headers,
   body: JSON.stringify({
     tag_name: tag,
+    target_commitish: sha,
     name: `DevHub ${version}`,
     body: notes,
     make_latest: 'true'
   })
 })
 const release = await res.json()
-if (!res.ok) {
-  fail(
-    `Release anlegen: ${res.status} ${JSON.stringify(release)} – Commit und Tag ${tag} sind schon gepusht; Release auf GitHub von Hand anlegen und ${zip} anhängen`
-  )
-}
+if (!res.ok) fail(`Release anlegen: ${res.status} ${JSON.stringify(release)}`)
 console.log(`\nRelease angelegt: ${release.html_url}`)
 
 const up = await fetch(
@@ -114,9 +207,10 @@ const up = await fetch(
 )
 const asset = await up.json()
 if (!up.ok) {
-  fail(
-    `Upload: ${up.status} ${JSON.stringify(asset)} – Release ${tag} existiert ohne ZIP, bitte prüfen`
-  )
+  // Don't leave a half-finished release behind – a rerun would otherwise fail with "already exists"
+  await api(`/releases/${release.id}`, { method: 'DELETE' })
+  await api(`/git/refs/tags/${tag}`, { method: 'DELETE' })
+  fail(`Upload: ${up.status} ${JSON.stringify(asset)} – Release und Tag ${tag} wieder entfernt`)
 }
 console.log(`Hochgeladen: ${asset.browser_download_url}`)
 console.log(`\n✔ DevHub ${version} veröffentlicht`)
