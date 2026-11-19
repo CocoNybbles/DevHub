@@ -304,7 +304,7 @@ type in `DevHubApi` (`shared/types.ts`). Always adjust all three together. Event
 
 - Environment: Windows 11, PowerShell / Git Bash
 - Available: Node 26, npm 11, .NET 10, Claude Code 2.1 (on 2026-11-13: npm installation `%APPDATA%\npm\claude.cmd`, no `claude.exe` in the PATH), Git, VS Code, Visual Studio 2022 Community (without C++ build tools)
-- **Language: English** (open-source project): source code, comments (incl. JSDoc, CSS/YAML/HTML comments), identifiers, prompts/tool descriptions for Claude, console messages, docs. Always write new and changed comments in English.
+- **Language: English** (open-source project): source code, comments (incl. JSDoc, CSS/YAML/HTML comments), identifiers, prompts/tool descriptions for Claude, console messages, docs, commit messages, PR titles and descriptions (= release notes). Always write new and changed comments in English.
 - **UI texts are never hard-coded**: every user-visible text goes through `t('namespace.key')`. Components use `const t = useT()` (`renderer/src/lib/i18n.ts`); main, `shared/` and non-component helpers import `t` from `shared/i18n`. Texts live in `src/shared/i18n/locales/<code>/<namespace>.ts`; English (`locales/en`) is the reference and runtime fallback, `de` is typed `typeof en` (missing key = type error). Placeholders `{name}`, plurals via `key_one`/`key_other` + `t(key, { count })`. No module-level constants with translated text (evaluated once → would not switch). Dates/numbers use `getLocale()`.
 - Texts sent to Claude/agents (prompts, terminal messages, MCP tool descriptions) are fixed English and not translated.
 

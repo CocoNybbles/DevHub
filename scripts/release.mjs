@@ -210,7 +210,9 @@ if (!up.ok) {
   // Don't leave a half-finished release behind – a rerun would otherwise fail with "already exists"
   await api(`/releases/${release.id}`, { method: 'DELETE' })
   await api(`/git/refs/tags/${tag}`, { method: 'DELETE' })
-  fail(`Upload failed: ${up.status} ${JSON.stringify(asset)} – release and tag ${tag} removed again`)
+  fail(
+    `Upload failed: ${up.status} ${JSON.stringify(asset)} – release and tag ${tag} removed again`
+  )
 }
 console.log(`Uploaded: ${asset.browser_download_url}`)
 console.log(`\n✔ DevHub ${version} published`)
