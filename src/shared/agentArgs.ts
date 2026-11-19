@@ -3,20 +3,24 @@
  * Entered as text like in a shell, e.g. `--permission-mode auto --model "opus"`.
  * The arguments go straight to claude.exe without a shell.
  */
+import { t, type TranslationKey } from './i18n'
 
-/** Flags that DevHub sets itself or that would break restore/status/terminal. */
-const RESERVED: Record<string, string> = {
-  '--session-id': 'setzt DevHub für die Wiederherstellung selbst',
-  '--resume': 'setzt DevHub für die Wiederherstellung selbst',
-  '--continue': 'würde eine andere Session fortsetzen',
-  '--fork-session': 'würde die Session-ID ändern (keine Wiederherstellung)',
-  '--no-session-persistence': 'verhindert die Wiederherstellung',
-  '--settings': 'setzt DevHub selbst (Hooks für die Statusanzeige)',
-  '--mcp-config': 'setzt DevHub selbst (Code-Ansicht)',
-  '--append-system-prompt': 'setzt DevHub selbst',
-  '--print': 'beendet den Agent nach einer Antwort',
-  '--help': 'startet keinen Agent',
-  '--version': 'startet keinen Agent'
+/**
+ * Flags that DevHub sets itself or that would break restore/status/terminal,
+ * each with the key of the error message (placeholder `{flag}`).
+ */
+const RESERVED: Record<string, TranslationKey> = {
+  '--session-id': 'shared.argsReservedRestore',
+  '--resume': 'shared.argsReservedRestore',
+  '--continue': 'shared.argsReservedContinue',
+  '--fork-session': 'shared.argsReservedFork',
+  '--no-session-persistence': 'shared.argsReservedNoPersistence',
+  '--settings': 'shared.argsReservedSettings',
+  '--mcp-config': 'shared.argsReservedMcp',
+  '--append-system-prompt': 'shared.argsReservedOwn',
+  '--print': 'shared.argsReservedPrint',
+  '--help': 'shared.argsReservedNoAgent',
+  '--version': 'shared.argsReservedNoAgent'
 }
 
 const ALIASES: Record<string, string> = {
@@ -31,10 +35,10 @@ const ALIASES: Record<string, string> = {
 export function tokenize(text: string): string[] {
   // A token = sequence of unquoted characters and quoted sections (e.g. --model="opus 4")
   const tokens = text.match(/(?:[^\s"']+|"[^"]*"|'[^']*')+/g) ?? []
-  return tokens.map((t) => t.replace(/"([^"]*)"|'([^']*)'/g, (_, d, s) => d ?? s))
+  return tokens.map((token) => token.replace(/"([^"]*)"|'([^']*)'/g, (_, d, s) => d ?? s))
 }
 
-const isFlag = (t: string): boolean => /^-[A-Za-z-]/.test(t)
+const isFlag = (token: string): boolean => /^-[A-Za-z-]/.test(token)
 
 /** Normalized flag name: `--model=opus` → `--model`, `-r` → `--resume`. */
 function flagName(token: string): string {
@@ -45,10 +49,10 @@ function flagName(token: string): string {
 /** Groups of flag + its values. */
 function groups(tokens: string[]): string[][] {
   const result: string[][] = []
-  for (const t of tokens) {
-    if (isFlag(t)) result.push([t])
-    else if (result.length) result[result.length - 1].push(t)
-    else result.push([t]) // free text at the start → error in validate
+  for (const token of tokens) {
+    if (isFlag(token)) result.push([token])
+    else if (result.length) result[result.length - 1].push(token)
+    else result.push([token]) // free text at the start → error in validate
   }
   return result
 }
@@ -56,15 +60,15 @@ function groups(tokens: string[]): string[][] {
 /** Error message, or null if the flags are usable. */
 export function validateAgentArgs(text: string | undefined): string | null {
   const quotes = (text ?? '').replace(/"[^"]*"|'[^']*'/g, '')
-  if (/["']/.test(quotes)) return 'Anführungszeichen nicht geschlossen'
+  if (/["']/.test(quotes)) return t('shared.argsUnclosedQuote')
   const tokens = tokenize(text ?? '')
   if (tokens.length && !isFlag(tokens[0])) {
-    return `„${tokens[0]}“ ist kein Flag – Flags beginnen mit - oder --`
+    return t('shared.argsNotAFlag', { token: tokens[0] })
   }
-  for (const t of tokens) {
-    if (!isFlag(t)) continue
-    const reason = RESERVED[flagName(t)]
-    if (reason) return `${flagName(t)} ist nicht erlaubt (${reason})`
+  for (const token of tokens) {
+    if (!isFlag(token)) continue
+    const reserved = RESERVED[flagName(token)]
+    if (reserved) return t(reserved, { flag: flagName(token) })
   }
   return null
 }

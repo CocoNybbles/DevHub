@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { Recorder } from '../lib/recorder'
 import { errorText } from '../lib/errors'
+import { useT } from '../lib/i18n'
 import { MicIcon } from './Icons'
 
 interface Props {
@@ -15,6 +16,7 @@ interface Props {
  * stops it; the text is recognized locally with whisper (like the voice instructions).
  */
 function DictationButton({ onText, onStatus }: Props): React.JSX.Element {
+  const t = useT()
   const [state, setState] = useState<'idle' | 'recording' | 'processing'>('idle')
   const recorder = useRef<Recorder | null>(null)
 
@@ -26,10 +28,7 @@ function DictationButton({ onText, onStatus }: Props): React.JSX.Element {
     if (state === 'idle') {
       const status = await window.api.voice.status().catch(() => null)
       if (!status?.activeModel) {
-        onStatus({
-          text: 'Spracheingabe ist noch nicht eingerichtet (Einstellungen → Sprachmodell).',
-          error: true
-        })
+        onStatus({ text: t('voiceUi.dictationNotSetUp'), error: true })
         return
       }
       try {
@@ -37,9 +36,12 @@ function DictationButton({ onText, onStatus }: Props): React.JSX.Element {
         await rec.start()
         recorder.current = rec
         setState('recording')
-        onStatus({ text: 'Aufnahme läuft … zum Beenden erneut auf das Mikrofon klicken.' })
+        onStatus({ text: t('voiceUi.dictationRecording') })
       } catch (e) {
-        onStatus({ text: `Mikrofon nicht verfügbar: ${errorText(e)}`, error: true })
+        onStatus({
+          text: t('voiceUi.dictationMicUnavailable', { error: errorText(e) }),
+          error: true
+        })
       }
       return
     }
@@ -47,12 +49,12 @@ function DictationButton({ onText, onStatus }: Props): React.JSX.Element {
     const rec = recorder.current
     recorder.current = null
     setState('processing')
-    onStatus({ text: 'Wandle in Text um …' })
+    onStatus({ text: t('voiceUi.dictationProcessing') })
     try {
       const wav = await rec?.stop()
-      if (!wav) return onStatus({ text: 'Aufnahme zu kurz.', error: true })
+      if (!wav) return onStatus({ text: t('voiceUi.dictationTooShort'), error: true })
       const { text } = await window.api.voice.transcribe(wav)
-      if (!text) return onStatus({ text: 'Nichts verstanden.', error: true })
+      if (!text) return onStatus({ text: t('voiceUi.dictationNothing'), error: true })
       onText(text)
       onStatus(null)
     } catch (e) {
@@ -66,7 +68,7 @@ function DictationButton({ onText, onStatus }: Props): React.JSX.Element {
     <button
       type="button"
       className={`icon dictation ${state === 'recording' ? 'recording' : ''}`}
-      title={state === 'recording' ? 'Aufnahme beenden' : 'Diktieren'}
+      title={state === 'recording' ? t('common.stopRecording') : t('common.dictate')}
       disabled={state === 'processing'}
       onClick={toggle}
     >

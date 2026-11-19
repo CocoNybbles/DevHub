@@ -1,6 +1,6 @@
-# Einheitlich LF im Repo und im Arbeitsverzeichnis (Prettier erwartet LF)
+# LF everywhere, in the repo and in the working tree (Prettier expects LF)
 * text=auto eol=lf
 
-# Binärdateien
+# Binary files
 *.png binary
 *.ico binary

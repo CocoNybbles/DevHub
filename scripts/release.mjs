@@ -39,8 +39,8 @@ const fail = (msg) => {
 let sha, intro, wanted, releasePr
 if (ci) {
   sha = process.env.RELEASE_SHA
-  if (!sha) fail('RELEASE_SHA fehlt')
-  if (out('git rev-parse HEAD') !== sha) fail(`Ausgecheckt ist nicht ${sha}`)
+  if (!sha) fail('RELEASE_SHA is missing')
+  if (out('git rev-parse HEAD') !== sha) fail(`Checked out commit is not ${sha}`)
   wanted = process.env.RELEASE_VERSION || undefined
   releasePr = Number(process.env.RELEASE_PR) || undefined
 } else {
@@ -48,17 +48,17 @@ if (ci) {
   wanted = args.find((a) => /^\d+\.\d+\.\d+$/.test(a))
   const notesFile = args.find((a) => a !== wanted)
   if (notesFile) {
-    if (!existsSync(notesFile)) fail(`Notizen-Datei ${notesFile} gibt es nicht`)
+    if (!existsSync(notesFile)) fail(`Notes file ${notesFile} does not exist`)
     intro = readFileSync(notesFile, 'utf8').trim()
   }
-  if (out('git rev-parse --abbrev-ref HEAD') !== 'main') fail('Nur vom Branch main aus')
+  if (out('git rev-parse --abbrev-ref HEAD') !== 'main') fail('Only from the main branch')
   if (!dryRun && out('git status --porcelain')) {
-    fail('Es gibt nicht committete Änderungen – erst committen')
+    fail('There are uncommitted changes – commit them first')
   }
   run('git fetch -q origin main')
   sha = out('git rev-parse HEAD')
   if (sha !== out('git rev-parse origin/main')) {
-    fail('main ist nicht auf dem Stand von origin/main – erst pushen bzw. pullen')
+    fail('main is not in sync with origin/main – push or pull first')
   }
 }
 
@@ -76,10 +76,10 @@ const tags = out(`git ls-remote --tags origin "refs/tags/v*"`)
 const latest = tags.reduce((a, b) => (newer(b, a) ? b : a), '0.0.0')
 const [maj, min, pat] = parse(latest)
 const version = wanted ?? `${maj}.${min}.${pat + 1}`
-if (!/^\d+\.\d+\.\d+$/.test(version)) fail(`Ungültige Version: ${version}`)
-if (!newer(version, latest)) fail(`Version ${version} ist nicht neuer als v${latest}`)
+if (!/^\d+\.\d+\.\d+$/.test(version)) fail(`Invalid version: ${version}`)
+if (!newer(version, latest)) fail(`Version ${version} is not newer than v${latest}`)
 const tag = `v${version}`
-console.log(`\nRelease v${latest} → ${tag} (Commit ${sha.slice(0, 7)})\n`)
+console.log(`\nRelease v${latest} → ${tag} (commit ${sha.slice(0, 7)})\n`)
 
 // --- GitHub API
 let token = process.env.GITHUB_TOKEN
@@ -89,7 +89,7 @@ if (!ci) {
   }).toString()
   token = /^password=(.*)$/m.exec(cred)?.[1]
 }
-if (!token) fail('Keine GitHub-Anmeldung vorhanden')
+if (!token) fail('No GitHub credentials available')
 const headers = {
   Authorization: `Bearer ${token}`,
   Accept: 'application/vnd.github+json',
@@ -101,7 +101,7 @@ const api = (path, init = {}) =>
     ...init,
     headers: { ...headers, ...init.headers }
   })
-if ((await api(`/releases/tags/${tag}`)).ok) fail(`Release ${tag} gibt es in ${repo} schon`)
+if ((await api(`/releases/tags/${tag}`)).ok) fail(`Release ${tag} already exists in ${repo}`)
 
 // --- Release notes: every PR merged into main since the last release, with its full description.
 // Read with GITHUB_READ_TOKEN if set (workflow: github.token with pull-requests: read – the
@@ -131,7 +131,7 @@ if (releasePr && !prs.has(releasePr)) prs.set(releasePr, await read(`/pulls/${re
 // PRs labelled "no-changelog" are left out of the notes (their code is still in the release)
 const hidden = (pr) => pr.labels.some((l) => l.name === 'no-changelog')
 for (const pr of prs.values()) {
-  if (hidden(pr)) console.log(`Ohne Changelog (no-changelog): #${pr.number} ${pr.title}`)
+  if (hidden(pr)) console.log(`Not in the changelog (no-changelog): #${pr.number} ${pr.title}`)
 }
 // Release PR first, then the others newest first
 const ordered = [...prs.values()]
@@ -154,13 +154,13 @@ const notes = [intro, ...sections].filter(Boolean).join('\n\n')
 if (!notes.trim()) {
   const skipped = [...prs.values()].filter(hidden).map((pr) => `#${pr.number}`)
   fail(
-    'Keine Release-Notizen: keine PRs für den Changelog seit dem letzten Release' +
-      (skipped.length ? ` (ausgeblendet: ${skipped.join(', ')})` : '')
+    'No release notes: no PRs for the changelog since the last release' +
+      (skipped.length ? ` (hidden: ${skipped.join(', ')})` : '')
   )
 }
-console.log(`Release-Notizen (${ordered.length} PRs):\n\n${notes}\n`)
+console.log(`Release notes (${ordered.length} PRs):\n\n${notes}\n`)
 if (dryRun) {
-  console.log('--dry-run: nichts gebaut, nichts veröffentlicht')
+  console.log('--dry-run: nothing built, nothing published')
   process.exit(0)
 }
 
@@ -175,8 +175,8 @@ try {
   built = false
 }
 run('git checkout -- package.json package-lock.json') // before fail(): process.exit skips finally
-if (!built) fail('Build fehlgeschlagen')
-if (!existsSync(zip)) fail(`${zip} wurde nicht gebaut`)
+if (!built) fail('Build failed')
+if (!existsSync(zip)) fail(`${zip} was not built`)
 
 // --- Publish (creates the tag on `sha`)
 const res = await api('/releases', {
@@ -190,8 +190,8 @@ const res = await api('/releases', {
   })
 })
 const release = await res.json()
-if (!res.ok) fail(`Release anlegen: ${res.status} ${JSON.stringify(release)}`)
-console.log(`\nRelease angelegt: ${release.html_url}`)
+if (!res.ok) fail(`Creating the release failed: ${res.status} ${JSON.stringify(release)}`)
+console.log(`\nRelease created: ${release.html_url}`)
 
 const up = await fetch(
   `${release.upload_url.replace(/\{.*\}$/, '')}?name=${encodeURIComponent(basename(zip))}`,
@@ -210,7 +210,9 @@ if (!up.ok) {
   // Don't leave a half-finished release behind – a rerun would otherwise fail with "already exists"
   await api(`/releases/${release.id}`, { method: 'DELETE' })
   await api(`/git/refs/tags/${tag}`, { method: 'DELETE' })
-  fail(`Upload: ${up.status} ${JSON.stringify(asset)} – Release und Tag ${tag} wieder entfernt`)
+  fail(
+    `Upload failed: ${up.status} ${JSON.stringify(asset)} – release and tag ${tag} removed again`
+  )
 }
-console.log(`Hochgeladen: ${asset.browser_download_url}`)
-console.log(`\n✔ DevHub ${version} veröffentlicht`)
+console.log(`Uploaded: ${asset.browser_download_url}`)
+console.log(`\n✔ DevHub ${version} published`)

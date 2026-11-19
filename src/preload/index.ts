@@ -35,7 +35,12 @@ const api: DevHubApi = {
   agents: {
     list: () => invoke('agents:list'),
     restore: () => invoke('agents:restore'),
-    start: (projectId, task, templateId) => invoke('agents:start', projectId, task, templateId),
+    start: (projectId, options) => invoke('agents:start', projectId, options),
+    fork: (id) => invoke('agents:fork', id),
+    enqueue: (id, text) => invoke('agents:enqueue', id, text),
+    dequeue: (id, queueId) => invoke('agents:dequeue', id, queueId),
+    activityLog: (id) => invoke('agents:activityLog', id),
+    onFocusRequest: (cb) => subscribe('agents:focusRequest', cb),
     stop: (id) => invoke('agents:stop', id),
     rename: (id, name) => invoke('agents:rename', id, name),
     reorder: (ids) => invoke('agents:reorder', ids),
@@ -56,7 +61,71 @@ const api: DevHubApi = {
     snippets: () => invoke('code:snippets'),
     onSnippets: (cb) => subscribe('code:snippets', cb),
     edits: () => invoke('code:edits'),
-    onEdits: (cb) => subscribe('code:edits', cb)
+    onEdits: (cb) => subscribe('code:edits', cb),
+    onPlan: (cb) => subscribe('code:plan', cb),
+    onShowDiff: (cb) => subscribe('code:showDiff', cb)
+  },
+  inbox: {
+    permissions: () => invoke('inbox:permissions'),
+    answer: (id, answer, message) => invoke('inbox:answer', id, answer, message),
+    onPermissions: (cb) => subscribe('inbox:permissions', cb),
+    onNotice: (cb) => subscribe('inbox:notice', cb)
+  },
+  tasks: {
+    list: () => invoke('tasks:list'),
+    save: (input) => invoke('tasks:save', input),
+    remove: (id) => invoke('tasks:remove', id),
+    setStatus: (id, status) => invoke('tasks:setStatus', id, status),
+    start: (id, templateId) => invoke('tasks:start', id, templateId),
+    assign: (id, agentId) => invoke('tasks:assign', id, agentId),
+    onChanged: (cb) => subscribe('tasks:changed', cb)
+  },
+  history: {
+    list: () => invoke('history:list'),
+    remove: (id) => invoke('history:remove', id),
+    resume: (id, fork) => invoke('history:resume', id, fork),
+    search: (query) => invoke('history:search', query)
+  },
+  git: {
+    targets: (projectId) => invoke('git:targets', projectId),
+    changes: (projectId, targetId) => invoke('git:changes', projectId, targetId),
+    diff: (projectId, targetId, path) => invoke('git:diff', projectId, targetId, path),
+    saveFile: (projectId, targetId, path, content) =>
+      invoke('git:saveFile', projectId, targetId, path, content),
+    discard: (projectId, targetId, path) => invoke('git:discard', projectId, targetId, path),
+    commit: (projectId, targetId, message, paths) =>
+      invoke('git:commit', projectId, targetId, message, paths),
+    merge: (projectId, targetId) => invoke('git:merge', projectId, targetId),
+    removeWorktree: (projectId, targetId, force) =>
+      invoke('git:removeWorktree', projectId, targetId, force)
+  },
+  runs: {
+    list: (projectId) => invoke('runs:list', projectId),
+    start: (projectId, name) => invoke('runs:start', projectId, name),
+    stop: (projectId, name) => invoke('runs:stop', projectId, name),
+    output: (projectId, name) => invoke('runs:output', projectId, name),
+    onChanged: (cb) => subscribe('runs:changed', cb),
+    onOutput: (cb) => subscribe('runs:output', cb)
+  },
+  preview: {
+    open: (projectId) => invoke('preview:open', projectId),
+    screenshot: (projectId, agentId) => invoke('preview:screenshot', projectId, agentId)
+  },
+  prompts: {
+    list: () => invoke('prompts:list'),
+    save: (input) => invoke('prompts:save', input),
+    remove: (id) => invoke('prompts:remove', id)
+  },
+  engines: {
+    list: () => invoke('engines:list'),
+    save: (input) => invoke('engines:save', input),
+    remove: (id) => invoke('engines:remove', id)
+  },
+  reports: {
+    daily: (projectId) => invoke('reports:daily', projectId)
+  },
+  remote: {
+    info: () => invoke('remote:info')
   },
   clipboard: {
     writeText: (text) => invoke('clipboard:writeText', text),
@@ -79,7 +148,8 @@ const api: DevHubApi = {
     onProgress: (cb) => subscribe('voice:progress', cb),
     transcribe: (wav) => invoke('voice:transcribe', wav),
     command: (text) => invoke('voice:command', text),
-    onGlobalHotkey: (cb) => subscribe('voice:globalHotkey', cb)
+    onGlobalHotkey: (cb) => subscribe('voice:globalHotkey', cb),
+    onSpeak: (cb) => subscribe('voice:speak', cb)
   },
   settings: {
     get: () => invoke('settings:get'),

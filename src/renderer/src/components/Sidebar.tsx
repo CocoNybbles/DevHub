@@ -1,8 +1,17 @@
 import { useState } from 'react'
-import type { Agent, AgentTemplate, Project, Team, TeamTemplate } from '../../../shared/types'
+import type {
+  Agent,
+  AgentTemplate,
+  Engine,
+  Project,
+  Team,
+  TeamTemplate
+} from '../../../shared/types'
 import { isTeamWorker, teamLead } from '../../../shared/types'
 import type { Selection } from '../App'
 import { formatAccelerator } from '../../../shared/hotkeys'
+import { getLocale, type TranslationKey } from '../../../shared/i18n'
+import { useT } from '../lib/i18n'
 import ContextMenu, { MenuItem, MenuState } from './ContextMenu'
 import {
   ChevronIcon,
@@ -27,7 +36,7 @@ const programLabel = (exe: string, fallback: string): string =>
 
 /** Alphanumeric ascending: "Agent 2" before "Agent 10", case-insensitive */
 const byName = (a: { name: string }, b: { name: string }): number =>
-  a.name.localeCompare(b.name, 'de', { numeric: true, sensitivity: 'base' })
+  a.name.localeCompare(b.name, getLocale(), { numeric: true, sensitivity: 'base' })
 
 /** Ids of a group after moving `moved` before/after `target` */
 function moveId(ids: string[], moved: string, target: string, after: boolean): string[] {
@@ -96,18 +105,39 @@ interface Props {
   onOpenFolder: (p: Project) => void
   onGlobalVoice: () => void
   onOpenSettings: () => void
+  /** More engines (terminal programs other than Claude Code) → choice when starting */
+  engines: Engine[]
+  onStartEngine: (projectId: string, engineId: string) => void
+  /** Inbox (permission requests, waiting agents, notices) – placed below the project list */
+  inbox: React.ReactNode
+  /** projectId: board of this project, otherwise of the selected one */
+  onOpenTasks: (projectId?: string) => void
+  onOpenHistory: () => void
+  onOpenReport: () => void
+  onOpenRun: (projectId: string) => void
+  /** Review changes: the project's main folder or the agent's working directory */
+  onReview: (projectId: string, agentId?: string) => void
+  /** Append an instruction / send a prompt from the library */
+  onQueue: (agentId: string) => void
+  onFork: (agentId: string) => void
+  /** An agent's usage for the tooltip */
+  usageText: (agent: Agent) => string
+  /** Number of open tasks (shown on the button) */
+  openTaskCount: number
 }
 
-const STATUS_LABEL: Record<Agent['status'], string> = {
-  starting: 'Startet …',
-  working: 'Arbeitet',
-  idle: 'Bereit',
-  needsInput: 'Wartet auf Eingabe'
+/** Keys only – translated where the label is rendered (the language can change at runtime) */
+const STATUS_LABEL: Record<Agent['status'], TranslationKey> = {
+  starting: 'sidebar.statusStarting',
+  working: 'sidebar.statusWorking',
+  idle: 'sidebar.statusIdle',
+  needsInput: 'sidebar.statusNeedsInput'
 }
 
 /** Left column: registered projects, their teams and agents. */
 function Sidebar(props: Props): React.JSX.Element {
   const { projects, agents, teams, selection } = props
+  const t = useT()
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set())
   const [renaming, setRenaming] = useState<string | null>(null)
   const [menu, setMenu] = useState<MenuState | null>(null)
@@ -162,18 +192,30 @@ function Sidebar(props: Props): React.JSX.Element {
 
   /** Menu entries for starting: normal agent, one entry per template, one entry per team. */
   const startItems = (projectId: string): MenuItem[] => [
-    { label: 'Agent starten', action: () => props.onStartAgent(projectId) },
-    ...props.templates.map((t) => ({
-      label: `${t.name} starten${t.model ? ` (${t.model})` : ''}`,
-      action: () => props.onStartAgent(projectId, t.id)
+    { label: t('sidebar.startAgent'), action: () => props.onStartAgent(projectId) },
+    ...props.templates.map((tpl) => ({
+      label: tpl.model
+        ? t('sidebar.startNamedWithModel', { name: tpl.name, model: tpl.model })
+        : t('sidebar.startNamed', { name: tpl.name }),
+      action: () => props.onStartAgent(projectId, tpl.id)
     })),
-    ...(props.teamTemplates.length ? [{ label: 'Teams', heading: true, action: () => {} }] : []),
-    ...props.teamTemplates.map((t) => ({
-      label: `Team ${t.name} starten (${t.members.length})`,
-      action: () => props.onStartTeam(projectId, t.id)
+    ...(props.teamTemplates.length
+      ? [{ label: t('common.teams'), heading: true, action: () => {} }]
+      : []),
+    ...props.teamTemplates.map((tpl) => ({
+      label: t('sidebar.startTeam', { name: tpl.name, members: tpl.members.length }),
+      action: () => props.onStartTeam(projectId, tpl.id)
+    })),
+    ...(props.engines.length
+      ? [{ label: t('sidebar.moreEngines'), heading: true, action: () => {} }]
+      : []),
+    ...props.engines.map((e) => ({
+      label: t('sidebar.startNamed', { name: e.name }),
+      action: () => props.onStartEngine(projectId, e.id)
     }))
   ]
-  const hasStartChoice = props.templates.length > 0 || props.teamTemplates.length > 0
+  const hasStartChoice =
+    props.templates.length > 0 || props.teamTemplates.length > 0 || props.engines.length > 0
 
   const toggle = (id: string): void =>
     setCollapsed((s) => {
@@ -197,9 +239,21 @@ function Sidebar(props: Props): React.JSX.Element {
     const d = dnd(group, a.id, groupIds, props.onReorderAgents, renaming !== a.id)
     const worker = isTeamWorker(a)
     const orchestrator = a.teamRole === 'orchestrator'
-    const hint = worker
-      ? 'Teammitglied – nur beobachten; Anweisungen gehen an den Orchestrator\nStrg+Klick: zum Raster hinzufügen/entfernen\nZiehen: Reihenfolge ändern'
-      : 'Strg+Klick: zum Raster hinzufügen/entfernen\nZiehen: Reihenfolge ändern\nRechtsklick: umbenennen, Sprach-Einstellung'
+    const hotkey = formatAccelerator(props.editorHotkey)
+    const usage = props.usageText(a)
+    // Tooltip: one line per fact, the usage hint last
+    const tooltip = [
+      `${t(STATUS_LABEL[a.status])}${a.statusMessage ? ` – ${a.statusMessage}` : ''}`,
+      a.activity,
+      a.worktree && t('sidebar.tooltipWorktree', { branch: a.worktree.branch }),
+      usage,
+      a.queue?.length && t('sidebar.tooltipQueue', { count: a.queue.length }),
+      a.model && t('sidebar.tooltipModel', { model: a.model }),
+      orchestrator ? t('sidebar.tooltipOrchestrator') : lead && t('sidebar.tooltipLead'),
+      t(worker ? 'sidebar.workerHint' : 'sidebar.agentHint')
+    ]
+      .filter(Boolean)
+      .join('\n')
     return (
       <div
         key={a.id}
@@ -227,29 +281,44 @@ function Sidebar(props: Props): React.JSX.Element {
             x: e.clientX,
             y: e.clientY,
             items: [
-              { label: 'Umbenennen', action: () => setRenaming(a.id) },
+              { label: t('common.rename'), action: () => setRenaming(a.id) },
               {
                 label: a.editing
-                  ? 'Zum Editor-Tab'
-                  : `Anweisung im Tab schreiben (${formatAccelerator(props.editorHotkey)})`,
+                  ? t('sidebar.toEditorTab')
+                  : t('sidebar.menuWriteInTab', { hotkey }),
                 action: () => props.onEditPrompt(a.id)
               },
               {
-                label: orchestrator ? 'Team beenden' : 'Beenden',
+                label: a.queue?.length
+                  ? t('sidebar.menuQueueMore', { count: a.queue.length })
+                  : t('sidebar.menuQueue'),
+                action: () => props.onQueue(a.id)
+              },
+              {
+                label: t('sidebar.menuReview'),
+                action: () => props.onReview(a.projectId, a.id)
+              },
+              ...(!a.teamId && !a.engineId
+                ? [{ label: t('sidebar.menuFork'), action: () => props.onFork(a.id) }]
+                : []),
+              {
+                label: orchestrator ? t('sidebar.menuStopTeam') : t('sidebar.menuStop'),
                 danger: true,
                 action: () => props.onStopAgent(a)
               },
-              { label: 'Sprach-Anweisungen', heading: true, action: () => {} },
+              { label: t('sidebar.menuVoiceHeading'), heading: true, action: () => {} },
               voice(
-                `Wie global (${props.globalVoiceAutoSend ? 'abschicken' : 'nur eintragen'})`,
+                props.globalVoiceAutoSend
+                  ? t('sidebar.menuVoiceGlobalSend')
+                  : t('sidebar.menuVoiceGlobalInsert'),
                 undefined
               ),
-              voice('Automatisch abschicken', true),
-              voice('Nur ins Terminal eintragen', false)
+              voice(t('sidebar.menuVoiceAutoSend'), true),
+              voice(t('sidebar.menuVoiceInsertOnly'), false)
             ]
           })
         }}
-        title={`${STATUS_LABEL[a.status]}${a.statusMessage ? ` – ${a.statusMessage}` : ''}${a.model ? `\nModell: ${a.model}` : ''}${orchestrator ? '\nOrchestrator: steuert das Team, einziger Ansprechpartner' : lead ? '\nLeitet das Team' : ''}\n${hint}`}
+        title={tooltip}
       >
         <span className={`dot ${a.status}`} />
         {renaming === a.id ? (
@@ -264,25 +333,45 @@ function Sidebar(props: Props): React.JSX.Element {
           <span className="row-name">
             {a.name}
             {orchestrator ? (
-              <span className="team-tag">Orchestrator</span>
+              <span className="team-tag">{t('common.orchestrator')}</span>
             ) : (
-              lead && <span className="team-tag">Leitung</span>
+              lead && <span className="team-tag">{t('sidebar.leadTag')}</span>
             )}
             {worker && (
-              <span className="watch-tag" title="Nur beobachten">
+              <span className="watch-tag" title={t('sidebar.watchOnly')}>
                 <EyeIcon size={11} />
               </span>
             )}
             {a.editing && (
-              <span
-                className="team-tag"
-                title="Anweisung wird im Editor-Tab geschrieben – Klick wechselt dorthin"
-              >
-                <EditIcon size={10} /> Tab
+              <span className="team-tag" title={t('sidebar.editingTagTooltip')}>
+                <EditIcon size={10} /> {t('sidebar.editingTag')}
               </span>
             )}
-            {a.status === 'needsInput' && a.statusMessage && (
+            {a.worktree && (
+              <span
+                className="team-tag"
+                title={t('sidebar.worktreeTagTooltip', { branch: a.worktree.branch })}
+              >
+                {t('sidebar.worktreeTag')}
+              </span>
+            )}
+            {!!a.queue?.length && (
+              <span className="team-tag" title={t('sidebar.queueTagTooltip')}>
+                +{a.queue.length}
+              </span>
+            )}
+            {a.status === 'needsInput' && a.statusMessage ? (
               <span className="row-sub">{a.statusMessage}</span>
+            ) : (
+              // Working: reported progress, otherwise the current step
+              a.status === 'working' &&
+              (a.progress || a.activity) && (
+                <span className="row-sub info">
+                  {a.progress
+                    ? `${a.progress.percent !== undefined ? `${Math.round(a.progress.percent)} % · ` : ''}${a.progress.message}`
+                    : a.activity}
+                </span>
+              )
             )}
           </span>
         )}
@@ -291,9 +380,7 @@ function Sidebar(props: Props): React.JSX.Element {
             <button
               className="icon row-btn"
               title={
-                a.editing
-                  ? 'Zum Editor-Tab'
-                  : `Anweisung in einem Tab schreiben – mit Bildern und Diktat (${formatAccelerator(props.editorHotkey)})`
+                a.editing ? t('sidebar.toEditorTab') : t('sidebar.editPromptTooltip', { hotkey })
               }
               onClick={(e) => {
                 e.stopPropagation()
@@ -304,7 +391,7 @@ function Sidebar(props: Props): React.JSX.Element {
             </button>
             <button
               className={`icon row-btn ${props.recordingAgentId === a.id ? 'recording' : ''}`}
-              title={`Sprach-Anweisung an ${a.name}`}
+              title={t('sidebar.voiceToAgent', { name: a.name })}
               onClick={(e) => {
                 e.stopPropagation()
                 props.onAgentVoiceFor(a.id)
@@ -314,7 +401,7 @@ function Sidebar(props: Props): React.JSX.Element {
             </button>
             <button
               className="icon row-btn"
-              title={`Unterhaltung von ${a.name} leeren (/clear)`}
+              title={t('sidebar.clearConversation', { name: a.name })}
               onClick={(e) => {
                 e.stopPropagation()
                 props.onClearAgent(a.id)
@@ -324,9 +411,7 @@ function Sidebar(props: Props): React.JSX.Element {
             </button>
             <button
               className="icon stop-agent"
-              title={
-                orchestrator ? 'Team beenden (Orchestrator und alle Mitglieder)' : 'Agent beenden'
-              }
+              title={orchestrator ? t('sidebar.stopTeamTooltip') : t('sidebar.stopAgentTooltip')}
               onClick={(e) => {
                 e.stopPropagation()
                 props.onStopAgent(a)
@@ -358,16 +443,31 @@ function Sidebar(props: Props): React.JSX.Element {
               x: e.clientX,
               y: e.clientY,
               items: [
-                { label: 'Im Raster zeigen', action: () => props.onSelectTeam(team, false) },
                 {
-                  label: 'Mitglieder nach Name sortieren',
+                  label: t('sidebar.menuShowInGrid'),
+                  action: () => props.onSelectTeam(team, false)
+                },
+                {
+                  label: t('sidebar.menuSortMembers'),
                   action: () => props.onReorderAgents([...members].sort(byName).map((a) => a.id))
                 },
-                { label: 'Team beenden', danger: true, action: () => props.onStopTeam(team) }
+                {
+                  label: t('sidebar.menuStopTeam'),
+                  danger: true,
+                  action: () => props.onStopTeam(team)
+                }
               ]
             })
           }}
-          title={`${team.temporary ? 'Temporäres Team' : 'Team'} „${team.name}“\n${lead?.teamRole === 'orchestrator' ? `Orchestrator: ${lead.name} – steuert die Mitglieder, nur mit ihm sprichst du; die Mitglieder kannst du beobachten` : `Leitung: ${lead?.name ?? '–'}`}\nKlick: alle im Raster · Strg+Klick: hinzufügen/entfernen · Rechtsklick: beenden`}
+          title={[
+            t(team.temporary ? 'sidebar.teamTitleTemporary' : 'sidebar.teamTitle', {
+              name: team.name
+            }),
+            lead?.teamRole === 'orchestrator'
+              ? t('sidebar.teamOrchestratorLine', { name: lead.name })
+              : t('sidebar.teamLeadLine', { name: lead?.name ?? '–' }),
+            t('sidebar.teamClickHint')
+          ].join('\n')}
         >
           <button
             className={`chevron ${isOpen ? 'open' : ''}`}
@@ -381,13 +481,15 @@ function Sidebar(props: Props): React.JSX.Element {
           <TeamIcon />
           <span className="row-name">
             {team.name}
-            {team.temporary && <span className="team-tag">temporär</span>}
+            {team.temporary && <span className="team-tag">{t('sidebar.temporaryTag')}</span>}
           </span>
-          {!isOpen && attention && <span className="dot needsInput" title="Ein Agent wartet" />}
+          {!isOpen && attention && (
+            <span className="dot needsInput" title={t('sidebar.agentWaiting')} />
+          )}
           <span className="count">{members.length}</span>
           <button
             className="icon stop-agent"
-            title="Team beenden"
+            title={t('sidebar.menuStopTeam')}
             onClick={(e) => {
               e.stopPropagation()
               props.onStopTeam(team)
@@ -408,32 +510,34 @@ function Sidebar(props: Props): React.JSX.Element {
   return (
     <aside className="pane sidebar">
       <header className="pane-header">
-        <span>Projekte</span>
+        <span>{t('common.projects')}</span>
         <div className="header-actions">
           <button
             className={`icon ${props.globalVoiceActive ? 'recording' : ''}`}
-            title={`Sprachbefehl: Agent/Team per Name ansprechen oder neu starten (${formatAccelerator(props.globalHotkey)})`}
+            title={t('sidebar.globalVoiceTooltip', {
+              hotkey: formatAccelerator(props.globalHotkey)
+            })}
             onClick={props.onGlobalVoice}
           >
             <MicIcon />
           </button>
           <button
             className="icon"
-            title="Projekte alphanumerisch aufsteigend sortieren"
+            title={t('sidebar.sortProjects')}
             disabled={projects.length < 2}
             onClick={() => props.onReorderProjects([...projects].sort(byName).map((p) => p.id))}
           >
             <SortIcon />
           </button>
-          <button className="icon" title="Einstellungen" onClick={props.onOpenSettings}>
+          <button className="icon" title={t('common.settings')} onClick={props.onOpenSettings}>
             <GearIcon />
           </button>
-          <button className="icon" title="Projekt hinzufügen" onClick={props.onAddProject}>
+          <button className="icon" title={t('sidebar.addProject')} onClick={props.onAddProject}>
             <PlusIcon />
           </button>
           <button
             className="icon"
-            title="Projekte importieren: Ordner durchsuchen (z. B. ganzer Dev-Ordner, mehrere per Strg+Klick)"
+            title={t('sidebar.importProjects')}
             onClick={props.onImportProjects}
           >
             <FolderImportIcon />
@@ -445,10 +549,10 @@ function Sidebar(props: Props): React.JSX.Element {
         {projects.length === 0 && (
           <div className="empty muted">
             <div>
-              Noch keine Projekte registriert.
+              {t('sidebar.noProjects')}
               <br />
               <button className="link" onClick={props.onAddProject}>
-                Projekt hinzufügen
+                {t('sidebar.addProject')}
               </button>
             </div>
           </div>
@@ -458,9 +562,9 @@ function Sidebar(props: Props): React.JSX.Element {
           // Agent order comes from main (persisted, changeable via drag & drop)
           const projectAgents = agents.filter((a) => a.projectId === p.id)
           const projectTeams = teams
-            .filter((t) => t.projectId === p.id)
+            .filter((team) => team.projectId === p.id)
             .sort((a, b) => a.createdAt - b.createdAt)
-          const teamIds = new Set(projectTeams.map((t) => t.id))
+          const teamIds = new Set(projectTeams.map((team) => team.id))
           // Agents without a (known) team are listed below the teams
           const loose = projectAgents.filter((a) => !a.teamId || !teamIds.has(a.teamId))
           const looseIds = loose.map((a) => a.id)
@@ -485,12 +589,15 @@ function Sidebar(props: Props): React.JSX.Element {
                     y: e.clientY,
                     items: [
                       ...startItems(p.id),
-                      { label: 'Projekt', heading: true, action: () => {} },
+                      { label: t('common.project'), heading: true, action: () => {} },
+                      { label: t('sidebar.menuTasks'), action: () => props.onOpenTasks(p.id) },
+                      { label: t('sidebar.menuReview'), action: () => props.onReview(p.id) },
+                      { label: t('sidebar.menuRun'), action: () => props.onOpenRun(p.id) },
                       ...(projectAgents.length > 1
                         ? [
                             {
                               // All at once: teams and agents without a team are separate groups
-                              label: 'Agents nach Name sortieren',
+                              label: t('sidebar.menuSortAgents'),
                               action: () =>
                                 props.onReorderAgents(
                                   [...projectAgents].sort(byName).map((a) => a.id)
@@ -498,12 +605,16 @@ function Sidebar(props: Props): React.JSX.Element {
                             }
                           ]
                         : []),
-                      { label: 'Bearbeiten …', action: () => props.onEditProject(p) },
-                      { label: 'Entfernen', danger: true, action: () => props.onRemoveProject(p) }
+                      { label: t('sidebar.menuEdit'), action: () => props.onEditProject(p) },
+                      {
+                        label: t('common.remove'),
+                        danger: true,
+                        action: () => props.onRemoveProject(p)
+                      }
                     ]
                   })
                 }}
-                title={`${p.agentPath}\nStrg+Klick: alle Agents zum Raster hinzufügen/entfernen\nZiehen: Reihenfolge ändern`}
+                title={`${p.agentPath}\n${t('sidebar.projectHint')}`}
               >
                 <button
                   className={`chevron ${isOpen ? 'open' : ''}`}
@@ -516,14 +627,20 @@ function Sidebar(props: Props): React.JSX.Element {
                 </button>
                 <span className="row-name">{p.name}</span>
                 {!isOpen && attention && (
-                  <span className="dot needsInput" title="Ein Agent wartet" />
+                  <span className="dot needsInput" title={t('sidebar.agentWaiting')} />
                 )}
                 {projectAgents.length > 0 && <span className="count">{projectAgents.length}</span>}
                 <span className="row-actions">
                   {p.projectFile && (
                     <button
                       className="icon"
-                      title={`Projektdatei öffnen: ${p.projectFile}\nmit ${programLabel(p.projectFileApp || props.globalProjectFileApp, 'Windows-Standardprogramm')}`}
+                      title={t('sidebar.openProjectFile', {
+                        file: p.projectFile,
+                        program: programLabel(
+                          p.projectFileApp || props.globalProjectFileApp,
+                          t('sidebar.windowsDefaultProgram')
+                        )
+                      })}
                       onClick={(e) => {
                         e.stopPropagation()
                         props.onOpenProjectFile(p)
@@ -535,10 +652,13 @@ function Sidebar(props: Props): React.JSX.Element {
                   {p.folderPath && (
                     <button
                       className="icon"
-                      title={`Ordner öffnen: ${p.folderPath}\nmit ${programLabel(
-                        p.folderApp || props.globalFolderApp,
-                        props.vscodeInstalled ? 'VS Code' : 'Windows-Explorer'
-                      )}`}
+                      title={t('sidebar.openFolder', {
+                        folder: p.folderPath,
+                        program: programLabel(
+                          p.folderApp || props.globalFolderApp,
+                          props.vscodeInstalled ? 'VS Code' : t('sidebar.windowsExplorer')
+                        )
+                      })}
                       onClick={(e) => {
                         e.stopPropagation()
                         props.onOpenFolder(p)
@@ -551,9 +671,7 @@ function Sidebar(props: Props): React.JSX.Element {
                 <button
                   className="icon start-agent"
                   title={
-                    hasStartChoice
-                      ? 'Starten: Agent, vordefinierter Agent oder Team'
-                      : 'Neuen Agent starten'
+                    hasStartChoice ? t('sidebar.startChoiceTooltip') : t('sidebar.startNewAgent')
                   }
                   onClick={(e) => {
                     e.stopPropagation()
@@ -569,10 +687,10 @@ function Sidebar(props: Props): React.JSX.Element {
 
               {isOpen && (
                 <>
-                  {projectTeams.map((t) =>
+                  {projectTeams.map((team) =>
                     teamGroup(
-                      t,
-                      projectAgents.filter((a) => a.teamId === t.id)
+                      team,
+                      projectAgents.filter((a) => a.teamId === team.id)
                     )
                   )}
                   {loose.map((a) => agentRow(a, `project:${p.id}`, looseIds))}
@@ -582,6 +700,21 @@ function Sidebar(props: Props): React.JSX.Element {
           )
         })}
       </div>
+
+      {props.inbox}
+
+      <footer className="sidebar-footer">
+        <button title={t('sidebar.tasksTooltip')} onClick={() => props.onOpenTasks()}>
+          {t('common.tasks')}
+          {props.openTaskCount > 0 && <span className="count">{props.openTaskCount}</span>}
+        </button>
+        <button title={t('sidebar.historyTooltip')} onClick={props.onOpenHistory}>
+          {t('sidebar.history')}
+        </button>
+        <button title={t('sidebar.reportTooltip')} onClick={props.onOpenReport}>
+          {t('sidebar.report')}
+        </button>
+      </footer>
 
       {menu && <ContextMenu {...menu} onClose={() => setMenu(null)} />}
     </aside>

@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react'
 import type { CodeSnippet } from '../../../shared/types'
 import { languageForFence, monaco } from '../lib/monaco'
+import { getLocale } from '../../../shared/i18n'
+import { useT } from '../lib/i18n'
 import { CheckIcon, CopyIcon } from './Icons'
 
 /** Code blocks from the agent's replies, newest first, each with a copy button. */
@@ -15,6 +17,7 @@ function SnippetList({ snippets }: { snippets: CodeSnippet[] }): React.JSX.Eleme
 }
 
 function SnippetCard({ snippet }: { snippet: CodeSnippet }): React.JSX.Element {
+  const t = useT()
   const [html, setHtml] = useState<string | null>(null)
   const [copied, setCopied] = useState(false)
   const lines = snippet.code.split('\n').length
@@ -33,8 +36,8 @@ function SnippetCard({ snippet }: { snippet: CodeSnippet }): React.JSX.Element {
 
   useEffect(() => {
     if (!copied) return
-    const t = setTimeout(() => setCopied(false), 1500)
-    return () => clearTimeout(t)
+    const timer = setTimeout(() => setCopied(false), 1500)
+    return () => clearTimeout(timer)
   }, [copied])
 
   // Via the main process: works regardless of window focus
@@ -45,18 +48,21 @@ function SnippetCard({ snippet }: { snippet: CodeSnippet }): React.JSX.Element {
   return (
     <div className="snippet">
       <div className="snippet-header">
-        <span className="snippet-lang">{snippet.language || 'Text'}</span>
+        <span className="snippet-lang">{snippet.language || t('code.plainText')}</span>
         <span className="muted">
-          {lines} {lines === 1 ? 'Zeile' : 'Zeilen'} ·{' '}
-          {new Date(snippet.at).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' })}
+          {t('code.lineCount', { count: lines })} ·{' '}
+          {new Date(snippet.at).toLocaleTimeString(getLocale(), {
+            hour: '2-digit',
+            minute: '2-digit'
+          })}
         </span>
         <button
           className={`snippet-copy ${copied ? 'done' : ''}`}
-          title="In die Zwischenablage kopieren"
+          title={t('code.copyTooltip')}
           onClick={copy}
         >
           {copied ? <CheckIcon /> : <CopyIcon />}
-          {copied ? 'Kopiert' : 'Kopieren'}
+          {copied ? t('common.copied') : t('common.copy')}
         </button>
       </div>
       {html ? (

@@ -1,5 +1,5 @@
 import { open } from 'fs/promises'
-import type { CodeSnippet, EditedFile, LineRange } from '../shared/types'
+import type { AgentUsage, CodeSnippet, EditedFile, LineRange, TokenTotals } from '../shared/types'
 
 /** Keep at most this many snippets per agent (the newest) */
 export const MAX_SNIPPETS = 30
@@ -63,9 +63,124 @@ export function snippetsFromLines(agentId: string, lines: string[]): CodeSnippet
 export interface TranscriptNews {
   snippets: CodeSnippet[]
   edits: EditedFile[]
+  /** Usage of the whole session – only set if it has changed */
+  usage?: AgentUsage
+  /** Beginning of the agent's last response – only set if there is a new one */
+  lastText?: string
+  /** The user's first instruction (title of the session) */
+  firstPrompt?: string
 }
 
 const NOTHING: TranscriptNews = { snippets: [], edits: [] }
+
+const zeroTotals = (): TokenTotals => ({ input: 0, output: 0, cacheRead: 0, cacheWrite: 0 })
+
+function addTotals(to: TokenTotals, t: TokenTotals, sign = 1): void {
+  to.input += sign * t.input
+  to.output += sign * t.output
+  to.cacheRead += sign * t.cacheRead
+  to.cacheWrite += sign * t.cacheWrite
+}
+
+/** `YYYY-MM-DD` in local time */
+export function localDay(ms: number): string {
+  const d = new Date(ms)
+  const two = (n: number): string => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${two(d.getMonth() + 1)}-${two(d.getDate())}`
+}
+
+interface UsageLine {
+  type?: string
+  isSidechain?: boolean
+  isMeta?: boolean
+  timestamp?: string
+  message?: {
+    id?: string
+    model?: string
+    content?: string | { type?: string; text?: string }[]
+    usage?: {
+      input_tokens?: number
+      output_tokens?: number
+      cache_read_input_tokens?: number
+      cache_creation_input_tokens?: number
+    }
+  }
+}
+
+const textOf = (content: NonNullable<UsageLine['message']>['content']): string =>
+  typeof content === 'string'
+    ? content
+    : (content ?? [])
+        .filter((c) => c.type === 'text' && c.text)
+        .map((c) => c.text)
+        .join('\n')
+
+/** Length of the remembered last response */
+const LAST_TEXT_CHARS = 1500
+
+/**
+ * Token usage, last response and first instruction from transcript lines. A response appears
+ * with the same `message.id` in several lines (one per content block) – it is counted once.
+ */
+export class UsageTracker {
+  private byMessage = new Map<string, { day: string; totals: TokenTotals }>()
+  readonly usage: AgentUsage = { context: 0, total: zeroTotals(), byDay: {} }
+  lastText?: string
+  firstPrompt?: string
+
+  /** Returns what has changed */
+  add(lines: string[]): { usage: boolean; lastText: boolean } {
+    const changed = { usage: false, lastText: false }
+    for (const line of lines) {
+      const assistant = line.includes('"assistant"')
+      if (!assistant && (this.firstPrompt !== undefined || !line.includes('"user"'))) continue
+      let entry: UsageLine
+      try {
+        entry = JSON.parse(line)
+      } catch {
+        continue
+      }
+      if (entry.type === 'user') {
+        if (this.firstPrompt === undefined && !entry.isMeta && !entry.isSidechain) {
+          const text = textOf(entry.message?.content).trim()
+          // Command wrappers (<command-name> …) and tool results are not an instruction
+          if (text && !text.startsWith('<')) this.firstPrompt = text.slice(0, 200)
+        }
+        continue
+      }
+      if (entry.type !== 'assistant' || !entry.message) continue
+      const text = textOf(entry.message.content).trim()
+      if (text && !entry.isSidechain) {
+        this.lastText = text.slice(0, LAST_TEXT_CHARS)
+        changed.lastText = true
+      }
+      const u = entry.message.usage
+      const id = entry.message.id
+      if (!u || !id) continue
+      const totals: TokenTotals = {
+        input: u.input_tokens ?? 0,
+        output: u.output_tokens ?? 0,
+        cacheRead: u.cache_read_input_tokens ?? 0,
+        cacheWrite: u.cache_creation_input_tokens ?? 0
+      }
+      const day = localDay(entry.timestamp ? Date.parse(entry.timestamp) || Date.now() : Date.now())
+      const before = this.byMessage.get(id)
+      if (before) {
+        addTotals(this.usage.total, before.totals, -1)
+        addTotals((this.usage.byDay[before.day] ??= zeroTotals()), before.totals, -1)
+      }
+      this.byMessage.set(id, { day, totals })
+      addTotals(this.usage.total, totals)
+      addTotals((this.usage.byDay[day] ??= zeroTotals()), totals)
+      if (!entry.isSidechain) {
+        this.usage.context = totals.input + totals.cacheRead + totals.cacheWrite
+        if (entry.message.model) this.usage.model = entry.message.model
+      }
+      changed.usage = true
+    }
+    return changed
+  }
+}
 
 /** Keep at most this many edited files per agent (the most recently changed) */
 export const MAX_EDITED_FILES = 30
@@ -160,6 +275,7 @@ export function mergeEdits(existing: EditedFile[], added: EditedFile[]): EditedF
 export class TranscriptReader {
   private offset = 0
   private queue: Promise<TranscriptNews> = Promise.resolve(NOTHING)
+  private tracker = new UsageTracker()
 
   constructor(
     readonly path: string,
@@ -184,7 +300,11 @@ export class TranscriptReader {
     if (!file) return NOTHING
     try {
       const { size } = await file.stat()
-      if (size < this.offset) this.offset = 0 // file was rewritten
+      if (size < this.offset) {
+        // File was rewritten
+        this.offset = 0
+        this.tracker = new UsageTracker()
+      }
       if (size === this.offset) return NOTHING
       const buf = Buffer.alloc(size - this.offset)
       await file.read(buf, 0, buf.length, this.offset)
@@ -192,9 +312,13 @@ export class TranscriptReader {
       if (lastNewline < 0) return NOTHING
       this.offset += lastNewline + 1
       const lines = buf.subarray(0, lastNewline).toString('utf8').split('\n')
+      const changed = this.tracker.add(lines)
       return {
         snippets: snippetsFromLines(this.agentId, lines),
-        edits: editsFromLines(this.agentId, lines)
+        edits: editsFromLines(this.agentId, lines),
+        usage: changed.usage ? structuredClone(this.tracker.usage) : undefined,
+        lastText: changed.lastText ? this.tracker.lastText : undefined,
+        firstPrompt: this.tracker.firstPrompt
       }
     } finally {
       await file.close()

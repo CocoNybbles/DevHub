@@ -6,6 +6,7 @@
 import { app, dialog } from 'electron'
 import { cpSync, existsSync, mkdirSync, rmSync, writeFileSync } from 'fs'
 import { dirname, join } from 'path'
+import { t } from '../shared/i18n'
 
 /** Folder containing the .exe (portable: the real location, not the extraction folder in %TEMP%). */
 function exeDir(): string {
@@ -24,23 +25,25 @@ function migrateFromAppData(target: string): void {
       cpSync(join(old, 'whisper'), join(target, 'whisper'), { recursive: true })
     }
   } catch (err) {
-    console.error('Übernahme der alten Daten fehlgeschlagen:', err)
+    console.error('[DevHub] Migrating the old data failed:', err)
   }
 }
 
-const dir = join(exeDir(), 'data')
+/**
+ * Development/tests: `DEVHUB_DATA_DIR` = a separate data folder. This lets a second instance start
+ * next to a running one (the single-instance lock is tied to the data folder) without touching its state.
+ */
+const override = process.env.DEVHUB_DATA_DIR?.trim()
+const dir = override || join(exeDir(), 'data')
 try {
   mkdirSync(dir, { recursive: true })
   const probe = join(dir, '.write-test')
   writeFileSync(probe, '')
   rmSync(probe)
 } catch {
-  dialog.showErrorBox(
-    'DevHub',
-    `DevHub speichert seine Daten neben der Programmdatei, hat aber keine Schreibrechte für:\n${dir}\n\n` +
-      'Bitte DevHub in einen beschreibbaren Ordner verschieben (z. B. nicht unter „Programme“).'
-  )
+  // The saved language is not loaded yet: this text uses the system language
+  dialog.showErrorBox('DevHub', t('main.dataDirNotWritable', { dir }))
   app.exit(1)
 }
-migrateFromAppData(dir)
+if (!override) migrateFromAppData(dir)
 app.setPath('userData', dir)

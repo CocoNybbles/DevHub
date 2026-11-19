@@ -1,5 +1,13 @@
-import { useState } from 'react'
-import type { AgentTemplate, Settings, TeamTemplate, VoiceStatus } from '../../../shared/types'
+import { useEffect, useState } from 'react'
+import type {
+  AgentTemplate,
+  Engine,
+  PromptTemplate,
+  RemoteInfo,
+  Settings,
+  TeamTemplate,
+  VoiceStatus
+} from '../../../shared/types'
 import { validateAgentArgs } from '../../../shared/agentArgs'
 import { errorText } from '../lib/errors'
 import AgentArgsHelp from './AgentArgsHelp'
@@ -9,11 +17,13 @@ import Modal from './Modal'
 import ProgramInput from './ProgramInput'
 import VoiceModels from './VoiceModels'
 import { canRememberLanguage, FIXED_LANGUAGES } from '../../../shared/voiceLanguage'
+import { getLocale, LANGUAGE_CODES, LANGUAGES, type LanguageSetting } from '../../../shared/i18n'
+import { syncLanguage, useT } from '../lib/i18n'
 
-/** whisper language code → "Deutsch", "Englisch" … (fallback: the code) */
+/** whisper language code → name in the interface language, e.g. "German" (fallback: the code) */
 function languageName(code: string): string {
   try {
-    return new Intl.DisplayNames(['de'], { type: 'language' }).of(code) ?? code
+    return new Intl.DisplayNames([getLocale()], { type: 'language' }).of(code) ?? code
   } catch {
     return code
   }
@@ -35,6 +45,125 @@ interface Props {
   onSettingsChanged: (s: Settings) => void
   onVoiceChanged: () => void
   onClose: () => void
+  prompts: PromptTemplate[]
+  /** null = create a new prompt */
+  onEditPrompt: (p: PromptTemplate | null) => void
+  onRemovePrompt: (p: PromptTemplate) => void
+  engines: Engine[]
+  /** null = create a new engine */
+  onEditEngine: (e: Engine | null) => void
+  onRemoveEngine: (e: Engine) => void
+}
+
+/** Number as a setting: draft kept locally, saved when leaving the field */
+function NumberSetting(p: {
+  label: string
+  value: number
+  help: string
+  step?: number
+  onSave: (value: number) => Promise<void>
+}): React.JSX.Element {
+  const [draft, setDraft] = useState(String(p.value))
+  const [error, setError] = useState<string | null>(null)
+  return (
+    <label>
+      <span>{p.label}</span>
+      <input
+        type="number"
+        min={0}
+        step={p.step ?? 1}
+        value={draft}
+        onChange={(e) => {
+          setDraft(e.target.value)
+          setError(null)
+        }}
+        onBlur={() => {
+          const n = Number(draft.replace(',', '.'))
+          if (n === p.value) return
+          p.onSave(n).catch((e) => setError(errorText(e)))
+        }}
+      />
+      {error ? <small className="error">{error}</small> : <small className="muted">{p.help}</small>}
+    </label>
+  )
+}
+
+/** Remote access: switch, port and the addresses for the phone */
+function RemoteSettings({
+  settings,
+  update
+}: {
+  settings: Settings
+  update: (patch: Partial<Settings>) => Promise<void>
+}): React.JSX.Element {
+  const t = useT()
+  const [info, setInfo] = useState<RemoteInfo | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const { remoteEnabled, remotePort, remoteToken } = settings
+  useEffect(() => {
+    let cancelled = false
+    // Wait briefly: the server reports a port in use only after starting
+    const timer = setTimeout(
+      () => window.api.remote.info().then((i) => !cancelled && setInfo(i)),
+      400
+    )
+    return () => {
+      cancelled = true
+      clearTimeout(timer)
+    }
+  }, [remoteEnabled, remotePort, remoteToken])
+  const change = (patch: Partial<Settings>): void => {
+    setError(null)
+    update(patch).catch((e) => setError(errorText(e)))
+  }
+  return (
+    <>
+      <label className="checkbox">
+        <input
+          type="checkbox"
+          checked={remoteEnabled}
+          onChange={(e) => change({ remoteEnabled: e.target.checked })}
+        />
+        {t('settings.remoteEnable')}
+      </label>
+      <small className="muted">{t('settings.remoteHelp')}</small>
+      {remoteEnabled && (
+        <div className="form">
+          <NumberSetting
+            key={remotePort}
+            label={t('settings.remotePort')}
+            value={remotePort}
+            help="1024–65535"
+            onSave={(port) => update({ remotePort: port })}
+          />
+          {info?.error && <small className="error">{info.error}</small>}
+          {info?.running && (
+            <div>
+              {info.urls.length === 0 && (
+                <small className="muted">{t('settings.remoteNoAddress')}</small>
+              )}
+              {info.urls.map((url) => (
+                <div key={url} className="remote-url">
+                  <code>{url}</code>
+                  <button className="link" onClick={() => window.api.clipboard.writeText(url)}>
+                    {t('settings.remoteCopy')}
+                  </button>
+                </div>
+              ))}
+              <button
+                className="link"
+                title={t('settings.remoteNewAddressTooltip')}
+                onClick={() => change({ remoteToken: '' })}
+              >
+                {t('settings.remoteNewAddress')}
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+      {error && <small className="error">{error}</small>}
+    </>
+  )
 }
 
 /**
@@ -83,9 +212,17 @@ function ProgramSetting(p: {
 
 function SettingsDialog(props: Props): React.JSX.Element {
   const { settings, voiceStatus } = props
+  const t = useT()
 
   const update = async (patch: Partial<Settings>): Promise<void> =>
     props.onSettingsChanged(await window.api.settings.update(patch))
+
+  // Interface language: saved right away; the whole UI switches without a restart
+  const changeLanguage = async (language: LanguageSetting): Promise<void> => {
+    const next = await window.api.settings.update({ language })
+    syncLanguage(next.language)
+    props.onSettingsChanged(next)
+  }
 
   // Start flags: draft kept locally, saved when leaving the field or closing
   const [argsDraft, setArgsDraft] = useState(settings.agentArgs)
@@ -110,16 +247,36 @@ function SettingsDialog(props: Props): React.JSX.Element {
 
   return (
     <Modal
-      title="Einstellungen"
+      title={t('common.settings')}
       onClose={close}
       width={600}
-      footer={<button onClick={close}>Schließen</button>}
+      footer={<button onClick={close}>{t('common.close')}</button>}
     >
       <section className="settings-section">
-        <h3>Agent-Start</h3>
+        <h3>🌐 {t('settings.languageTitle')}</h3>
         <div className="form">
           <label>
-            <span>Zusätzliche Start-Flags für alle Agents</span>
+            <span>{t('settings.languageLabel')}</span>
+            <select
+              value={settings.language}
+              onChange={(e) => changeLanguage(e.target.value as LanguageSetting)}
+            >
+              <option value="system">{t('settings.languageSystem')}</option>
+              {LANGUAGE_CODES.map((code) => (
+                <option key={code} value={code}>
+                  {LANGUAGES[code].name}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+      </section>
+
+      <section className="settings-section">
+        <h3>{t('settings.agentStartTitle')}</h3>
+        <div className="form">
+          <label>
+            <span>{t('settings.agentArgsLabel')}</span>
             <input
               className="mono"
               value={argsDraft}
@@ -128,7 +285,7 @@ function SettingsDialog(props: Props): React.JSX.Element {
                 setArgsSaveError(null)
               }}
               onBlur={saveArgs}
-              placeholder="z. B. --permission-mode auto"
+              placeholder={t('settings.agentArgsPlaceholder')}
               spellCheck={false}
             />
           </label>
@@ -137,157 +294,270 @@ function SettingsDialog(props: Props): React.JSX.Element {
       </section>
 
       <section className="settings-section">
-        <h3>Vordefinierte Agents</h3>
+        <h3>{t('settings.templatesTitle')}</h3>
         {props.templates.length > 0 && (
           <div className="template-list">
-            {props.templates.map((t) => (
-              <div key={t.id} className="template-item">
+            {props.templates.map((tpl) => (
+              <div key={tpl.id} className="template-item">
                 <span className="template-info">
-                  <span className="template-name">{t.name}</span>
+                  <span className="template-name">{tpl.name}</span>
                   <span className="muted">
                     {' · '}
-                    {t.model || 'Modell aus Start-Flags'}
-                    {t.instructions ? ` · ${t.instructions}` : ''}
+                    {tpl.model || t('settings.templateModelFromFlags')}
+                    {tpl.instructions ? ` · ${tpl.instructions}` : ''}
                   </span>
                 </span>
-                <button className="link" onClick={() => props.onEditTemplate(t)}>
-                  Bearbeiten
+                <button className="link" onClick={() => props.onEditTemplate(tpl)}>
+                  {t('common.edit')}
                 </button>
                 <button
                   className="link danger"
                   onClick={() => {
-                    if (confirm(`Vorlage „${t.name}“ löschen?`)) props.onRemoveTemplate(t)
+                    if (confirm(t('settings.confirmDeleteTemplate', { name: tpl.name })))
+                      props.onRemoveTemplate(tpl)
                   }}
                 >
-                  Löschen
+                  {t('common.delete')}
                 </button>
               </div>
             ))}
           </div>
         )}
-        <button onClick={() => props.onEditTemplate(null)}>Neuer vordefinierter Agent …</button>
-        <p className="muted small">
-          Benannte Agents mit eigenem Modell und eigenen Richtlinien. Start über den ▶-Button am
-          Projekt oder per Sprache („Starte einen Entwickler für DevHub, der …“); laufende sprichst
-          du mit ihrem Namen an.
-        </p>
+        <button onClick={() => props.onEditTemplate(null)}>{t('settings.newTemplate')}</button>
+        <p className="muted small">{t('settings.templatesHelp')}</p>
       </section>
 
       <section className="settings-section">
-        <h3>Teams</h3>
+        <h3>{t('common.teams')}</h3>
         {props.teamTemplates.length > 0 && (
           <div className="template-list">
-            {props.teamTemplates.map((t) => (
-              <div key={t.id} className="template-item">
+            {props.teamTemplates.map((team) => (
+              <div key={team.id} className="template-item">
                 <span className="template-info">
-                  <span className="template-name">{t.name}</span>
+                  <span className="template-name">{team.name}</span>
                   <span className="muted">
                     {' · '}
-                    {t.members
+                    {team.members
                       .map(
-                        (m) => props.templates.find((x) => x.id === m.templateId)?.name ?? 'Agent'
+                        (m) =>
+                          props.templates.find((x) => x.id === m.templateId)?.name ??
+                          t('common.agent')
                       )
                       .join(', ')}
                   </span>
                 </span>
-                <button className="link" onClick={() => props.onEditTeam(t)}>
-                  Bearbeiten
+                <button className="link" onClick={() => props.onEditTeam(team)}>
+                  {t('common.edit')}
                 </button>
                 <button
                   className="link danger"
                   onClick={() => {
-                    if (confirm(`Team „${t.name}“ löschen?`)) props.onRemoveTeam(t)
+                    if (confirm(t('settings.confirmDeleteTeam', { name: team.name })))
+                      props.onRemoveTeam(team)
                   }}
                 >
-                  Löschen
+                  {t('common.delete')}
                 </button>
               </div>
             ))}
           </div>
         )}
-        <button onClick={() => props.onEditTeam(null)}>Neues Team …</button>
-        <p className="muted small">
-          Mehrere Agents, die zusammen für ein Projekt starten und sich Nachrichten schicken dürfen.
-          Start über ▶ am Projekt oder per Sprache („Starte das Team Feature für DevHub“). Per
-          Sprache geht auch ein temporäres Team: „Starte einen Entwickler und einen Reviewer als
-          Team für DevHub, …“.
-        </p>
+        <button onClick={() => props.onEditTeam(null)}>{t('settings.newTeam')}</button>
+        <p className="muted small">{t('settings.teamsHelp')}</p>
       </section>
 
       <section className="settings-section">
-        <h3>Dateivorschau</h3>
+        <h3>{t('settings.promptsTitle')}</h3>
+        {props.prompts.length > 0 && (
+          <div className="template-list">
+            {props.prompts.map((p) => (
+              <div key={p.id} className="template-item">
+                <span className="template-info">
+                  <span className="template-name">{p.name}</span>
+                  <span className="muted"> · {p.text}</span>
+                </span>
+                <button className="link" onClick={() => props.onEditPrompt(p)}>
+                  {t('common.edit')}
+                </button>
+                <button
+                  className="link danger"
+                  onClick={() => {
+                    if (confirm(t('settings.confirmDeletePrompt', { name: p.name })))
+                      props.onRemovePrompt(p)
+                  }}
+                >
+                  {t('common.delete')}
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+        <button onClick={() => props.onEditPrompt(null)}>{t('settings.newPrompt')}</button>
+        <p className="muted small">{t('settings.promptsHelp')}</p>
+      </section>
+
+      <section className="settings-section">
+        <h3>{t('settings.enginesTitle')}</h3>
+        {props.engines.length > 0 && (
+          <div className="template-list">
+            {props.engines.map((e) => (
+              <div key={e.id} className="template-item">
+                <span className="template-info">
+                  <span className="template-name">{e.name}</span>
+                  <span className="muted"> · {e.command}</span>
+                </span>
+                <button className="link" onClick={() => props.onEditEngine(e)}>
+                  {t('common.edit')}
+                </button>
+                <button
+                  className="link danger"
+                  onClick={() => {
+                    if (confirm(t('settings.confirmDeleteEngine', { name: e.name })))
+                      props.onRemoveEngine(e)
+                  }}
+                >
+                  {t('common.delete')}
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+        <button onClick={() => props.onEditEngine(null)}>{t('settings.newEngine')}</button>
+        <p className="muted small">{t('settings.enginesHelp')}</p>
+      </section>
+
+      <section className="settings-section">
+        <h3>{t('settings.inboxTitle')}</h3>
+        <label className="checkbox">
+          <input
+            type="checkbox"
+            checked={settings.notifyOnWaiting}
+            onChange={(e) => update({ notifyOnWaiting: e.target.checked })}
+          />
+          {t('settings.notifyOnWaiting')}
+        </label>
+        <label className="checkbox">
+          <input
+            type="checkbox"
+            checked={settings.permissionInbox}
+            onChange={(e) => update({ permissionInbox: e.target.checked })}
+          />
+          {t('settings.permissionInbox')}
+        </label>
+        <small className="muted">{t('settings.permissionInboxHelp')}</small>
+        <label className="checkbox">
+          <input
+            type="checkbox"
+            checked={settings.voiceReadback}
+            onChange={(e) => update({ voiceReadback: e.target.checked })}
+          />
+          {t('settings.voiceReadback')}
+        </label>
+        <small className="muted">{t('settings.voiceReadbackHelp')}</small>
+      </section>
+
+      <section className="settings-section">
+        <h3>{t('settings.usageTitle')}</h3>
+        <div className="form">
+          <NumberSetting
+            label={t('settings.contextWarnLabel')}
+            value={settings.contextWarnTokens}
+            step={10000}
+            help={t('settings.contextWarnHelp')}
+            onSave={(contextWarnTokens) => update({ contextWarnTokens })}
+          />
+          <NumberSetting
+            label={t('settings.priceInputLabel')}
+            value={settings.priceInput}
+            step={0.5}
+            help={t('settings.priceInputHelp')}
+            onSave={(priceInput) => update({ priceInput })}
+          />
+          <NumberSetting
+            label={t('settings.priceOutputLabel')}
+            value={settings.priceOutput}
+            step={0.5}
+            help={t('settings.priceOutputHelp')}
+            onSave={(priceOutput) => update({ priceOutput })}
+          />
+        </div>
+      </section>
+
+      <section className="settings-section">
+        <h3>{t('settings.remoteTitle')}</h3>
+        <RemoteSettings settings={settings} update={update} />
+      </section>
+
+      <section className="settings-section">
+        <h3>{t('settings.filePreviewTitle')}</h3>
         <label className="checkbox">
           <input
             type="checkbox"
             checked={settings.showEditedFiles}
             onChange={(e) => update({ showEditedFiles: e.target.checked })}
           />
-          Vom Agent bearbeitete Dateien rechts als Reiter anzeigen
+          {t('settings.showEditedFiles')}
         </label>
-        <small className="muted">
-          Geänderte Zeilen werden hervorgehoben. Stellen, die ein Agent gezielt zeigt, und Snippets
-          erscheinen unabhängig davon.
-        </small>
+        <small className="muted">{t('settings.showEditedFilesHelp')}</small>
       </section>
 
       <section className="settings-section">
-        <h3>Öffnen mit</h3>
+        <h3>{t('settings.openWithTitle')}</h3>
         <ProgramSetting
-          label="Projektdateien (Pfad 2)"
+          label={t('settings.projectFileAppLabel')}
           value={settings.projectFileApp}
-          placeholder="Windows-Standardprogramm der Dateiendung"
-          help="Pfad zur .exe, z. B. Visual Studio oder Rider. Leer = Programm, das Windows für die Dateiendung verwendet."
+          placeholder={t('settings.projectFileAppPlaceholder')}
+          help={t('settings.projectFileAppHelp')}
           onSave={(projectFileApp) => update({ projectFileApp })}
         />
         <ProgramSetting
-          label="Ordner (Pfad 3)"
+          label={t('settings.folderAppLabel')}
           value={settings.folderApp}
-          placeholder={props.vscodeInstalled ? 'VS Code' : 'Windows-Explorer'}
-          help={`Pfad zur .exe, z. B. VS Code, Cursor oder ein anderer Editor. Leer = ${props.vscodeInstalled ? 'VS Code' : 'Windows-Explorer (VS Code ist nicht installiert)'}.`}
+          placeholder={props.vscodeInstalled ? 'VS Code' : t('settings.windowsExplorer')}
+          help={
+            props.vscodeInstalled
+              ? t('settings.folderAppHelpVscode')
+              : t('settings.folderAppHelpExplorer')
+          }
           onSave={(folderApp) => update({ folderApp })}
         />
-        <small className="muted">Beides ist pro Projekt abweichend einstellbar.</small>
+        <small className="muted">{t('settings.openWithPerProject')}</small>
       </section>
 
       <section className="settings-section">
-        <h3>Sprachmodell</h3>
+        <h3>{t('settings.voiceModelTitle')}</h3>
         <VoiceModels status={voiceStatus} onChanged={props.onVoiceChanged} />
       </section>
 
       <section className="settings-section">
-        <h3>Sprach-Anweisungen</h3>
+        <h3>{t('settings.voiceTitle')}</h3>
         <label className="checkbox">
           <input
             type="checkbox"
             checked={settings.voiceAutoSend}
             onChange={(e) => update({ voiceAutoSend: e.target.checked })}
           />
-          Erkannten Text direkt abschicken (sonst nur ins Terminal eintragen)
+          {t('settings.voiceAutoSend')}
         </label>
-        <small className="muted">
-          Pro Agent abweichend einstellbar: Rechtsklick auf den Agent in der Liste.
-        </small>
+        <small className="muted">{t('settings.voiceAutoSendHelp')}</small>
         <div className="form">
           <label>
-            <span>Gesprochene Sprache</span>
+            <span>{t('settings.spokenLanguageLabel')}</span>
             <select
               value={settings.voiceFixedLanguage ?? ''}
               onChange={(e) => update({ voiceFixedLanguage: e.target.value || null })}
             >
-              <option value="">Automatisch erkennen</option>
+              <option value="">{t('settings.spokenLanguageAuto')}</option>
               {FIXED_LANGUAGES.map((code) => (
                 <option key={code} value={code}>
-                  Immer {languageName(code)}
+                  {t('settings.spokenLanguageAlways', { language: languageName(code) })}
                 </option>
               ))}
             </select>
           </label>
         </div>
         {settings.voiceFixedLanguage ? (
-          <small className="muted">
-            Feste Sprache: am schnellsten und zuverlässigsten. Andere Sprachen werden dann
-            allerdings falsch erkannt bzw. übersetzt.
-          </small>
+          <small className="muted">{t('settings.spokenLanguageFixedHelp')}</small>
         ) : (
           <label className="checkbox">
             <input
@@ -295,28 +565,29 @@ function SettingsDialog(props: Props): React.JSX.Element {
               checked={settings.voiceRememberLanguage}
               onChange={(e) => update({ voiceRememberLanguage: e.target.checked })}
             />
-            Zuletzt erkannte Sprache merken und zuerst verwenden (schnellere Erkennung)
+            {t('settings.voiceRememberLanguage')}
           </label>
         )}
         {!settings.voiceFixedLanguage && settings.voiceRememberLanguage && (
           <small className="muted">
             {canRememberLanguage(settings.voiceLanguage) ? (
               <>
-                Gemerkt: <strong>{languageName(settings.voiceLanguage)}</strong> – wirkt das
-                Ergebnis unsicher, wird die Sprache neu erkannt.{' '}
+                {t('settings.rememberedBefore')}
+                <strong>{languageName(settings.voiceLanguage)}</strong>
+                {t('settings.rememberedAfter')}{' '}
                 <button className="link" onClick={() => update({ voiceLanguage: null })}>
-                  Vergessen
+                  {t('settings.rememberedForget')}
                 </button>
               </>
             ) : (
-              'Noch keine Sprache gemerkt – wird bei der nächsten Aufnahme erkannt. Englisch wird nie gemerkt (whisper würde sonst andere Sprachen ins Englische übersetzen).'
+              t('settings.rememberedNone')
             )}
           </small>
         )}
       </section>
 
       <section className="settings-section">
-        <h3>Tastenkürzel</h3>
+        <h3>{t('settings.hotkeysTitle')}</h3>
         <table className="hotkeys">
           <tbody>
             <tr>
@@ -327,7 +598,7 @@ function SettingsDialog(props: Props): React.JSX.Element {
                   onChange={(hotkeyAgentVoice) => update({ hotkeyAgentVoice })}
                 />
               </td>
-              <td>Sprach-Anweisung an den aktiven Agent (in der App)</td>
+              <td>{t('settings.hotkeyAgentVoice')}</td>
             </tr>
             <tr>
               <td>
@@ -338,7 +609,7 @@ function SettingsDialog(props: Props): React.JSX.Element {
                   onChange={(hotkeyGlobalVoice) => update({ hotkeyGlobalVoice })}
                 />
               </td>
-              <td>Sprachbefehl systemweit: Agent per Name ansprechen oder neuen Agent starten</td>
+              <td>{t('settings.hotkeyGlobalVoice')}</td>
             </tr>
             <tr>
               <td>
@@ -348,23 +619,17 @@ function SettingsDialog(props: Props): React.JSX.Element {
                   onChange={(hotkeyEditor) => update({ hotkeyEditor })}
                 />
               </td>
-              <td>
-                Anweisung für den aktiven Agent in einem Tab schreiben (mit Diktat und Bildern; in
-                der App)
-              </td>
+              <td>{t('settings.hotkeyEditor')}</td>
             </tr>
             <tr>
               <td>
                 <kbd>Esc</kbd>
               </td>
-              <td>Laufende Aufnahme abbrechen</td>
+              <td>{t('settings.hotkeyCancelRecording')}</td>
             </tr>
           </tbody>
         </table>
-        <p className="muted small">
-          Erneutes Drücken des Kürzels beendet die Aufnahme. Zum Ändern auf „Ändern“ klicken und die
-          neue Tastenkombination drücken (mit Strg, Alt oder Win, oder eine F-Taste).
-        </p>
+        <p className="muted small">{t('settings.hotkeysHelp')}</p>
       </section>
     </Modal>
   )

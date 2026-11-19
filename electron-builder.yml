@@ -11,7 +11,8 @@ files:
   - '!{tsconfig.json,tsconfig.node.json,tsconfig.web.json}'
   # Never package the development data folder (caches, whisper model, own state)
   - '!data{,/**}'
-  - '!{dist,build,.claude,scripts,.github}{,/**}'
+  # .devhub = the agents' worktrees (project with worktrees), never package it
+  - '!{dist,build,.claude,scripts,.github,.devhub}{,/**}'
   - '!out/THIRD_PARTY_NOTICES.txt'
   - '!LICENSE'
 asarUnpack:
@@ -28,8 +29,8 @@ win:
     - zip
   artifactName: ${productName}-${version}-win.${ext}
 extraFiles:
-  - from: build/LIESMICH.txt
-    to: LIESMICH.txt
+  - from: build/README.txt
+    to: README.txt
   # DevHub license + license texts of the included libraries (scripts/notices.mjs)
   - from: LICENSE
     to: LICENSE.txt

@@ -4,6 +4,7 @@ import TerminalView from './TerminalView'
 import DictationButton from './DictationButton'
 import { AttachIcon, CloseIcon, EditIcon, LockIcon, SendIcon } from './Icons'
 import { attachmentRefs, attachmentToken, removeAttachment } from '../lib/editorText'
+import { useT } from '../lib/i18n'
 
 interface Props {
   agent: Agent
@@ -18,10 +19,11 @@ interface Props {
 /**
  * Ctrl+G in the agent: tab in the center with the (locked) terminal on the left and a text field on the right.
  * The agent waits until the tab is closed; then claude takes the text as its prompt.
- * Images/files: paste (Ctrl+V), drop (drag & drop) or pick → `@"pfad"` in the text.
+ * Images/files: paste (Ctrl+V), drop (drag & drop) or pick → `@"path"` in the text.
  */
 function EditorTab(props: Props): React.JSX.Element {
   const { agent, draft, onDraftChange } = props
+  const t = useT()
   const textarea = useRef<HTMLTextAreaElement>(null)
   /** Last cursor position (clicking buttons takes focus from the textarea); null = end */
   const caret = useRef<number | null>(null)
@@ -97,19 +99,16 @@ function EditorTab(props: Props): React.JSX.Element {
       <header className="pane-header">
         <span className="title">
           <EditIcon />
-          Anweisung für {agent.name}
+          {t('editor.title', { name: agent.name })}
           {props.projectName && <span className="muted"> · {props.projectName}</span>}
-          <span
-            className="muted editor-lock-note"
-            title="Der Agent wartet, bis dieser Tab geschlossen wird"
-          >
-            <LockIcon size={11} /> Terminal gesperrt
+          <span className="muted editor-lock-note" title={t('editor.terminalLockedTooltip')}>
+            <LockIcon size={11} /> {t('editor.terminalLocked')}
           </span>
         </span>
         <div className="header-actions">
           <button
             className="icon"
-            title="Tab schließen – Text in den Prompt übernehmen, ohne abzuschicken"
+            title={t('editor.closeTooltip')}
             onClick={() => props.onFinish(draft, false)}
           >
             <CloseIcon />
@@ -146,11 +145,7 @@ function EditorTab(props: Props): React.JSX.Element {
                   props.onFinish(draft, true)
                 }
               }}
-              placeholder={
-                ready
-                  ? 'Anweisung eingeben oder diktieren …\n\nBilder: Strg+V, hierher ziehen oder 📎 – sie werden als @"pfad" angehängt.\nStrg+Enter schickt ab.'
-                  : 'Editor wird geöffnet …'
-              }
+              placeholder={ready ? t('editor.placeholder') : t('editor.placeholderOpening')}
               disabled={!ready}
               spellCheck={false}
             />
@@ -175,35 +170,35 @@ function EditorTab(props: Props): React.JSX.Element {
           <div className="editor-actions">
             <button
               className="secondary"
-              title="Bilder oder Dateien anhängen"
+              title={t('editor.attachTooltip')}
               disabled={!ready}
               onClick={pickFiles}
             >
-              <AttachIcon /> Anhängen
+              <AttachIcon /> {t('editor.attach')}
             </button>
             <span className="spacer" />
             <button
               className="secondary"
-              title="Änderungen verwerfen – der Prompt bleibt wie vor Strg+G"
+              title={t('editor.discardTooltip')}
               onClick={() => props.onFinish(null, false)}
             >
-              Verwerfen
+              {t('common.discard')}
             </button>
             <button
               className="secondary"
-              title="Text in den Prompt des Agents übernehmen, ohne abzuschicken"
+              title={t('editor.applyTooltip')}
               disabled={!ready}
               onClick={() => props.onFinish(draft, false)}
             >
-              In Prompt übernehmen
+              {t('editor.applyToPrompt')}
             </button>
             <button
               className="primary"
-              title="Übernehmen und abschicken (Strg+Enter)"
+              title={t('editor.sendTooltip')}
               disabled={!ready || !draft.trim()}
               onClick={() => props.onFinish(draft, true)}
             >
-              <SendIcon /> Abschicken
+              <SendIcon /> {t('common.send')}
             </button>
           </div>
         </section>
@@ -214,6 +209,7 @@ function EditorTab(props: Props): React.JSX.Element {
 
 /** Attached file: thumbnail (for images) + name, removable */
 function Attachment({ path, onRemove }: { path: string; onRemove: () => void }): React.JSX.Element {
+  const t = useT()
   const [preview, setPreview] = useState<string | null>(null)
   useEffect(() => {
     let cancelled = false
@@ -227,7 +223,7 @@ function Attachment({ path, onRemove }: { path: string; onRemove: () => void }):
     <div className="attachment" title={path}>
       {preview ? <img src={preview} alt="" /> : <AttachIcon />}
       <span className="attachment-name">{name}</span>
-      <button className="icon" title="Entfernen" onClick={onRemove}>
+      <button className="icon" title={t('common.remove')} onClick={onRemove}>
         <CloseIcon />
       </button>
     </div>
