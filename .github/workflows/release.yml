@@ -1,0 +1,48 @@
+# Release after merging a PR labelled "release": build the Windows ZIP and publish it as a
+# GitHub release (logic in scripts/release.mjs, manually: npm run release).
+#
+# pull_request_target instead of pull_request: for PRs from forks the token would be read-only.
+# Safe because the job only runs after the merge and builds the merge commit on main –
+# i.e. only code that has already been approved. Never put PR content into run: lines
+# (only via env), otherwise title/description could inject code.
+name: Release
+
+on:
+  pull_request_target:
+    types: [closed]
+    branches: [main]
+
+permissions:
+  contents: write
+  pull-requests: read # release notes: PRs merged since the last release
+
+# Never two releases at once (same version number)
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    if: github.event.pull_request.merged == true && contains(github.event.pull_request.labels.*.name, 'release')
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.merge_commit_sha }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - run: npm ci
+
+      - run: node scripts/release.mjs --ci
+        env:
+          # RELEASE_TOKEN: owner's fine-grained PAT – GitHub Actions can't be added to the
+          # bypass list of the tag ruleset in a personal repo, the owner (repository admin) can
+          GITHUB_TOKEN: ${{ secrets.RELEASE_TOKEN || github.token }}
+          # Reading PRs: the PAT only has Contents permission
+          GITHUB_READ_TOKEN: ${{ github.token }}
+          RELEASE_SHA: ${{ github.event.pull_request.merge_commit_sha }}
+          RELEASE_PR: ${{ github.event.pull_request.number }}
