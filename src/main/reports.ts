@@ -3,6 +3,7 @@ import type { AgentManager } from './agents'
 import { localDay } from './snippets'
 import { getState } from './store'
 import { askClaude } from './voiceCommands'
+import { languageNameInEnglish, t } from '../shared/i18n'
 
 const baseName = (path: string): string => path.split(/[\\/]/).pop() || path
 
@@ -40,12 +41,12 @@ export async function dailyReport(agents: AgentManager, projectId?: string): Pro
       )
     if (lines.length) facts.push(`## Project "${p.name}"`, ...lines, '')
   }
-  if (!facts.length) return 'Heute gibt es noch nichts zu berichten.'
+  if (!facts.length) return t('backend.reportNothingYet')
 
   const prompt = [
     'You write a short daily report for a developer who runs several AI coding agents in DevHub.',
-    'Use ONLY the facts below. Write in German, as Markdown: one "## <project>" section per project with',
-    'the bullet groups "Erledigt", "In Arbeit" and "Offen / wartet auf dich" (omit empty groups).',
+    `Use ONLY the facts below. Write in ${languageNameInEnglish()}, as Markdown: one "## <project>" section per project with`,
+    `the bullet groups "${t('backend.reportDone')}", "${t('backend.reportInProgress')}" and "${t('backend.reportOpen')}" (omit empty groups).`,
     'Be concrete (what was changed, which files/areas), no filler, no invented details. At most 25 lines.',
     '',
     `Date: ${today}`,

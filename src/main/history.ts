@@ -3,6 +3,7 @@ import { readFile, stat } from 'fs/promises'
 import { homedir } from 'os'
 import { join } from 'path'
 import type { SessionMatch } from '../shared/types'
+import { t } from '../shared/i18n'
 
 /** Transcripts live under ~/.claude/projects/<folder>/<sessionId>.jsonl */
 const transcriptsDir = (): string =>
@@ -78,7 +79,7 @@ export async function searchSessions(
         const from = Math.max(0, at - EXCERPT_RADIUS)
         const to = Math.min(text.length, at + needle.length + EXCERPT_RADIUS)
         excerpts.push(
-          `${line.type === 'user' ? 'Du' : s.name}: ${from > 0 ? '…' : ''}${text
+          `${line.type === 'user' ? t('backend.searchYou') : s.name}: ${from > 0 ? '…' : ''}${text
             .slice(from, to)
             .replace(/\s+/g, ' ')}${to < text.length ? '…' : ''}`
         )

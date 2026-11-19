@@ -1,10 +1,16 @@
 import type { AgentUsage, Settings, TokenTotals } from '../../../shared/types'
+import { getLocale, t } from '../../../shared/i18n'
 
-/** 950 → "950", 12 345 → "12k", 1 234 567 → "1,2M" */
+/** 950 → "950", 12 345 → "12k", 1 234 567 → "1.2M" (decimal separator of the current language) */
 export function formatTokens(n: number): string {
   if (n < 1000) return String(Math.round(n))
   if (n < 1_000_000) return `${Math.round(n / 1000)}k`
-  return `${(n / 1_000_000).toFixed(1).replace('.', ',')}M`
+  const millions = (n / 1_000_000).toLocaleString(getLocale(), {
+    minimumFractionDigits: 1,
+    maximumFractionDigits: 1,
+    useGrouping: false
+  })
+  return `${millions}M`
 }
 
 export const zeroTotals = (): TokenTotals => ({ input: 0, output: 0, cacheRead: 0, cacheWrite: 0 })
@@ -24,18 +30,24 @@ export function addTotals(a: TokenTotals, b: TokenTotals | undefined): TokenTota
  * Cache reads count at 10 %, cache writes at 125 % of the input price. null = no prices.
  */
 export function costOf(
-  t: TokenTotals,
+  totals: TokenTotals,
   s: Pick<Settings, 'priceInput' | 'priceOutput'>
 ): number | null {
   if (!s.priceInput && !s.priceOutput) return null
-  const input = t.input + t.cacheRead * 0.1 + t.cacheWrite * 1.25
-  return (input * s.priceInput + t.output * s.priceOutput) / 1_000_000
+  const input = totals.input + totals.cacheRead * 0.1 + totals.cacheWrite * 1.25
+  return (input * s.priceInput + totals.output * s.priceOutput) / 1_000_000
 }
 
+/** "1,23 $" (German) / "$1.23" (English) */
 export const formatCost = (usd: number): string =>
-  `${usd.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} $`
+  t('format.cost', {
+    amount: usd.toLocaleString(getLocale(), {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2
+    })
+  })
 
-/** "Kontext 84k · heute 12k aus" for tooltips */
+/** "Context 84k tokens · total output 12k" for tooltips */
 export function usageLine(
   usage: AgentUsage | undefined,
   s: Pick<Settings, 'priceInput' | 'priceOutput'>
@@ -43,9 +55,12 @@ export function usageLine(
   if (!usage) return ''
   const cost = costOf(usage.total, s)
   return (
-    `Kontext ${formatTokens(usage.context)} Tokens · Ausgabe gesamt ${formatTokens(usage.total.output)}` +
+    t('format.usageSummary', {
+      context: formatTokens(usage.context),
+      output: formatTokens(usage.total.output)
+    }) +
     (cost !== null ? ` · ≈ ${formatCost(cost)}` : '') +
-    (usage.model ? `\nModell: ${usage.model}` : '')
+    (usage.model ? `\n${t('format.usageModel', { model: usage.model })}` : '')
   )
 }
 
@@ -57,10 +72,10 @@ export function localDay(ms: number): string {
 }
 
 export const timeOf = (at: number): string =>
-  new Date(at).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' })
+  new Date(at).toLocaleTimeString(getLocale(), { hour: '2-digit', minute: '2-digit' })
 
 export const dateTimeOf = (at: number): string =>
-  new Date(at).toLocaleString('de-DE', {
+  new Date(at).toLocaleString(getLocale(), {
     day: '2-digit',
     month: '2-digit',
     hour: '2-digit',

@@ -2,6 +2,7 @@ import { useState } from 'react'
 import type { Agent, PromptTemplate } from '../../../shared/types'
 import { fillPlaceholders, placeholdersOf } from '../lib/format'
 import { errorText } from '../lib/errors'
+import { useT } from '../lib/i18n'
 import DictationTextarea from './DictationTextarea'
 import Modal from './Modal'
 
@@ -19,6 +20,7 @@ interface Props {
  * the agent is free, otherwise as soon as it reports done. Also shows the queued instructions.
  */
 function QueueDialog({ agent, prompts, promptId, onClose }: Props): React.JSX.Element {
+  const t = useT()
   const initial = prompts.find((p) => p.id === promptId)
   const [chosen, setChosen] = useState(initial?.id ?? '')
   const [text, setText] = useState(initial?.text ?? '')
@@ -39,18 +41,18 @@ function QueueDialog({ agent, prompts, promptId, onClose }: Props): React.JSX.El
 
   return (
     <Modal
-      title={`Auftrag für ${agent.name}`}
+      title={t('queue.title', { name: agent.name })}
       onClose={onClose}
       width={640}
       footer={
         <>
-          <button onClick={onClose}>Abbrechen</button>
+          <button onClick={onClose}>{t('common.cancel')}</button>
           <button
             className="primary"
             disabled={!text.trim() || names.some((n) => !values[n]?.trim())}
             onClick={send}
           >
-            {busy || queue.length ? 'In die Warteschlange' : 'Abschicken'}
+            {busy || queue.length ? t('queue.enqueue') : t('common.send')}
           </button>
         </>
       }
@@ -58,7 +60,7 @@ function QueueDialog({ agent, prompts, promptId, onClose }: Props): React.JSX.El
       <div className="form">
         {prompts.length > 0 && (
           <label>
-            <span>Aus der Prompt-Bibliothek</span>
+            <span>{t('queue.fromLibrary')}</span>
             <select
               value={chosen}
               onChange={(e) => {
@@ -68,7 +70,7 @@ function QueueDialog({ agent, prompts, promptId, onClose }: Props): React.JSX.El
                 setValues({})
               }}
             >
-              <option value="">– frei schreiben –</option>
+              <option value="">{t('queue.freeText')}</option>
               {prompts.map((p) => (
                 <option key={p.id} value={p.id}>
                   {p.name}
@@ -78,12 +80,12 @@ function QueueDialog({ agent, prompts, promptId, onClose }: Props): React.JSX.El
           </label>
         )}
         <label>
-          <span>Anweisung</span>
+          <span>{t('queue.instructionLabel')}</span>
           <DictationTextarea
             value={text}
             onChange={setText}
             minHeight={120}
-            placeholder="Was soll der Agent als Nächstes tun?"
+            placeholder={t('queue.instructionPlaceholder')}
           />
         </label>
         {names.map((n) => (
@@ -96,16 +98,14 @@ function QueueDialog({ agent, prompts, promptId, onClose }: Props): React.JSX.El
           </label>
         ))}
         <small className="muted">
-          {busy
-            ? `${agent.name} arbeitet gerade – der Auftrag wird abgeschickt, sobald er fertig meldet.`
-            : 'Der Auftrag geht sofort an den Agent, wenn nichts davor wartet.'}
+          {busy ? t('queue.hintBusy', { name: agent.name }) : t('queue.hintFree')}
         </small>
         {error && <p className="error">{error}</p>}
       </div>
 
       {queue.length > 0 && (
         <section className="settings-section">
-          <h3>Wartet bereits</h3>
+          <h3>{t('queue.queuedHeading')}</h3>
           <div className="template-list">
             {queue.map((q, i) => (
               <div key={q.id} className="template-item">
@@ -118,7 +118,7 @@ function QueueDialog({ agent, prompts, promptId, onClose }: Props): React.JSX.El
                     window.api.agents.dequeue(agent.id, q.id).catch((e) => setError(errorText(e)))
                   }
                 >
-                  entfernen
+                  {t('queue.remove')}
                 </button>
               </div>
             ))}

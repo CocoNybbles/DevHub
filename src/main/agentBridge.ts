@@ -341,7 +341,7 @@ export class AgentBridge {
       try {
         this.handlers.onHook(agentId, JSON.parse((await readBody(req)) || '{}'))
       } catch (e) {
-        console.error('[DevHub] Hook-Ereignis ungültig:', e)
+        console.error('[DevHub] invalid hook event:', e)
       }
       return end(res, 204)
     }
@@ -353,7 +353,7 @@ export class AgentBridge {
       try {
         output = await this.handlers.onStop(agentId, JSON.parse((await readBody(req)) || '{}'))
       } catch (e) {
-        console.error('[DevHub] Stop-Hook:', e)
+        console.error('[DevHub] stop hook:', e)
       }
       if (!output || res.writableEnded) return end(res, 200)
       res.writeHead(200, { 'Content-Type': 'application/json' })
@@ -373,7 +373,7 @@ export class AgentBridge {
         const event = JSON.parse((await readBody(req)) || '{}')
         decision = await this.handlers.onPermission(agentId, event, abort.signal)
       } catch (e) {
-        console.error('[DevHub] Rechte-Abfrage:', e)
+        console.error('[DevHub] permission request:', e)
       }
       if (!decision || res.writableEnded) return end(res, 200)
       res.writeHead(200, { 'Content-Type': 'application/json' })
@@ -396,7 +396,7 @@ export class AgentBridge {
       try {
         await this.handlers.onEditor(agentId, filePath)
       } catch (e) {
-        console.error('[DevHub] Editor-Anfrage:', e)
+        console.error('[DevHub] editor request:', e)
       }
       return end(res, 200)
     }

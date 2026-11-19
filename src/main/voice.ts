@@ -14,6 +14,7 @@ import type {
 } from '../shared/types'
 import { dataDir, getState, updateState } from './store'
 import { canRememberLanguage } from '../shared/voiceLanguage'
+import { t } from '../shared/i18n'
 
 /**
  * Speech → text with whisper.cpp (local, offline).
@@ -26,27 +27,35 @@ const ENGINE_URL =
   'https://github.com/ggml-org/whisper.cpp/releases/download/b5454/whisper-bin-x64.zip'
 const MODEL_BASE_URL = 'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/'
 
-const MODELS: Record<WhisperModelId, Omit<WhisperModelInfo, 'installed'> & { file: string }> = {
+/** Label and description are functions: translated when read, not once at import. */
+const MODELS: Record<
+  WhisperModelId,
+  Omit<WhisperModelInfo, 'installed' | 'label' | 'description'> & {
+    file: string
+    label: () => string
+    description: () => string
+  }
+> = {
   base: {
     id: 'base',
-    label: 'Base',
+    label: () => 'Base',
     file: 'ggml-base-q5_1.bin',
     sizeMB: 60,
-    description: 'Sehr schnell, brauchbare Erkennung'
+    description: () => t('voice.modelBaseDescription')
   },
   small: {
     id: 'small',
-    label: 'Small (empfohlen)',
+    label: () => t('voice.modelSmallLabel'),
     file: 'ggml-small-q5_1.bin',
     sizeMB: 190,
-    description: 'Gute Erkennung, auch bei Fachbegriffen'
+    description: () => t('voice.modelSmallDescription')
   },
   'large-v3-turbo': {
     id: 'large-v3-turbo',
-    label: 'Large v3 Turbo',
+    label: () => 'Large v3 Turbo',
     file: 'ggml-large-v3-turbo-q5_0.bin',
     sizeMB: 550,
-    description: 'Sehr gute Erkennung, braucht einen stärkeren Rechner'
+    description: () => t('voice.modelLargeDescription')
   }
 }
 
@@ -58,9 +67,9 @@ const modelPath = (id: WhisperModelId): string =>
 export function voiceStatus(): VoiceStatus {
   const models = Object.values(MODELS).map(({ id, label, sizeMB, description }) => ({
     id,
-    label,
+    label: label(),
     sizeMB,
-    description,
+    description: description(),
     installed: existsSync(modelPath(id))
   }))
   const configured = getState().settings.voiceModel
@@ -79,8 +88,8 @@ export async function downloadVoice(
   model: WhisperModelId,
   onProgress: (p: DownloadProgress) => void
 ): Promise<void> {
-  if (!MODELS[model]) throw new Error('Unbekanntes Modell')
-  if (downloading) throw new Error('Es läuft bereits ein Download')
+  if (!MODELS[model]) throw new Error(t('voice.unknownModel'))
+  if (downloading) throw new Error(t('voice.downloadRunning'))
   downloading = true
   try {
     if (!existsSync(engineExe())) {
@@ -90,7 +99,7 @@ export async function downloadVoice(
       )
       await run('C:\\Windows\\System32\\tar.exe', ['-xf', zip, '-C', engineDir()])
       unlinkSync(zip)
-      if (!existsSync(engineExe())) throw new Error('whisper-cli.exe fehlt im Archiv')
+      if (!existsSync(engineExe())) throw new Error(t('voice.engineMissingInArchive'))
     }
     if (!existsSync(modelPath(model))) {
       await downloadFile(MODEL_BASE_URL + MODELS[model].file, modelPath(model), (r, t) =>
@@ -138,7 +147,7 @@ interface WhisperResult {
  */
 export async function transcribe(wav: ArrayBuffer): Promise<TranscribeResult> {
   const status = voiceStatus()
-  if (!status.activeModel) throw new Error('Sprachsteuerung ist noch nicht eingerichtet')
+  if (!status.activeModel) throw new Error(t('voice.notSetUp'))
   const model = modelPath(status.activeModel)
   const { voiceRememberLanguage, voiceLanguage, voiceFixedLanguage } = getState().settings
 
@@ -156,7 +165,7 @@ export async function transcribe(wav: ArrayBuffer): Promise<TranscribeResult> {
       if (r.text && r.confidence >= MIN_CONFIDENCE) {
         return { text: r.text, language: r.language, remembered: true }
       }
-      debug(`gemerkte Sprache ${voiceLanguage} unsicher (p=${r.confidence.toFixed(2)}) → auto`)
+      debug(`remembered language ${voiceLanguage} uncertain (p=${r.confidence.toFixed(2)}) → auto`)
     }
     const r = await runWhisper(model, file, 'auto')
     sinceAutoDetect = 0
@@ -209,7 +218,7 @@ async function runWhisper(model: string, wav: string, language: string): Promise
     const confidence = tokens.length ? tokens.reduce((n, t) => n + t.p, 0) / tokens.length : 0
     const result = { text, language: json.result?.language ?? '', confidence }
     debug(
-      `whisper -l ${language}: ${Date.now() - t0} ms, Sprache ${result.language}, p=${confidence.toFixed(2)}`
+      `whisper -l ${language}: ${Date.now() - t0} ms, language ${result.language}, p=${confidence.toFixed(2)}`
     )
     return result
   } finally {
@@ -223,7 +232,7 @@ interface WhisperJson {
 }
 
 function debug(msg: string): void {
-  if (process.env.DEVHUB_DEBUG) console.log('[DevHub] Sprache:', msg)
+  if (process.env.DEVHUB_DEBUG) console.log('[DevHub] voice:', msg)
 }
 
 // -----------------------------------------------------------------------------
@@ -263,7 +272,7 @@ async function downloadFile(
   onProgress: (received: number, total: number) => void
 ): Promise<void> {
   const res = await fetch(url)
-  if (!res.ok || !res.body) throw new Error(`Download fehlgeschlagen (${res.status}): ${url}`)
+  if (!res.ok || !res.body) throw new Error(t('voice.downloadFailed', { status: res.status, url }))
   const total = Number(res.headers.get('content-length')) || 0
   const part = dest + '.part'
   const out = createWriteStream(part)
@@ -288,7 +297,7 @@ async function downloadFile(
   }
   if (total && received !== total) {
     rmSync(part, { force: true })
-    throw new Error('Download unvollständig')
+    throw new Error(t('voice.downloadIncomplete'))
   }
   onProgress(received, total)
   renameSync(part, dest)

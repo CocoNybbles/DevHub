@@ -17,6 +17,7 @@ import {
   zeroTotals
 } from '../lib/format'
 import { errorText } from '../lib/errors'
+import { useT } from '../lib/i18n'
 import Modal from './Modal'
 
 interface Props {
@@ -55,13 +56,14 @@ function usageByProject(
  * transcripts (running and ended) and the token usage per project (today / total).
  */
 function HistoryDialog(props: Props): React.JSX.Element {
+  const t = useT()
   const [archive, setArchive] = useState<ArchivedSession[]>([])
   const [query, setQuery] = useState('')
   const [matches, setMatches] = useState<SessionMatch[] | null>(null)
   const [searching, setSearching] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const projectName = (id: string): string =>
-    props.projects.find((p) => p.id === id)?.name ?? '(entferntes Projekt)'
+    props.projects.find((p) => p.id === id)?.name ?? t('history.removedProject')
 
   useEffect(() => {
     window.api.history.list().then(setArchive)
@@ -98,12 +100,13 @@ function HistoryDialog(props: Props): React.JSX.Element {
     [props.agents, archive, today]
   )
 
-  const tokens = (t: TokenTotals): string => {
-    const cost = costOf(t, props.settings)
-    return (
-      `${formatTokens(t.input + t.cacheRead + t.cacheWrite)} ein · ${formatTokens(t.output)} aus` +
-      (cost !== null ? ` · ≈ ${formatCost(cost)}` : '')
-    )
+  const tokens = (totals: TokenTotals): string => {
+    const cost = costOf(totals, props.settings)
+    const input = formatTokens(totals.input + totals.cacheRead + totals.cacheWrite)
+    const output = formatTokens(totals.output)
+    return cost !== null
+      ? t('history.usageWithCost', { input, output, cost: formatCost(cost) })
+      : t('history.usage', { input, output })
   }
 
   const entry = (s: ArchivedSession): React.JSX.Element => (
@@ -113,40 +116,45 @@ function HistoryDialog(props: Props): React.JSX.Element {
           <strong>{s.name}</strong>
           <span className="muted">
             {' '}
-            · {projectName(s.projectId)} · beendet {dateTimeOf(s.endedAt)}
-            {s.worktree && ` · Worktree ${s.worktree.branch}`}
+            {s.worktree
+              ? t('history.entryMetaWorktree', {
+                  project: projectName(s.projectId),
+                  date: dateTimeOf(s.endedAt),
+                  branch: s.worktree.branch
+                })
+              : t('history.entryMeta', {
+                  project: projectName(s.projectId),
+                  date: dateTimeOf(s.endedAt)
+                })}
           </span>
         </div>
-        <div className="history-title">{s.title ?? '(ohne Anweisung)'}</div>
+        <div className="history-title">{s.title ?? t('history.noInstruction')}</div>
       </div>
-      <button onClick={() => resume(s.id, false)} title="Sitzung als Agent weiterführen">
-        Fortsetzen
+      <button onClick={() => resume(s.id, false)} title={t('history.resumeTooltip')}>
+        {t('history.resume')}
       </button>
-      <button
-        onClick={() => resume(s.id, true)}
-        title="Als Kopie weiterführen – der Eintrag bleibt im Verlauf"
-      >
-        Abzweigen
+      <button onClick={() => resume(s.id, true)} title={t('history.forkTooltip')}>
+        {t('history.fork')}
       </button>
       <button
         className="link danger"
-        title="Nur aus dem Verlauf entfernen (das Transkript bleibt auf der Platte)"
+        title={t('history.removeTooltip')}
         onClick={async () => {
           await window.api.history.remove(s.id)
           setArchive(await window.api.history.list())
         }}
       >
-        entfernen
+        {t('history.remove')}
       </button>
     </div>
   )
 
   return (
     <Modal
-      title="Verlauf"
+      title={t('history.title')}
       onClose={props.onClose}
       width={Math.min(900, window.innerWidth - 60)}
-      footer={<button onClick={props.onClose}>Schließen</button>}
+      footer={<button onClick={props.onClose}>{t('common.close')}</button>}
     >
       <div className="path-input">
         <input
@@ -154,10 +162,10 @@ function HistoryDialog(props: Props): React.JSX.Element {
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           onKeyDown={(e) => e.key === 'Enter' && search()}
-          placeholder="In allen Unterhaltungen suchen (laufende und beendete) …"
+          placeholder={t('history.searchPlaceholder')}
         />
         <button onClick={search} disabled={searching || query.trim().length < 2}>
-          {searching ? 'Suche …' : 'Suchen'}
+          {searching ? t('history.searching') : t('history.search')}
         </button>
         {matches && (
           <button
@@ -166,7 +174,7 @@ function HistoryDialog(props: Props): React.JSX.Element {
               setQuery('')
             }}
           >
-            Zurück
+            {t('history.back')}
           </button>
         )}
       </div>
@@ -174,7 +182,7 @@ function HistoryDialog(props: Props): React.JSX.Element {
 
       {matches ? (
         <div className="history-list">
-          {matches.length === 0 && <p className="muted">Keine Treffer.</p>}
+          {matches.length === 0 && <p className="muted">{t('history.noMatches')}</p>}
           {matches.map((m) => {
             const archived = archive.find((x) => x.id === m.archivedId)
             return (
@@ -184,7 +192,9 @@ function HistoryDialog(props: Props): React.JSX.Element {
                     <strong>{m.name}</strong>
                     <span className="muted">
                       {' '}
-                      · {projectName(m.projectId)} · {m.agentId ? 'läuft' : 'beendet'}
+                      {t(m.agentId ? 'history.matchMetaRunning' : 'history.matchMetaEnded', {
+                        project: projectName(m.projectId)
+                      })}
                     </span>
                   </div>
                   {m.excerpts.map((x, i) => (
@@ -200,10 +210,14 @@ function HistoryDialog(props: Props): React.JSX.Element {
                       props.onClose()
                     }}
                   >
-                    Anzeigen
+                    {t('history.show')}
                   </button>
                 ) : (
-                  archived && <button onClick={() => resume(archived.id, false)}>Fortsetzen</button>
+                  archived && (
+                    <button onClick={() => resume(archived.id, false)}>
+                      {t('history.resume')}
+                    </button>
+                  )
                 )}
               </div>
             )
@@ -213,13 +227,13 @@ function HistoryDialog(props: Props): React.JSX.Element {
         <>
           {usage.length > 0 && (
             <section className="settings-section">
-              <h3>Verbrauch</h3>
+              <h3>{t('history.usageHeading')}</h3>
               <table className="usage-table">
                 <thead>
                   <tr>
-                    <th>Projekt</th>
-                    <th>Heute</th>
-                    <th>Gesamt (bekannte Sitzungen)</th>
+                    <th>{t('common.project')}</th>
+                    <th>{t('history.usageToday')}</th>
+                    <th>{t('history.usageTotal')}</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -233,21 +247,14 @@ function HistoryDialog(props: Props): React.JSX.Element {
                 </tbody>
               </table>
               {costOf(zeroTotals(), props.settings) === null && (
-                <small className="muted">
-                  Für eine Kostenschätzung die Preise je Million Tokens in den Einstellungen
-                  eintragen.
-                </small>
+                <small className="muted">{t('history.costHint')}</small>
               )}
             </section>
           )}
           <section className="settings-section">
-            <h3>Beendete Sitzungen</h3>
+            <h3>{t('history.endedHeading')}</h3>
             <div className="history-list">
-              {archive.length === 0 && (
-                <p className="muted">
-                  Noch keine. Beendete Agents erscheinen hier und lassen sich fortsetzen.
-                </p>
-              )}
+              {archive.length === 0 && <p className="muted">{t('history.endedEmpty')}</p>}
               {archive.map(entry)}
             </div>
           </section>

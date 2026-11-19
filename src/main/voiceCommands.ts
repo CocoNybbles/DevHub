@@ -6,6 +6,7 @@ import { getState } from './store'
 import { claudeEnv, resolveClaude } from './tools'
 import { isValidModelName } from '../shared/agentArgs'
 import { routerPrompt } from './voicePrompt'
+import { t } from '../shared/i18n'
 
 /**
  * Global voice command: a headless Claude instance (`claude -p`, existing account)
@@ -35,8 +36,7 @@ export async function runVoiceCommand(
 ): Promise<VoiceCommandResult> {
   const { projects, templates, teamTemplates, prompts } = getState()
   const running = agents.list()
-  if (projects.length === 0)
-    return { kind: 'none', message: 'Es sind noch keine Projekte angelegt.' }
+  if (projects.length === 0) return { kind: 'none', message: t('voice.noProjects') }
 
   const prompt = routerPrompt(
     text,
@@ -57,23 +57,23 @@ export async function runVoiceCommand(
     const saved = decision.promptId ? prompts.find((p) => p.id === decision.promptId) : undefined
     const message = [saved?.text, decision.message?.trim()].filter(Boolean).join('\n\n')
     if (!agent || !message) {
-      return { kind: 'none', message: 'Agent oder Anweisung nicht erkannt.' }
+      return { kind: 'none', message: t('voice.agentOrInstructionNotRecognized') }
     }
     const sent = await agents.sendVoice(agent.id, message)
     return {
       kind: 'sent',
       agentName: agent.name,
-      message: saved ? `Prompt „${saved.name}“` : message,
+      message: saved ? t('voice.savedPrompt', { name: saved.name }) : message,
       sent
     }
   }
 
   if (decision.action === 'start') {
     const project = projects.find((p) => p.id === decision.projectId)
-    if (!project) return { kind: 'none', message: 'Projekt nicht erkannt.' }
+    if (!project) return { kind: 'none', message: t('voice.projectNotRecognized') }
     const model = decision.model?.trim().toLowerCase() || undefined
     if (model && !isValidModelName(model))
-      return { kind: 'none', message: `Modell „${model}“ nicht erkannt.` }
+      return { kind: 'none', message: t('voice.modelNotRecognized', { model }) }
     const template = decision.templateId
       ? templates.find((t) => t.id === decision.templateId)
       : undefined
@@ -91,10 +91,10 @@ export async function runVoiceCommand(
 
   if (decision.action === 'start_team') {
     const project = projects.find((p) => p.id === decision.projectId)
-    if (!project) return { kind: 'none', message: 'Projekt nicht erkannt.' }
+    if (!project) return { kind: 'none', message: t('voice.projectNotRecognized') }
     const model = decision.model?.trim().toLowerCase() || undefined
     if (model && !isValidModelName(model))
-      return { kind: 'none', message: `Modell „${model}“ nicht erkannt.` }
+      return { kind: 'none', message: t('voice.modelNotRecognized', { model }) }
     const teamTemplate = decision.teamTemplateId
       ? teamTemplates.find((t) => t.id === decision.teamTemplateId)
       : undefined
@@ -105,7 +105,7 @@ export async function runVoiceCommand(
           templateId: templates.some((t) => t.id === id) ? id : undefined
         }))
     if (!teamTemplate && (members?.length ?? 0) < 2)
-      return { kind: 'none', message: 'Für ein Team bitte mindestens zwei Agents nennen.' }
+      return { kind: 'none', message: t('voice.teamNeedsTwoAgents') }
     const team = await agents.startTeam(project.id, {
       teamTemplateId: teamTemplate?.id,
       members,
@@ -126,24 +126,24 @@ export async function runVoiceCommand(
     }
   }
 
-  return { kind: 'none', message: decision.reason || 'Befehl nicht verstanden.' }
+  return { kind: 'none', message: decision.reason || t('voice.commandNotUnderstood') }
 }
 
 function parseDecision(raw: string): Decision {
   const start = raw.indexOf('{')
   const end = raw.lastIndexOf('}')
-  if (start < 0 || end <= start) return { action: 'none', reason: 'Keine verwertbare Antwort.' }
+  if (start < 0 || end <= start) return { action: 'none', reason: t('voice.noUsableAnswer') }
   try {
     return JSON.parse(raw.slice(start, end + 1))
   } catch {
-    return { action: 'none', reason: 'Antwort konnte nicht gelesen werden.' }
+    return { action: 'none', reason: t('voice.answerUnreadable') }
   }
 }
 
 /** Calls `claude -p` without tools; the prompt goes via stdin (no quoting needed). */
 export async function askClaude(prompt: string): Promise<string> {
   const claude = await resolveClaude()
-  if (!claude) throw new Error('Claude Code wurde nicht gefunden')
+  if (!claude) throw new Error(t('voice.claudeNotFound'))
 
   const isExe = claude.toLowerCase().endsWith('.exe')
   const args = [
@@ -174,7 +174,7 @@ export async function askClaude(prompt: string): Promise<string> {
     child.on('close', (code) => {
       clearTimeout(timer)
       if (code !== 0)
-        return reject(new Error(`claude -p fehlgeschlagen: ${stderr || stdout}`.trim()))
+        return reject(new Error(t('voice.claudeFailed', { output: stderr || stdout }).trim()))
       try {
         const result = JSON.parse(stdout)
         if (result.is_error) return reject(new Error(String(result.result)))

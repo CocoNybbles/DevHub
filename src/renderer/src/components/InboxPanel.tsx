@@ -7,7 +7,9 @@ import type {
   UserNotice
 } from '../../../shared/types'
 import { isTeamWorker } from '../../../shared/types'
+import { getLocale } from '../../../shared/i18n'
 import { timeOf } from '../lib/format'
+import { useT } from '../lib/i18n'
 import { CloseIcon, SendIcon } from './Icons'
 
 /** Two agents have edited the same file */
@@ -33,6 +35,21 @@ interface Props {
 
 const baseName = (path: string): string => path.split(/[\\/]/).pop() ?? path
 
+/** Renders a translated sentence with the values of its `{placeholders}` in bold */
+function withBold(text: string, values: Record<string, string>): React.ReactNode[] {
+  return text
+    .split(/(\{\w+\})/)
+    .filter(Boolean)
+    .map((part, i) => {
+      const key = /^\{(\w+)\}$/.exec(part)?.[1]
+      return key && Object.hasOwn(values, key) ? <strong key={i}>{values[key]}</strong> : part
+    })
+}
+
+/** "A and B" / "A, B and C" in the current language */
+const listOf = (names: string[]): string =>
+  new Intl.ListFormat(getLocale(), { type: 'conjunction' }).format(names)
+
 /**
  * Inbox at the bottom of the sidebar: everything waiting for the user – permission requests
  * (with decision), waiting agents (finished ones with direct reply), notices from the agents and
@@ -41,7 +58,9 @@ const baseName = (path: string): string => path.split(/[\\/]/).pop() ?? path
 function InboxPanel(props: Props): React.JSX.Element | null {
   const [replies, setReplies] = useState<Record<string, string>>({})
   const [denying, setDenying] = useState<{ id: number; reason: string } | null>(null)
-  const name = (id?: string): string => props.agents.find((a) => a.id === id)?.name ?? 'Agent'
+  const t = useT()
+  const name = (id?: string): string =>
+    props.agents.find((a) => a.id === id)?.name ?? t('common.agent')
   const withPermission = new Set(props.permissions.map((p) => p.agentId))
   const waiting = props.agents.filter(
     (a) => a.status === 'needsInput' && !isTeamWorker(a) && !withPermission.has(a.id)
@@ -60,13 +79,13 @@ function InboxPanel(props: Props): React.JSX.Element | null {
   return (
     <section className="inbox">
       <header className="inbox-header">
-        Eingang <span className="count">{count}</span>
+        {t('inbox.title')} <span className="count">{count}</span>
       </header>
       <div className="inbox-list">
         {props.permissions.map((p) => (
           <div key={`p${p.id}`} className="inbox-item permission">
             <div className="inbox-title" onClick={() => props.onSelectAgent(p.agentId)}>
-              <strong>{name(p.agentId)}</strong> möchte <strong>{p.tool}</strong> ausführen
+              {withBold(t('inbox.permissionRequest'), { agent: name(p.agentId), tool: p.tool })}
             </div>
             <pre className="inbox-code">{p.summary}</pre>
             {denying?.id === p.id ? (
@@ -74,7 +93,7 @@ function InboxPanel(props: Props): React.JSX.Element | null {
                 <input
                   autoFocus
                   value={denying.reason}
-                  placeholder="Begründung / was stattdessen (optional)"
+                  placeholder={t('inbox.denyPlaceholder')}
                   onChange={(e) => setDenying({ id: p.id, reason: e.target.value })}
                   onKeyDown={(e) => {
                     if (e.key === 'Enter') {
@@ -91,29 +110,31 @@ function InboxPanel(props: Props): React.JSX.Element | null {
                     setDenying(null)
                   }}
                 >
-                  Ablehnen
+                  {t('common.deny')}
                 </button>
               </div>
             ) : (
               <div className="inbox-actions">
                 <button className="primary" onClick={() => props.onAnswer(p.id, 'allow')}>
-                  Erlauben
+                  {t('common.allow')}
                 </button>
-                <button onClick={() => setDenying({ id: p.id, reason: '' })}>Ablehnen</button>
+                <button onClick={() => setDenying({ id: p.id, reason: '' })}>
+                  {t('common.deny')}
+                </button>
                 {p.rule && (
                   <button
-                    title={`Regel „${p.rule}“ für dieses Projekt speichern: solche Aufrufe werden künftig ohne Nachfrage erlaubt (Projekt bearbeiten → Freigabe-Regeln)`}
+                    title={t('inbox.alwaysTooltip', { rule: p.rule })}
                     onClick={() => props.onAnswer(p.id, 'always')}
                   >
-                    Immer
+                    {t('common.always')}
                   </button>
                 )}
                 <button
                   className="link"
-                  title="Den normalen Dialog im Terminal des Agents zeigen"
+                  title={t('inbox.inTerminalTooltip')}
                   onClick={() => props.onAnswer(p.id, 'terminal')}
                 >
-                  im Terminal
+                  {t('inbox.inTerminal')}
                 </button>
               </div>
             )}
@@ -123,32 +144,37 @@ function InboxPanel(props: Props): React.JSX.Element | null {
         {waiting.map((a) => {
           // Direct reply only when the agent is done – with an open selection/question,
           // typed text would answer that instead
-          const done = (a.statusMessage ?? '').startsWith('Fertig')
+          // Legacy: agents saved before `turnDone` existed only have the (then German) status text
+          const done = a.turnDone ?? (a.statusMessage ?? '').startsWith('Fertig')
           return (
             <div key={a.id} className="inbox-item">
               <div
                 className="inbox-title"
                 onClick={() => props.onSelectAgent(a.id)}
-                title={a.lastMessage ? `${a.lastMessage}\n\nKlick: Agent zeigen` : 'Agent zeigen'}
+                title={
+                  a.lastMessage
+                    ? `${a.lastMessage}\n\n${t('inbox.clickShowAgent')}`
+                    : t('inbox.showAgent')
+                }
               >
                 <strong>{a.name}</strong>
                 <span className="muted">
                   {' '}
                   · {props.projects.find((p) => p.id === a.projectId)?.name}
                 </span>
-                <div className="inbox-sub">{a.statusMessage || 'Wartet auf Eingabe'}</div>
+                <div className="inbox-sub">{a.statusMessage || t('inbox.waitingForInput')}</div>
               </div>
               {done && (
                 <div className="inbox-reply">
                   <input
                     value={replies[a.id] ?? ''}
-                    placeholder={`Nächste Anweisung an ${a.name}`}
+                    placeholder={t('inbox.replyPlaceholder', { name: a.name })}
                     onChange={(e) => setReplies((r) => ({ ...r, [a.id]: e.target.value }))}
                     onKeyDown={(e) => e.key === 'Enter' && reply(a)}
                   />
                   <button
                     className="icon"
-                    title="Abschicken"
+                    title={t('common.send')}
                     disabled={!replies[a.id]?.trim()}
                     onClick={() => reply(a)}
                   >
@@ -163,12 +189,12 @@ function InboxPanel(props: Props): React.JSX.Element | null {
         {props.conflicts.map((c) => (
           <div key={c.key} className="inbox-item conflict">
             <div className="inbox-title" title={c.filePath}>
-              <strong>{c.agentIds.map(name).join(' und ')}</strong> bearbeiten dieselbe Datei
+              {withBold(t('inbox.conflict'), { agents: listOf(c.agentIds.map(name)) })}
               <div className="inbox-sub">{baseName(c.filePath)}</div>
             </div>
             <button
               className="icon inbox-close"
-              title="Ausblenden"
+              title={t('inbox.dismiss')}
               onClick={() => props.onDismissConflict(c.key)}
             >
               <CloseIcon size={10} />
@@ -187,7 +213,7 @@ function InboxPanel(props: Props): React.JSX.Element | null {
             </div>
             <button
               className="icon inbox-close"
-              title="Ausblenden"
+              title={t('inbox.dismiss')}
               onClick={() => props.onDismissNotice(n.id)}
             >
               <CloseIcon size={10} />

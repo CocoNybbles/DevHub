@@ -1,5 +1,6 @@
 import { exec, spawn } from 'child_process'
 import type { ClaudeAuthState } from '../shared/types'
+import { t } from '../shared/i18n'
 
 /**
  * Runs the Claude CLI via the shell, because on Windows `claude` can be an .exe or an
@@ -32,7 +33,7 @@ export async function checkClaudeAuth(): Promise<ClaudeAuthState> {
     if (!data.loggedIn) return { kind: 'loggedOut' }
 
     if (data.loginExpiresAt && new Date(data.loginExpiresAt).getTime() <= Date.now()) {
-      return { kind: 'loggedOut', reason: 'Die Anmeldung ist abgelaufen.' }
+      return { kind: 'loggedOut', reason: t('main.authExpired') }
     }
     return {
       kind: 'loggedIn',
@@ -44,7 +45,7 @@ export async function checkClaudeAuth(): Promise<ClaudeAuthState> {
     if (status.code !== 0) return { kind: 'loggedOut' }
     return {
       kind: 'error',
-      message: 'Antwort von `claude auth status` konnte nicht gelesen werden.'
+      message: t('main.authStatusUnreadable')
     }
   }
 }

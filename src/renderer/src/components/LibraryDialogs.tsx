@@ -2,6 +2,7 @@ import { useState } from 'react'
 import type { Engine, PromptTemplate } from '../../../shared/types'
 import { placeholdersOf } from '../lib/format'
 import { errorText } from '../lib/errors'
+import { useT } from '../lib/i18n'
 import DictationTextarea from './DictationTextarea'
 import Modal from './Modal'
 
@@ -15,6 +16,7 @@ export function PromptDialog({
   onSaved: () => void
   onClose: () => void
 }): React.JSX.Element {
+  const t = useT()
   const [name, setName] = useState(prompt?.name ?? '')
   const [text, setText] = useState(prompt?.text ?? '')
   const [error, setError] = useState<string | null>(null)
@@ -31,44 +33,42 @@ export function PromptDialog({
 
   return (
     <Modal
-      title={prompt ? 'Prompt bearbeiten' : 'Neuer Prompt'}
+      title={prompt ? t('library.promptTitleEdit') : t('library.promptTitleNew')}
       onClose={onClose}
       width={640}
       footer={
         <>
-          <button onClick={onClose}>Abbrechen</button>
+          <button onClick={onClose}>{t('common.cancel')}</button>
           <button className="primary" disabled={!name.trim() || !text.trim()} onClick={save}>
-            Speichern
+            {t('common.save')}
           </button>
         </>
       }
     >
       <div className="form">
         <label>
-          <span>Name</span>
+          <span>{t('common.name')}</span>
           <input
             autoFocus
             value={name}
             onChange={(e) => setName(e.target.value)}
-            placeholder="z. B. Code-Review"
+            placeholder={t('library.promptNamePlaceholder')}
             maxLength={60}
           />
-          <small className="muted">
-            Unter diesem Namen wählst du ihn aus – auch per Sprache („Agent 2, Prompt Code-Review“).
-          </small>
+          <small className="muted">{t('library.promptNameHelp')}</small>
         </label>
         <label>
-          <span>Anweisung</span>
+          <span>{t('library.promptTextLabel')}</span>
           <DictationTextarea
             value={text}
             onChange={setText}
             minHeight={160}
-            placeholder={'z. B. Prüfe {{Datei}} auf Fehler und schlage Verbesserungen vor.'}
+            placeholder={t('library.promptTextPlaceholder')}
           />
           <small className="muted">
             {names.length
-              ? `Platzhalter, die beim Senden abgefragt werden: ${names.join(', ')}`
-              : 'Platzhalter in doppelten geschweiften Klammern, z. B. {{Datei}}, werden beim Senden abgefragt.'}
+              ? t('library.promptPlaceholdersFound', { names: names.join(', ') })
+              : t('library.promptPlaceholdersHelp')}
           </small>
         </label>
         {error && <p className="error">{error}</p>}
@@ -87,6 +87,7 @@ export function EngineDialog({
   onSaved: () => void
   onClose: () => void
 }): React.JSX.Element {
+  const t = useT()
   const [name, setName] = useState(engine?.name ?? '')
   const [command, setCommand] = useState(engine?.command ?? '')
   const [error, setError] = useState<string | null>(null)
@@ -102,45 +103,40 @@ export function EngineDialog({
 
   return (
     <Modal
-      title={engine ? 'Engine bearbeiten' : 'Neue Engine'}
+      title={engine ? t('library.engineTitleEdit') : t('library.engineTitleNew')}
       onClose={onClose}
       width={560}
       footer={
         <>
-          <button onClick={onClose}>Abbrechen</button>
+          <button onClick={onClose}>{t('common.cancel')}</button>
           <button className="primary" disabled={!name.trim() || !command.trim()} onClick={save}>
-            Speichern
+            {t('common.save')}
           </button>
         </>
       }
     >
       <div className="form">
         <label>
-          <span>Name</span>
+          <span>{t('common.name')}</span>
           <input
             autoFocus
             value={name}
             onChange={(e) => setName(e.target.value)}
-            placeholder="z. B. Codex"
+            placeholder={t('library.engineNamePlaceholder')}
             maxLength={40}
           />
-          <small className="muted">So heißen die gestarteten Agents („Codex“, „Codex 2“ …).</small>
+          <small className="muted">{t('library.engineNameHelp')}</small>
         </label>
         <label>
-          <span>Befehl</span>
+          <span>{t('library.engineCommandLabel')}</span>
           <input
             className="mono"
             value={command}
             onChange={(e) => setCommand(e.target.value)}
-            placeholder="z. B. codex   oder   gemini"
+            placeholder={t('library.engineCommandPlaceholder')}
             spellCheck={false}
           />
-          <small className="muted">
-            Läuft als Terminal-Programm im Agent-Ordner (bzw. Worktree). Ohne Claude-Hooks gibt es
-            für diese Agents keinen genauen Status, keine Datei-Reiter, Prüfungen oder Freigaben –
-            Terminal, Raster, Sprach-Anweisungen, Aufträge und das Prüfen der Änderungen
-            funktionieren.
-          </small>
+          <small className="muted">{t('library.engineCommandHelp')}</small>
         </label>
         {error && <p className="error">{error}</p>}
       </div>

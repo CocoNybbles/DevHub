@@ -2,6 +2,7 @@ import { execFile } from 'child_process'
 import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'fs'
 import { dirname, join, relative, resolve, sep } from 'path'
 import type { AgentWorktree, GitDiff, GitFileChange } from '../shared/types'
+import { t } from '../shared/i18n'
 
 /**
  * Git access for worktrees (one working directory per agent) and for reviewing changes.
@@ -23,13 +24,7 @@ export function git(cwd: string, args: string[]): Promise<string> {
       (err, stdout, stderr) => {
         if (!err) return done(stdout)
         const missing = (err as NodeJS.ErrnoException).code === 'ENOENT'
-        fail(
-          new Error(
-            missing
-              ? 'git wurde nicht gefunden (ist Git installiert und im PATH?)'
-              : (stderr || stdout || err.message).trim()
-          )
-        )
+        fail(new Error(missing ? t('git.gitNotFound') : (stderr || stdout || err.message).trim()))
       }
     )
   })
@@ -105,8 +100,7 @@ export async function createWorktree(
   path: string,
   branch: string
 ): Promise<AgentWorktree> {
-  if (!(await ok(repo, ['rev-parse', '--verify', 'HEAD'])))
-    throw new Error('Das Repository hat noch keinen Commit – Worktrees brauchen einen.')
+  if (!(await ok(repo, ['rev-parse', '--verify', 'HEAD']))) throw new Error(t('git.noCommitYet'))
   const base = await currentRef(repo)
   await excludeDevhubDir(repo)
   mkdirSync(dirname(path), { recursive: true })
@@ -213,7 +207,7 @@ export function insideWorkdir(cwd: string, path: string): string {
   const full = resolve(cwd, path)
   const rel = relative(resolve(cwd), full)
   if (!rel || rel.startsWith('..') || resolve(cwd, rel) !== full || rel.split(sep)[0] === '.git')
-    throw new Error(`Ungültiger Pfad: ${path}`)
+    throw new Error(t('git.invalidPath', { path }))
   return full
 }
 
@@ -250,7 +244,7 @@ export async function discardFile(cwd: string, ref: string, path: string): Promi
 /** Commits the given files (empty = everything); returns git's output. */
 export async function commit(cwd: string, message: string, paths: string[] = []): Promise<string> {
   const text = message.trim()
-  if (!text) throw new Error('Commit-Nachricht fehlt')
+  if (!text) throw new Error(t('git.commitMessageMissing'))
   for (const p of paths) insideWorkdir(cwd, p)
   await git(cwd, ['add', '-A', '--', ...(paths.length ? paths : ['.'])])
   return (await git(cwd, ['commit', '-m', text, ...(paths.length ? ['--', ...paths] : [])])).trim()
@@ -262,9 +256,8 @@ export async function commit(cwd: string, message: string, paths: string[] = [])
  */
 export async function mergeWorktree(wt: AgentWorktree): Promise<string> {
   const state = await worktreeState(wt)
-  if (state.dirty)
-    throw new Error('Im Worktree gibt es noch nicht committete Änderungen – zuerst committen.')
-  if (state.ahead === 0) throw new Error('Der Branch enthält keine neuen Commits.')
+  if (state.dirty) throw new Error(t('git.uncommittedChanges'))
+  if (state.ahead === 0) throw new Error(t('git.noNewCommits'))
   const target = await currentRef(wt.repo)
   try {
     const out = await git(wt.repo, [
@@ -274,11 +267,11 @@ export async function mergeWorktree(wt: AgentWorktree): Promise<string> {
       `Merge ${wt.branch} (DevHub)`,
       wt.branch
     ])
-    return `In „${target}“ zusammengeführt.\n${out.trim()}`
+    return `${t('git.merged', { target })}\n${out.trim()}`
   } catch (e) {
     await git(wt.repo, ['merge', '--abort']).catch(() => {})
     throw new Error(
-      `Zusammenführen in „${target}“ fehlgeschlagen (abgebrochen, nichts geändert):\n${e instanceof Error ? e.message : String(e)}`,
+      `${t('git.mergeFailed', { target })}\n${e instanceof Error ? e.message : String(e)}`,
       { cause: e }
     )
   }

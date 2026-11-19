@@ -59,6 +59,7 @@ const DEFAULT_STATE: PersistedState = {
   engines: [],
   view: null,
   settings: {
+    language: 'system',
     voiceModel: null,
     voiceAutoSend: true,
     hotkeyAgentVoice: DEFAULT_HOTKEYS.agentVoice,
@@ -112,7 +113,7 @@ export function getState(): PersistedState {
       }
     }
   } catch (e) {
-    console.error('[DevHub] Zustand konnte nicht geladen werden:', e)
+    console.error('[DevHub] Could not load the state:', e)
     state = structuredClone(DEFAULT_STATE)
   }
   return state!

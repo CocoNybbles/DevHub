@@ -70,8 +70,12 @@ import {
 import { deleteModel, downloadVoice, transcribe, voiceStatus } from './voice'
 import { runVoiceCommand } from './voiceCommands'
 import { isValidModelName, validateAgentArgs } from '../shared/agentArgs'
+import { applyLanguageSetting, isLanguage, t } from '../shared/i18n'
 
 let mainWindow: BrowserWindow | null = null
+
+// Interface language for all texts created in main (status texts, errors, notifications)
+applyLanguageSetting(getState().settings.language)
 
 // Single instance only: two would restore the same agents (sessions) and write to the same
 // data folder. A second launch brings the existing window to the front instead.
@@ -171,7 +175,7 @@ const agents = new AgentManager({
     if (!getState().settings.voiceReadback || !agent.lastMessage) return
     spokenSummary(agent.name, agent.lastMessage)
       .then((text) => text && send('voice:speak', text))
-      .catch((e) => console.error('[DevHub] Vorlesen:', e))
+      .catch((e) => console.error('[DevHub] Readback:', e))
   },
   onPlan: (plan) => send('code:plan', plan),
   onShowDiff: (id, filePath) => {
@@ -222,7 +226,9 @@ async function reviewTargets(
       all.unshift({
         target: {
           id: 'main',
-          label: `Hauptordner${wt.branch ? ` (${wt.branch})` : ''}`,
+          label: wt.branch
+            ? t('main.reviewMainFolderBranch', { branch: wt.branch })
+            : t('main.reviewMainFolder'),
           cwd: repo,
           isWorktree: false,
           branch: wt.branch || undefined,
@@ -239,7 +245,7 @@ async function reviewTargets(
     all.push({
       target: {
         id: `wt:${wt.branch}`,
-        label: `${agent?.name ?? (archived ? `${archived.name} (beendet)` : basename(wt.path))} · ${wt.branch}`,
+        label: `${agent?.name ?? (archived ? t('main.reviewEndedAgent', { name: archived.name }) : basename(wt.path))} · ${wt.branch}`,
         cwd: wt.path,
         isWorktree: true,
         branch: wt.branch,
@@ -254,7 +260,7 @@ async function reviewTargets(
 
 async function reviewTarget(projectId: string, targetId: string): Promise<ResolvedTarget> {
   const found = (await reviewTargets(projectId)).all.find((t) => t.target.id === targetId)
-  if (!found) throw new Error('Arbeitsverzeichnis nicht gefunden')
+  if (!found) throw new Error(t('main.workdirNotFound'))
   return found
 }
 
@@ -265,8 +271,7 @@ const previews = new Map<string, BrowserWindow>()
 
 function previewUrl(p: Project): string {
   const url = p.previewUrl?.trim()
-  if (!url)
-    throw new Error(`Für „${p.name}“ ist keine Vorschau-Adresse eingetragen (Projekt bearbeiten)`)
+  if (!url) throw new Error(t('main.previewUrlMissing', { name: p.name }))
   return url
 }
 
@@ -284,7 +289,7 @@ function openPreview(projectId: string): BrowserWindow {
     width: 1100,
     height: 800,
     autoHideMenuBar: true,
-    title: `Vorschau · ${p.name}`,
+    title: t('main.previewTitle', { name: p.name }),
     backgroundColor: '#ffffff',
     // Foreign page: sandboxed, without preload/Node
     webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false }
@@ -354,7 +359,7 @@ function createWindow(): void {
   }
 
   mainWindow.webContents.on('render-process-gone', (_, details) => {
-    console.error('[DevHub] Renderer beendet:', details.reason, details.exitCode)
+    console.error('[DevHub] Renderer gone:', details.reason, details.exitCode)
   })
 
   mainWindow.webContents.setWindowOpenHandler((details) => {
@@ -404,7 +409,7 @@ function isSelection(v: unknown): v is NonNullable<Selection> {
 
 function project(id: string): Project {
   const p = getState().projects.find((x) => x.id === id)
-  if (!p) throw new Error('Projekt nicht gefunden')
+  if (!p) throw new Error(t('main.projectNotFound'))
   return p
 }
 
@@ -420,15 +425,15 @@ function registerIpc(): void {
   ipcMain.handle('projects:list', () => getState().projects)
   ipcMain.handle('projects:save', async (_, input: ProjectInput) => {
     const name = input.name?.trim()
-    if (!name) throw new Error('Name fehlt')
+    if (!name) throw new Error(t('main.nameMissing'))
     if (!input.agentPath || !existsSync(input.agentPath))
-      throw new Error('Agent-Pfad existiert nicht')
+      throw new Error(t('main.agentPathMissing'))
     if (input.projectFile && !existsSync(input.projectFile))
-      throw new Error('Projektdatei existiert nicht')
+      throw new Error(t('main.projectFileMissing'))
     if (input.folderPath && !existsSync(input.folderPath))
-      throw new Error('Ordner (Pfad 3) existiert nicht')
+      throw new Error(t('main.folderPathMissing'))
     const argsError = validateAgentArgs(input.agentArgs)
-    if (argsError) throw new Error(`Start-Flags: ${argsError}`)
+    if (argsError) throw new Error(t('main.startFlagsError', { error: argsError }))
     const programError =
       validateProgram(input.projectFileApp?.trim()) ?? validateProgram(input.folderApp?.trim())
     if (programError) throw new Error(programError)
@@ -440,24 +445,23 @@ function registerIpc(): void {
       }))
       .filter((c) => c.name || c.command)
     for (const c of runCommands) {
-      if (!c.name || !c.command)
-        throw new Error('Befehle: Name und Befehl müssen beide ausgefüllt sein')
-      if (/[\r\n]/.test(c.command)) throw new Error(`Befehl „${c.name}“: nur eine Zeile`)
+      if (!c.name || !c.command) throw new Error(t('main.commandsIncomplete'))
+      if (/[\r\n]/.test(c.command)) throw new Error(t('main.commandOneLineNamed', { name: c.name }))
     }
     if (new Set(runCommands.map((c) => c.name.toLowerCase())).size < runCommands.length)
-      throw new Error('Befehle: Namen müssen eindeutig sein')
+      throw new Error(t('main.commandNamesNotUnique'))
     const permissionRules = [
       ...new Set((input.permissionRules ?? []).map((r) => String(r).trim()).filter(Boolean))
     ]
     for (const rule of permissionRules) {
       const ruleError = validateRule(rule)
-      if (ruleError) throw new Error(`Freigabe-Regel „${rule}“: ${ruleError}`)
+      if (ruleError) throw new Error(t('main.permissionRuleError', { rule, error: ruleError }))
     }
     const previewUrl = input.previewUrl?.trim() || undefined
     if (previewUrl && !/^https?:\/\/\S+$/i.test(previewUrl))
-      throw new Error('Vorschau-Adresse muss mit http:// oder https:// beginnen')
+      throw new Error(t('main.previewUrlInvalid'))
     if (input.useWorktrees && !(await repoRoot(input.agentPath)))
-      throw new Error('Worktrees: Der Agent-Ordner liegt in keinem Git-Repository (oder git fehlt)')
+      throw new Error(t('main.worktreesNoRepo'))
 
     const saved: Project = {
       id: input.id ?? randomUUID(),
@@ -499,7 +503,8 @@ function registerIpc(): void {
   ipcMain.handle('projects:openProjectFile', async (_, id: string) => {
     const p = project(id)
     if (!p.projectFile) return
-    if (!existsSync(p.projectFile)) throw new Error(`Projektdatei nicht gefunden: ${p.projectFile}`)
+    if (!existsSync(p.projectFile))
+      throw new Error(t('main.projectFileNotFound', { path: p.projectFile }))
     // Program: project → global → Windows default program for the file extension
     const program = p.projectFileApp || getState().settings.projectFileApp
     if (program) return openWithProgram(program, p.projectFile)
@@ -511,8 +516,8 @@ function registerIpc(): void {
       properties: ['openFile'],
       defaultPath,
       filters: [
-        { name: 'Programme', extensions: ['exe', 'cmd', 'bat'] },
-        { name: 'Alle Dateien', extensions: ['*'] }
+        { name: t('main.filterPrograms'), extensions: ['exe', 'cmd', 'bat'] },
+        { name: t('main.filterAllFiles'), extensions: ['*'] }
       ]
     })
     return r.canceled ? null : r.filePaths[0]
@@ -520,7 +525,7 @@ function registerIpc(): void {
   ipcMain.handle('projects:openFolder', async (_, id: string) => {
     const p = project(id)
     if (!p.folderPath) return
-    if (!existsSync(p.folderPath)) throw new Error(`Ordner nicht gefunden: ${p.folderPath}`)
+    if (!existsSync(p.folderPath)) throw new Error(t('main.folderNotFound', { path: p.folderPath }))
     // Program: project → global → VS Code (if installed) → Windows Explorer
     const program = p.folderApp || getState().settings.folderApp
     if (program) return openWithProgram(program, p.folderPath)
@@ -545,7 +550,7 @@ function registerIpc(): void {
   ipcMain.handle('projects:pickFolders', async () => {
     const last = getState().lastPickDir
     const r = await dialog.showOpenDialog(mainWindow!, {
-      title: 'Ordner mit Projekten auswählen (Strg+Klick für mehrere)',
+      title: t('main.pickFoldersTitle'),
       properties: ['openDirectory', 'multiSelections'],
       defaultPath: last && existsSync(last) ? last : undefined
     })
@@ -580,7 +585,7 @@ function registerIpc(): void {
       defaultPath,
       filters: [
         {
-          name: 'Projektmappen & Projekte',
+          name: t('main.filterSolutions'),
           extensions: [
             'sln',
             'slnx',
@@ -593,7 +598,7 @@ function registerIpc(): void {
             'njsproj'
           ]
         },
-        { name: 'Alle Dateien', extensions: ['*'] }
+        { name: t('main.filterAllFiles'), extensions: ['*'] }
       ]
     })
     return r.canceled ? null : r.filePaths[0]
@@ -603,16 +608,15 @@ function registerIpc(): void {
   ipcMain.handle('templates:list', () => getState().templates)
   ipcMain.handle('templates:save', (_, input: AgentTemplateInput) => {
     const name = input.name?.trim().replace(/\s+/g, ' ')
-    if (!name) throw new Error('Name fehlt')
+    if (!name) throw new Error(t('main.nameMissing'))
     // "Agent 3" or similar collides with the automatically assigned names
-    if (/^agent \d+$/i.test(name)) throw new Error('„Agent N“ ist für normale Agents reserviert')
-    if (/ \d+$/.test(name))
-      throw new Error('Name darf nicht auf eine Zahl enden (wird für „Name 2“, „Name 3“ verwendet)')
+    if (/^agent \d+$/i.test(name)) throw new Error(t('main.agentNameReserved'))
+    if (/ \d+$/.test(name)) throw new Error(t('main.templateNameEndsWithNumber'))
     const others = getState().templates.filter((t) => t.id !== input.id)
     if (others.some((t) => t.name.toLowerCase() === name.toLowerCase()))
-      throw new Error(`Es gibt bereits eine Vorlage „${name}“`)
+      throw new Error(t('main.templateExists', { name }))
     const model = input.model?.trim() || undefined
-    if (model && !isValidModelName(model)) throw new Error(`Ungültiger Modellname: ${model}`)
+    if (model && !isValidModelName(model)) throw new Error(t('main.invalidModelName', { model }))
 
     const saved: AgentTemplate = {
       id: input.id ?? randomUUID(),
@@ -628,11 +632,15 @@ function registerIpc(): void {
     return saved
   })
   ipcMain.handle('templates:remove', (_, id: string) => {
-    const usedBy = getState().teamTemplates.filter((t) =>
-      t.members.some((m) => m.templateId === id)
+    const usedBy = getState().teamTemplates.filter((team) =>
+      team.members.some((m) => m.templateId === id)
     )
     if (usedBy.length)
-      throw new Error(`Wird in Team ${usedBy.map((t) => `„${t.name}“`).join(', ')} verwendet`)
+      throw new Error(
+        t('main.templateUsedInTeams', {
+          teams: usedBy.map((team) => t('main.quoted', { name: team.name })).join(', ')
+        })
+      )
     // Running agents keep their name but start without a template from then on
     updateState((s) => (s.templates = s.templates.filter((t) => t.id !== id)))
   })
@@ -641,20 +649,19 @@ function registerIpc(): void {
   ipcMain.handle('teamTemplates:list', () => getState().teamTemplates)
   ipcMain.handle('teamTemplates:save', (_, input: TeamTemplateInput) => {
     const name = input.name?.trim().replace(/\s+/g, ' ')
-    if (!name) throw new Error('Name fehlt')
-    if (/^team \d+$/i.test(name)) throw new Error('„Team N“ ist für temporäre Teams reserviert')
-    if (/ \d+$/.test(name))
-      throw new Error('Name darf nicht auf eine Zahl enden (wird für „Name 2“ verwendet)')
+    if (!name) throw new Error(t('main.nameMissing'))
+    if (/^team \d+$/i.test(name)) throw new Error(t('main.teamNameReserved'))
+    if (/ \d+$/.test(name)) throw new Error(t('main.teamNameEndsWithNumber'))
     const others = getState().teamTemplates.filter((t) => t.id !== input.id)
     if (others.some((t) => t.name.toLowerCase() === name.toLowerCase()))
-      throw new Error(`Es gibt bereits ein Team „${name}“`)
+      throw new Error(t('main.teamExists', { name }))
     const templates = getState().templates
     const members = (input.members ?? []).map((m) => ({
       templateId:
         m.templateId && templates.some((t) => t.id === m.templateId) ? m.templateId : undefined
     }))
-    if (members.length < 2) throw new Error('Ein Team braucht mindestens zwei Mitglieder')
-    if (members.length > 8) throw new Error('Höchstens 8 Mitglieder')
+    if (members.length < 2) throw new Error(t('main.teamTooFewMembers'))
+    if (members.length > 8) throw new Error(t('main.teamTooManyMembers'))
 
     const saved: TeamTemplate = {
       id: input.id ?? randomUUID(),
@@ -698,7 +705,7 @@ function registerIpc(): void {
   ipcMain.handle('inbox:permissions', () => agents.userPermissions())
   ipcMain.handle('inbox:answer', (_, id: number, answer: PermissionAnswer, message?: string) => {
     if (!['allow', 'deny', 'always', 'terminal'].includes(answer))
-      throw new Error('Ungültige Antwort')
+      throw new Error(t('main.invalidAnswer'))
     agents.answerUserPermission(Number(id), answer, message)
   })
 
@@ -709,7 +716,7 @@ function registerIpc(): void {
   )
   ipcMain.handle('tasks:remove', (_, id: string) => agents.removeTask(id))
   ipcMain.handle('tasks:setStatus', (_, id: string, status: TaskStatus) => {
-    if (!['open', 'running', 'done'].includes(status)) throw new Error('Ungültiger Status')
+    if (!['open', 'running', 'done'].includes(status)) throw new Error(t('main.invalidStatus'))
     agents.updateTask(
       id,
       status === 'open' ? { status, agentId: undefined, agentName: undefined } : { status }
@@ -785,15 +792,15 @@ function registerIpc(): void {
   )
   ipcMain.handle('git:merge', async (_, projectId: string, targetId: string) => {
     const { worktree } = await reviewTarget(projectId, targetId)
-    if (!worktree) throw new Error('Nur Worktrees lassen sich zusammenführen')
+    if (!worktree) throw new Error(t('main.mergeOnlyWorktrees'))
     return mergeWorktree(worktree)
   })
   ipcMain.handle(
     'git:removeWorktree',
     async (_, projectId: string, targetId: string, force?: boolean) => {
       const { target, worktree } = await reviewTarget(projectId, targetId)
-      if (!worktree) throw new Error('Der Hauptordner kann nicht entfernt werden')
-      if (target.agentId) throw new Error('In diesem Worktree läuft noch ein Agent – erst beenden')
+      if (!worktree) throw new Error(t('main.mainFolderNotRemovable'))
+      if (target.agentId) throw new Error(t('main.worktreeAgentRunning'))
       await removeWorktree(worktree, force === true)
     }
   )
@@ -829,11 +836,11 @@ function registerIpc(): void {
   ipcMain.handle('prompts:save', (_, input: PromptTemplateInput) => {
     const name = input.name?.trim().replace(/\s+/g, ' ')
     const text = input.text?.trim()
-    if (!name) throw new Error('Name fehlt')
-    if (!text) throw new Error('Text fehlt')
+    if (!name) throw new Error(t('main.nameMissing'))
+    if (!text) throw new Error(t('main.textMissing'))
     const others = getState().prompts.filter((p) => p.id !== input.id)
     if (others.some((p) => p.name.toLowerCase() === name.toLowerCase()))
-      throw new Error(`Es gibt bereits einen Prompt „${name}“`)
+      throw new Error(t('main.promptExists', { name }))
     const saved: PromptTemplate = { id: input.id ?? randomUUID(), name, text }
     updateState((s) => {
       const i = s.prompts.findIndex((p) => p.id === saved.id)
@@ -851,14 +858,14 @@ function registerIpc(): void {
   ipcMain.handle('engines:save', (_, input: EngineInput) => {
     const name = input.name?.trim().replace(/\s+/g, ' ')
     const command = input.command?.trim()
-    if (!name) throw new Error('Name fehlt')
-    if (/^agent \d+$/i.test(name)) throw new Error('„Agent N“ ist für normale Agents reserviert')
-    if (/ \d+$/.test(name)) throw new Error('Name darf nicht auf eine Zahl enden')
-    if (!command) throw new Error('Befehl fehlt')
-    if (/[\r\n]/.test(command)) throw new Error('Befehl: nur eine Zeile')
+    if (!name) throw new Error(t('main.nameMissing'))
+    if (/^agent \d+$/i.test(name)) throw new Error(t('main.agentNameReserved'))
+    if (/ \d+$/.test(name)) throw new Error(t('main.nameEndsWithNumber'))
+    if (!command) throw new Error(t('main.commandMissing'))
+    if (/[\r\n]/.test(command)) throw new Error(t('main.commandOneLine'))
     const taken = [...getState().engines.filter((e) => e.id !== input.id), ...getState().templates]
     if (taken.some((e) => e.name.toLowerCase() === name.toLowerCase()))
-      throw new Error(`Der Name „${name}“ ist schon vergeben (Engine oder vordefinierter Agent)`)
+      throw new Error(t('main.engineNameTaken', { name }))
     const saved: Engine = { id: input.id ?? randomUUID(), name, command }
     updateState((s) => {
       const i = s.engines.findIndex((e) => e.id === saved.id)
@@ -868,8 +875,7 @@ function registerIpc(): void {
     return saved
   })
   ipcMain.handle('engines:remove', (_, id: string) => {
-    if (agents.list().some((a) => a.engineId === id))
-      throw new Error('Mit dieser Engine läuft noch ein Agent')
+    if (agents.list().some((a) => a.engineId === id)) throw new Error(t('main.engineInUse'))
     updateState((s) => (s.engines = s.engines.filter((e) => e.id !== id)))
   })
 
@@ -895,7 +901,7 @@ function registerIpc(): void {
   // --- Code view ---
   ipcMain.handle('code:readFile', (_, path: string) => {
     try {
-      if (statSync(path).size > 5_000_000) return { ok: false, error: 'Datei ist zu groß (> 5 MB)' }
+      if (statSync(path).size > 5_000_000) return { ok: false, error: t('main.fileTooLarge') }
       return { ok: true, content: readFileSync(path, 'utf8') }
     } catch (e) {
       return { ok: false, error: String(e) }
@@ -921,11 +927,11 @@ function registerIpc(): void {
   )
   ipcMain.handle('editor:pickFiles', async () => {
     const r = await dialog.showOpenDialog(mainWindow!, {
-      title: 'Bilder oder Dateien anhängen',
+      title: t('main.pickFilesTitle'),
       properties: ['openFile', 'multiSelections'],
       filters: [
-        { name: 'Bilder', extensions: Object.keys(IMAGE_TYPES) },
-        { name: 'Alle Dateien', extensions: ['*'] }
+        { name: t('main.filterImages'), extensions: Object.keys(IMAGE_TYPES) },
+        { name: t('main.filterAllFiles'), extensions: ['*'] }
       ]
     })
     return r.canceled ? [] : r.filePaths
@@ -955,9 +961,13 @@ function registerIpc(): void {
         result.kind === 'sent'
           ? `→ ${result.agentName}: ${result.message}`
           : result.kind === 'started'
-            ? `${result.agentName} gestartet (${result.projectName})`
+            ? t('main.voiceAgentStarted', { agent: result.agentName, project: result.projectName })
             : result.kind === 'teamStarted'
-              ? `Team ${result.teamName} gestartet (${result.projectName}): ${result.agentNames.join(', ')}`
+              ? t('main.voiceTeamStarted', {
+                  team: result.teamName,
+                  project: result.projectName,
+                  agents: result.agentNames.join(', ')
+                })
               : result.message
       new Notification({ title: 'DevHub', body }).show()
     }
@@ -979,9 +989,10 @@ function registerIpc(): void {
     const current = getState().settings
     const next = { ...current, ...patch }
     if (patch.voiceRememberLanguage === false) next.voiceLanguage = null // turning off = forget
+    if (next.language !== 'system' && !isLanguage(next.language)) next.language = 'system'
     if (patch.agentArgs !== undefined) {
       const argsError = validateAgentArgs(patch.agentArgs)
-      if (argsError) throw new Error(`Start-Flags: ${argsError}`)
+      if (argsError) throw new Error(t('main.startFlagsError', { error: argsError }))
       next.agentArgs = patch.agentArgs.trim()
     }
     if (patch.projectFileApp !== undefined) {
@@ -1000,34 +1011,33 @@ function registerIpc(): void {
       patch.hotkeyEditor !== undefined
     ) {
       const keys = [next.hotkeyAgentVoice, next.hotkeyGlobalVoice, next.hotkeyEditor]
-      if (keys.some((k) => !k)) throw new Error('Kürzel fehlt')
+      if (keys.some((k) => !k)) throw new Error(t('main.hotkeyMissing'))
       if (new Set(keys.map((k) => k.toLowerCase())).size < keys.length)
-        throw new Error('Dieses Kürzel ist schon für eine andere Aktion vergeben')
+        throw new Error(t('main.hotkeyDuplicate'))
     }
     if (next.hotkeyGlobalVoice !== current.hotkeyGlobalVoice) {
       if (!registerGlobalHotkey(next.hotkeyGlobalVoice)) {
         registerGlobalHotkey(current.hotkeyGlobalVoice)
-        throw new Error(
-          `Das Kürzel ${next.hotkeyGlobalVoice} ist ungültig oder von einer anderen Anwendung belegt`
-        )
+        throw new Error(t('main.hotkeyUnavailable', { hotkey: next.hotkeyGlobalVoice }))
       }
     }
     const number = (v: unknown, min: number, max: number, label: string): number => {
       const n = Number(v)
       if (!Number.isFinite(n) || n < min || n > max)
-        throw new Error(`${label}: Wert zwischen ${min} und ${max} erwartet`)
+        throw new Error(t('main.numberOutOfRange', { label, min, max }))
       return n
     }
     next.contextWarnTokens = Math.round(
-      number(next.contextWarnTokens, 0, 5_000_000, 'Kontext-Warnung')
+      number(next.contextWarnTokens, 0, 5_000_000, t('main.labelContextWarning'))
     )
-    next.priceInput = number(next.priceInput, 0, 10_000, 'Preis Eingabe')
-    next.priceOutput = number(next.priceOutput, 0, 10_000, 'Preis Ausgabe')
-    next.remotePort = Math.round(number(next.remotePort, 1024, 65535, 'Port'))
+    next.priceInput = number(next.priceInput, 0, 10_000, t('main.labelPriceInput'))
+    next.priceOutput = number(next.priceOutput, 0, 10_000, t('main.labelPriceOutput'))
+    next.remotePort = Math.round(number(next.remotePort, 1024, 65535, t('main.labelPort')))
     // The secret part of the address is created when first switched on; clearing it = regenerate (old links expire)
     if (next.remoteEnabled && !next.remoteToken)
       next.remoteToken = randomBytes(18).toString('base64url')
     updateState((s) => (s.settings = next))
+    applyLanguageSetting(next.language)
     remote.apply(next)
     return getState().settings
   })
@@ -1057,7 +1067,7 @@ app.whenReady().then(async () => {
   // System-wide hotkey for global voice commands (configurable)
   const hotkey = getState().settings.hotkeyGlobalVoice
   if (!registerGlobalHotkey(hotkey)) {
-    console.warn(`[DevHub] Globaler Hotkey ${hotkey} ist ungültig oder bereits belegt.`)
+    console.warn(`[DevHub] Global hotkey ${hotkey} is invalid or already taken.`)
   }
 })
 

@@ -2,6 +2,7 @@
  * A project's permission rules and short descriptions of tool calls.
  * Rule = `Tool` (e.g. `Edit`, `mcp__server__tool`) or `Bash:<command prefix>` (e.g. `Bash:npm test`).
  */
+import { t } from './i18n'
 
 type Input = Record<string, unknown> | undefined
 
@@ -16,7 +17,7 @@ const short = (text: string, max: number): string =>
  */
 const COMPOUND = /[;&|<>`\n\r]|\$\(/
 
-/** Rule that "Immer erlauben" (always allow) saves for this call */
+/** Rule that "Always allow" saves for this call */
 export function ruleFor(tool: string, input: Input): string {
   if (tool !== 'Bash') return tool
   const command = str(input?.command).trim()
@@ -41,14 +42,14 @@ export function matchesRule(rule: string, tool: string, input: Input): boolean {
 /** Error message or null */
 export function validateRule(rule: string): string | null {
   const r = rule.trim()
-  if (!r) return 'Regel ist leer'
+  if (!r) return t('shared.ruleEmpty')
   if (r.toLowerCase().startsWith('bash:')) {
     const prefix = r.slice(5).trim()
-    if (!prefix) return 'Nach „Bash:“ fehlt der Befehlsanfang'
-    if (COMPOUND.test(prefix)) return 'Befehlsanfang darf keine Verkettung/Umleitung enthalten'
+    if (!prefix) return t('shared.ruleBashPrefixMissing')
+    if (COMPOUND.test(prefix)) return t('shared.ruleCompound')
     return null
   }
-  return /^[\w.-]+$/.test(r) ? null : `Ungültiger Tool-Name: ${r}`
+  return /^[\w.-]+$/.test(r) ? null : t('shared.ruleInvalidToolName', { name: r })
 }
 
 /** What a tool call does, in one line for the activity display */
@@ -56,31 +57,33 @@ export function describeTool(tool: string, input: Input): string {
   const file = baseName(str(input?.file_path) || str(input?.path) || str(input?.notebook_path))
   switch (tool) {
     case 'Read':
-      return `Liest ${file}`
+      return t('shared.toolRead', { file })
     case 'Edit':
     case 'MultiEdit':
     case 'NotebookEdit':
-      return `Bearbeitet ${file}`
+      return t('shared.toolEdit', { file })
     case 'Write':
-      return `Schreibt ${file}`
+      return t('shared.toolWrite', { file })
     case 'Bash':
     case 'PowerShell':
       return `$ ${short(str(input?.command).replace(/\s+/g, ' '), 90)}`
     case 'Grep':
-      return `Sucht „${short(str(input?.pattern), 50)}“`
+      return t('shared.toolGrep', { pattern: short(str(input?.pattern), 50) })
     case 'Glob':
-      return `Sucht Dateien ${short(str(input?.pattern), 50)}`
+      return t('shared.toolGlob', { pattern: short(str(input?.pattern), 50) })
     case 'Task':
     case 'Agent':
-      return `Subagent: ${short(str(input?.description) || str(input?.prompt), 70)}`
+      return t('shared.toolSubagent', {
+        text: short(str(input?.description) || str(input?.prompt), 70)
+      })
     case 'WebFetch':
-      return `Lädt ${short(str(input?.url), 70)}`
+      return t('shared.toolWebFetch', { url: short(str(input?.url), 70) })
     case 'WebSearch':
-      return `Websuche: ${short(str(input?.query), 60)}`
+      return t('shared.toolWebSearch', { query: short(str(input?.query), 60) })
     case 'TodoWrite':
-      return 'Aktualisiert die Aufgabenliste'
+      return t('shared.toolTodoWrite')
     case 'AskUserQuestion':
-      return 'Stellt eine Frage'
+      return t('shared.toolAskUser')
   }
   const mcp = /^mcp__(.+?)__(.+)$/.exec(tool)
   return mcp ? `${mcp[2]} (${mcp[1]})` : tool

@@ -1,6 +1,7 @@
 import { ChildProcess, execFile, spawn } from 'child_process'
 import { existsSync } from 'fs'
 import type { Project, RunInfo } from '../shared/types'
+import { t } from '../shared/i18n'
 
 /** Keep at most this much output per command (the end) */
 const MAX_OUTPUT = 300_000
@@ -47,8 +48,9 @@ export class RunManager {
     const cmd = (project.runCommands ?? []).find(
       (c) => c.name.trim().toLowerCase() === name.trim().toLowerCase()
     )
-    if (!cmd) throw new Error(`Befehl „${name}“ ist für ${project.name} nicht eingerichtet`)
-    if (!existsSync(project.agentPath)) throw new Error(`Ordner fehlt: ${project.agentPath}`)
+    if (!cmd) throw new Error(t('backend.commandNotConfigured', { name, project: project.name }))
+    if (!existsSync(project.agentPath))
+      throw new Error(t('backend.folderMissing', { path: project.agentPath }))
     const key = this.key(project.id, cmd.name)
     if (this.runs.get(key)?.info.running) return
 
@@ -86,8 +88,8 @@ export class RunManager {
       if (note) add(Buffer.from(note))
       this.events.onChanged(project.id)
     }
-    proc.on('error', (e) => finish(null, `\n[DevHub] Start fehlgeschlagen: ${e.message}\n`))
-    proc.on('close', (code) => finish(code, `\n[DevHub] beendet mit Code ${code ?? '?'}\n`))
+    proc.on('error', (e) => finish(null, `\n[DevHub] failed to start: ${e.message}\n`))
+    proc.on('close', (code) => finish(code, `\n[DevHub] exited with code ${code ?? '?'}\n`))
     this.events.onChanged(project.id)
   }
 

@@ -2,6 +2,8 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { Agent, GitFileChange, Project, ReviewInfo, ReviewTarget } from '../../../shared/types'
 import { languageForPath, monaco } from '../lib/monaco'
 import { errorText } from '../lib/errors'
+import { useT } from '../lib/i18n'
+import type { TranslationKey } from '../../../shared/i18n'
 import Modal from './Modal'
 
 interface Props {
@@ -26,11 +28,12 @@ const KIND_LABEL: Record<GitFileChange['kind'], string> = {
   deleted: 'D',
   untracked: 'N'
 }
-const KIND_TITLE: Record<GitFileChange['kind'], string> = {
-  modified: 'geändert',
-  added: 'hinzugefügt',
-  deleted: 'gelöscht',
-  untracked: 'neu (noch nicht in Git)'
+/** Translation keys (translated where they are rendered) */
+const KIND_TITLE: Record<GitFileChange['kind'], TranslationKey> = {
+  modified: 'review.kindModified',
+  added: 'review.kindAdded',
+  deleted: 'review.kindDeleted',
+  untracked: 'review.kindUntracked'
 }
 
 /**
@@ -39,6 +42,7 @@ const KIND_TITLE: Record<GitFileChange['kind'], string> = {
  * changes), discard, commit, merge the worktree, comments to the agent.
  */
 function ReviewDialog({ project, agents, agentId, filePath, onClose }: Props): React.JSX.Element {
+  const t = useT()
   const [info, setInfo] = useState<ReviewInfo | null>(null)
   const [targetId, setTargetId] = useState<string | null>(null)
   const [changes, setChanges] = useState<GitFileChange[]>([])
@@ -56,7 +60,7 @@ function ReviewDialog({ project, agents, agentId, filePath, onClose }: Props): R
   /** File to select the next time the list is loaded (from `show_diff`) */
   const wantedFile = useRef(filePath)
 
-  const target: ReviewTarget | undefined = info?.targets.find((t) => t.id === targetId)
+  const target: ReviewTarget | undefined = info?.targets.find((x) => x.id === targetId)
   const targetAgent = agents.find((a) => a.id === target?.agentId)
   const fail = (e: unknown): void => setNote({ text: errorText(e), error: true })
 
@@ -79,7 +83,7 @@ function ReviewDialog({ project, agents, agentId, filePath, onClose }: Props): R
       const next = await window.api.git.targets(project.id)
       setInfo(next)
       return (
-        next.targets.find((t) => preferAgent && t.agentId === preferAgent) ??
+        next.targets.find((x) => preferAgent && x.agentId === preferAgent) ??
         next.targets[0] ??
         null
       )
@@ -95,7 +99,7 @@ function ReviewDialog({ project, agents, agentId, filePath, onClose }: Props): R
       .then(async (next) => {
         if (cancelled) return
         setInfo(next)
-        const first = next.targets.find((t) => agentId && t.agentId === agentId) ?? next.targets[0]
+        const first = next.targets.find((x) => agentId && x.agentId === agentId) ?? next.targets[0]
         if (!first) return
         setTargetId(first.id)
         await loadChanges(first.id)
@@ -182,7 +186,7 @@ function ReviewDialog({ project, agents, agentId, filePath, onClose }: Props): R
       if (reloadTargets) {
         const first = await loadTargets()
         const still = (await window.api.git.targets(project.id)).targets.some(
-          (t) => t.id === targetId
+          (x) => x.id === targetId
         )
         const next = still ? targetId : (first?.id ?? null)
         setTargetId(next)
@@ -197,7 +201,7 @@ function ReviewDialog({ project, agents, agentId, filePath, onClose }: Props): R
   }
 
   const switchTarget = (id: string): void => {
-    if (dirty && !confirm('Ungespeicherte Änderungen an der Datei verwerfen?')) return
+    if (dirty && !confirm(t('review.confirmDiscardUnsaved'))) return
     setTargetId(id)
     setSelected(null)
     setComments([])
@@ -206,7 +210,7 @@ function ReviewDialog({ project, agents, agentId, filePath, onClose }: Props): R
 
   const selectFile = (path: string): void => {
     if (path === selected) return
-    if (dirty && !confirm('Ungespeicherte Änderungen an der Datei verwerfen?')) return
+    if (dirty && !confirm(t('review.confirmDiscardUnsaved'))) return
     setSelected(path)
   }
 
@@ -233,15 +237,16 @@ function ReviewDialog({ project, agents, agentId, filePath, onClose }: Props): R
 
   const sendComments = async (): Promise<void> => {
     if (!targetAgent || !comments.length) return
+    // Goes to the agent → fixed English, not translated
     const text =
-      'Review-Kommentare zu deinen Änderungen – bitte umsetzen: ' +
+      'Review comments on your changes – please address them: ' +
       comments
         .map((c, i) => `(${i + 1}) ${c.path}${c.lines ? `:${c.lines}` : ''} – ${c.text}`)
         .join(' ')
     try {
       await window.api.agents.enqueue(targetAgent.id, text)
       setComments([])
-      setNote({ text: `Kommentare an ${targetAgent.name} geschickt.` })
+      setNote({ text: t('review.commentsSent', { name: targetAgent.name }) })
     } catch (e) {
       fail(e)
     }
@@ -252,66 +257,58 @@ function ReviewDialog({ project, agents, agentId, filePath, onClose }: Props): R
 
   return (
     <Modal
-      title={`Änderungen prüfen · ${project.name}`}
+      title={t('review.title', { project: project.name })}
       onClose={onClose}
       width={width}
-      footer={<button onClick={onClose}>Schließen</button>}
+      footer={<button onClick={onClose}>{t('common.close')}</button>}
     >
       {info && !info.isRepo ? (
-        <p className="muted">
-          {info.error ??
-            'Der Agent-Ordner dieses Projekts liegt in keinem Git-Repository – ohne Git gibt es keinen Vergleich.'}
-        </p>
+        <p className="muted">{info.error ?? t('review.noRepo')}</p>
       ) : (
         <div className="review">
           <div className="review-bar">
             <select
               value={targetId ?? ''}
               onChange={(e) => switchTarget(e.target.value)}
-              title="Arbeitsverzeichnis: Hauptordner oder Worktree eines Agents"
+              title={t('review.targetTooltip')}
             >
-              {info?.targets.map((t) => (
-                <option key={t.id} value={t.id}>
-                  {t.label}
+              {info?.targets.map((x) => (
+                <option key={x.id} value={x.id}>
+                  {x.label}
                 </option>
               ))}
             </select>
             <button disabled={busy || !targetId} onClick={() => run(async () => {})}>
-              Aktualisieren
+              {t('review.refresh')}
             </button>
             <span className="muted review-hint">
               {target?.isWorktree
-                ? `Vergleich mit der Abzweigung von „${target.base}“ (inkl. Commits des Agents)`
-                : 'Vergleich mit dem letzten Commit'}
+                ? t('review.comparedToFork', { base: target.base ?? '' })
+                : t('review.comparedToHead')}
             </span>
             {target?.isWorktree && (
               <>
                 <button
                   disabled={busy}
-                  title="Branch des Worktrees in den Branch zusammenführen, der im Hauptordner ausgecheckt ist"
+                  title={t('review.mergeTooltip')}
                   onClick={() => run(() => window.api.git.merge(project.id, targetId!))}
                 >
-                  Zusammenführen
+                  {t('review.merge')}
                 </button>
                 <button
                   className="danger"
                   disabled={busy || !!target.agentId}
                   title={
                     target.agentId
-                      ? 'Solange der Agent läuft, bleibt sein Worktree bestehen'
-                      : 'Worktree und Branch löschen'
+                      ? t('review.removeWorktreeRunningTooltip')
+                      : t('review.removeWorktreeTooltip')
                   }
                   onClick={() => {
-                    if (
-                      !confirm(
-                        `Worktree „${target.label}“ samt Branch löschen?\nNicht zusammengeführte Änderungen gehen verloren.`
-                      )
-                    )
-                      return
+                    if (!confirm(t('review.confirmRemoveWorktree', { label: target.label }))) return
                     run(() => window.api.git.removeWorktree(project.id, targetId!, true), true)
                   }}
                 >
-                  Worktree löschen
+                  {t('review.removeWorktree')}
                 </button>
               </>
             )}
@@ -319,12 +316,14 @@ function ReviewDialog({ project, agents, agentId, filePath, onClose }: Props): R
 
           <div className="review-main">
             <div className="review-files">
-              {changes.length === 0 && <div className="muted review-empty">Keine Änderungen.</div>}
+              {changes.length === 0 && (
+                <div className="muted review-empty">{t('review.noChanges')}</div>
+              )}
               {changes.map((c) => (
                 <div
                   key={c.path}
                   className={`review-file ${c.path === selected ? 'selected' : ''}`}
-                  title={`${c.path}\n${KIND_TITLE[c.kind]}`}
+                  title={`${c.path}\n${t(KIND_TITLE[c.kind])}`}
                   onClick={() => selectFile(c.path)}
                 >
                   <span className={`review-kind ${c.kind}`}>{KIND_LABEL[c.kind]}</span>
@@ -342,32 +341,27 @@ function ReviewDialog({ project, agents, agentId, filePath, onClose }: Props): R
                   {selected ?? '–'}
                   {dirty && ' •'}
                 </span>
-                <button
-                  disabled={busy || !dirty}
-                  onClick={save}
-                  title="Rechte Seite in die Datei schreiben"
-                >
-                  Speichern
+                <button disabled={busy || !dirty} onClick={save} title={t('review.saveTooltip')}>
+                  {t('common.save')}
                 </button>
                 <button
                   className="danger"
                   disabled={busy || !selected}
                   title={
                     change?.kind === 'untracked' || change?.kind === 'added'
-                      ? 'Neue Datei löschen'
-                      : 'Datei auf den Vergleichsstand zurücksetzen'
+                      ? t('review.discardNewTooltip')
+                      : t('review.discardTooltip')
                   }
                   onClick={() => {
-                    if (!selected || !confirm(`Alle Änderungen an „${selected}“ verwerfen?`)) return
+                    if (!selected || !confirm(t('review.confirmDiscard', { file: selected })))
+                      return
                     run(() => window.api.git.discard(project.id, targetId!, selected))
                   }}
                 >
-                  Verwerfen
+                  {t('review.discard')}
                 </button>
               </div>
-              {binary && (
-                <div className="muted review-empty">Binärdatei oder zu groß – kein Vergleich.</div>
-              )}
+              {binary && <div className="muted review-empty">{t('review.binary')}</div>}
               <div
                 className="review-editor"
                 ref={hostRef}
@@ -380,8 +374,8 @@ function ReviewDialog({ project, agents, agentId, filePath, onClose }: Props): R
                   onKeyDown={(e) => e.key === 'Enter' && addComment()}
                   placeholder={
                     targetAgent
-                      ? 'Kommentar zur markierten Stelle (rechts Zeilen markieren, Enter merkt ihn vor)'
-                      : 'Kommentare gehen an den Agent dieses Verzeichnisses – hier läuft keiner'
+                      ? t('review.commentPlaceholder')
+                      : t('review.commentPlaceholderNoAgent')
                   }
                   disabled={!targetAgent || !selected}
                 />
@@ -389,7 +383,7 @@ function ReviewDialog({ project, agents, agentId, filePath, onClose }: Props): R
                   disabled={!commentText.trim() || !selected || !targetAgent}
                   onClick={addComment}
                 >
-                  Vormerken
+                  {t('review.addComment')}
                 </button>
               </div>
             </div>
@@ -408,12 +402,15 @@ function ReviewDialog({ project, agents, agentId, filePath, onClose }: Props): R
                     className="link"
                     onClick={() => setComments((list) => list.filter((_, j) => j !== i))}
                   >
-                    entfernen
+                    {t('review.removeComment')}
                   </button>
                 </div>
               ))}
               <button className="primary" onClick={sendComments}>
-                {comments.length} Kommentar(e) an {targetAgent?.name} schicken
+                {t('review.sendComments', {
+                  count: comments.length,
+                  name: targetAgent?.name ?? ''
+                })}
               </button>
             </div>
           )}
@@ -422,12 +419,12 @@ function ReviewDialog({ project, agents, agentId, filePath, onClose }: Props): R
             <input
               value={message}
               onChange={(e) => setMessage(e.target.value)}
-              placeholder="Commit-Nachricht"
+              placeholder={t('review.commitPlaceholder')}
               spellCheck={false}
             />
             <button
               disabled={busy || !message.trim() || !selected}
-              title="Nur die gewählte Datei committen"
+              title={t('review.commitFileTooltip')}
               onClick={() =>
                 run(async () => {
                   const out = await window.api.git.commit(project.id, targetId!, message, [
@@ -438,7 +435,7 @@ function ReviewDialog({ project, agents, agentId, filePath, onClose }: Props): R
                 })
               }
             >
-              Datei committen
+              {t('review.commitFile')}
             </button>
             <button
               className="primary"
@@ -451,7 +448,7 @@ function ReviewDialog({ project, agents, agentId, filePath, onClose }: Props): R
                 })
               }
             >
-              Alles committen
+              {t('review.commitAll')}
             </button>
           </div>
           {note && (
