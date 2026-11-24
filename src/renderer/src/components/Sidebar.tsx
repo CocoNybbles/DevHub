@@ -113,6 +113,8 @@ interface Props {
   /** projectId: board of this project, otherwise of the selected one */
   onOpenTasks: (projectId?: string) => void
   onOpenHistory: () => void
+  /** "Resume session …": choose one of the project's sessions on disk */
+  onResumeSession: (projectId: string) => void
   onOpenReport: () => void
   onOpenRun: (projectId: string) => void
   /** Review changes: the project's main folder or the agent's working directory */
@@ -193,6 +195,7 @@ function Sidebar(props: Props): React.JSX.Element {
   /** Menu entries for starting: normal agent, one entry per template, one entry per team. */
   const startItems = (projectId: string): MenuItem[] => [
     { label: t('sidebar.startAgent'), action: () => props.onStartAgent(projectId) },
+    { label: t('sidebar.resumeSession'), action: () => props.onResumeSession(projectId) },
     ...props.templates.map((tpl) => ({
       label: tpl.model
         ? t('sidebar.startNamedWithModel', { name: tpl.name, model: tpl.model })

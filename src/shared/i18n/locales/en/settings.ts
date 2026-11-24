@@ -14,6 +14,9 @@ const en = {
     'Added to the global flags from the settings; flags with the same name replace the global ones.',
   argsHelpExamples: 'Examples:',
   argsHelpApplies: 'Applies from the next agent start.',
+  autoResume: 'Resume the agents of the last run when DevHub starts',
+  autoResumeHelp:
+    'When switched off, their conversations go into the history and can be resumed from there. Team members, other engines and copies that never started end; queued instructions are dropped (those of a task go back to the board).',
 
   // Predefined agents
   templatesTitle: 'Predefined agents',
@@ -49,6 +52,7 @@ const en = {
   permissionInbox: 'Decide permission requests in the inbox (instead of in the agent’s terminal)',
   permissionInboxHelp:
     '“Always” creates a rule for the project (Edit project → Permission rules). Rules apply even without this setting.',
+  reviewOnShowDiff: 'Open “Review changes” when an agent presents its changes',
   voiceReadback: 'Finished agents: read a summary of the answer aloud',
   voiceReadbackHelp:
     'Claude (Haiku) summarizes the answer in one or two sentences; it is read aloud with the Windows speech output.',

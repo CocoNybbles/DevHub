@@ -1,8 +1,7 @@
 import * as pty from 'node-pty'
 import { randomUUID } from 'crypto'
-import { existsSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'fs'
-import { homedir } from 'os'
-import { isAbsolute, join, resolve as resolvePath } from 'path'
+import { existsSync, readFileSync, rmSync, writeFileSync } from 'fs'
+import { isAbsolute, join, relative, resolve as resolvePath } from 'path'
 import { exec } from 'child_process'
 import type {
   ActivityEntry,
@@ -14,6 +13,7 @@ import type {
   CodePlan,
   CodeSnippet,
   EditedFile,
+  LocalSession,
   PermissionAnswer,
   PermissionInfo,
   Project,
@@ -24,7 +24,14 @@ import type {
   UserNotice
 } from '../shared/types'
 import { isTeamWorker, teamLead } from '../shared/types'
-import { editFromToolResult, mergeEdits, mergeSnippets, TranscriptReader } from './snippets'
+import {
+  editFromToolResult,
+  mergeEdits,
+  mergeSnippets,
+  readSessionSummary,
+  TranscriptReader
+} from './snippets'
+import { findSessionFile, listLocalSessions } from './history'
 import {
   AgentBridge,
   AnswerPermissionArgs,
@@ -82,8 +89,10 @@ interface RunningAgent {
   transcript?: TranscriptReader
   /** Code blocks from the responses, newest first */
   snippets: CodeSnippet[]
-  /** Files edited by the agent (order = first edit) */
+  /** Files edited by the agent since the current instruction (order = first edit) */
   edits: EditedFile[]
+  /** Start of the current instruction: older file changes are no longer shown */
+  editsSince: number
   /** Worker: has reported to the orchestrator since the last prompt */
   reported: boolean
   /** Working directory (agent folder or worktree) */
@@ -149,6 +158,23 @@ const READY_FALLBACK_MS = 30_000
 
 /** Name of the automatically started orchestrator ("Orchestrator", "Orchestrator 2" …) */
 const ORCHESTRATOR_NAME = 'Orchestrator'
+/** Base of the numbered names when the project has no agent name of its own */
+const DEFAULT_AGENT_NAME = 'Agent'
+
+/**
+ * Looks automatically numbered ("Agent 3", "Backend 2", "Entwickler 2")? Any name ending in
+ * " <number>" counts – templates, engines and project agent names cannot end with a number. A
+ * name the user gave via rename ("Ticket 4711") matches too; `start` therefore only renumbers
+ * such a name when it is taken.
+ */
+function isNumberedName(name: string): boolean {
+  return /^.+ \d+$/.test(name)
+}
+
+/** Template/engine/orchestrator name, prefixed with the project's agent name ("MyProj Reviewer") */
+function inProject(project: Project, name: string | undefined): string | undefined {
+  return name && project.agentName ? `${project.agentName} ${name}` : name
+}
 
 export interface StartTeamOptions {
   /** Team template – or a free member list (temporary team) */
@@ -361,6 +387,7 @@ export class AgentManager {
   async restore(): Promise<void> {
     if (this.restored) return
     this.restored = true
+    if (!getState().settings.autoResume) return this.archiveSaved()
     const projects = new Set(getState().projects.map((p) => p.id))
     for (const saved of getState().agents) {
       if (this.running.has(saved.id)) continue
@@ -379,6 +406,41 @@ export class AgentManager {
         updateState((s) => (s.agents = s.agents.filter((a) => a.id !== saved.id)))
       }
     }
+    this.removeEmptyTeams()
+    this.emitChanged()
+  }
+
+  /**
+   * Automatic resume switched off: the agents of the last run are not started again. Their
+   * sessions go into the history (resumable from there); team members, other engines and forks
+   * that never started have no session of their own and simply end, as do queued instructions
+   * (those of a task go back to the board).
+   */
+  private async archiveSaved(): Promise<void> {
+    const { agents, projects } = getState()
+    const saved = [...agents]
+    // Only title + usage are needed; read all transcripts at the same time
+    const summaries = await Promise.all(
+      saved.map((a) => {
+        const project = projects.find((p) => p.id === a.projectId)
+        const file = project && !a.engineId && !a.teamId ? findSessionFile(a.sessionId) : null
+        if (!project || !file) return null
+        return readSessionSummary(file)
+          .catch(() => ({ firstPrompt: undefined, usage: undefined }))
+          .then((info) => ({ project, info }))
+      })
+    )
+    // Each entry goes to the top of the history → archive backwards, so the list order stays
+    for (let i = saved.length - 1; i >= 0; i--) {
+      const a = saved[i]
+      const s = summaries[i]
+      if (s) {
+        const cwd = a.worktree ? worktreeCwd(a.worktree, s.project.agentPath) : s.project.agentPath
+        const agent = { ...a, usage: s.info.usage } as Agent
+        this.archiveSession(agent, a.sessionId, cwd, s.info.firstPrompt)
+      }
+    }
+    for (const a of saved) this.forget(a.id)
     this.removeEmptyTeams()
     this.emitChanged()
   }
@@ -424,7 +486,7 @@ export class AgentManager {
     const orchestrator: Agent = {
       id: randomUUID(),
       projectId,
-      name: this.nextName(ORCHESTRATOR_NAME),
+      name: this.nextName(inProject(project, ORCHESTRATOR_NAME)),
       sessionId: randomUUID(),
       status: 'starting',
       createdAt: base,
@@ -439,7 +501,7 @@ export class AgentManager {
       const agent: Agent = {
         id: randomUUID(),
         projectId,
-        name: this.nextName(template?.name),
+        name: this.nextName(inProject(project, template?.name), project.agentName),
         sessionId: randomUUID(),
         status: 'starting',
         createdAt: base + 1 + i,
@@ -509,13 +571,19 @@ export class AgentManager {
       ? getState().engines.find((e) => e.id === extra.engineId)
       : undefined
     if (extra.engineId && !engine) throw new Error(t('agents.engineNotFound'))
-    // Don't use "Agent 3" from the history as the base (would yield "Agent 3 2")
-    const wanted = extra.name && !/^agent \d+$/i.test(extra.name.trim()) ? extra.name.trim() : ''
+    // A name from the history is kept while it is free; a taken numbered one ("Agent 3") is
+    // renumbered with the current scheme instead of becoming "Agent 3 2"
+    const old = extra.name?.trim() ?? ''
+    const taken = getState().agents.some((a) => a.name.toLowerCase() === old.toLowerCase())
+    const wanted = old && !(taken && isNumberedName(old)) ? old : ''
 
     const agent: Agent = {
       id: randomUUID(),
       projectId,
-      name: this.nextName(wanted || template?.name || engine?.name),
+      name: this.nextName(
+        wanted || inProject(project, template?.name || engine?.name),
+        project.agentName
+      ),
       sessionId: extra.sessionId ?? randomUUID(),
       status: 'starting',
       createdAt: Date.now(),
@@ -577,8 +645,7 @@ export class AgentManager {
     const entry = getState().archive.find((x) => x.id === id)
     if (!entry) throw new Error(t('agents.archiveEntryNotFound'))
     if (!sessionExists(entry.sessionId)) throw new Error(t('agents.transcriptGone'))
-    if (this.list().some((a) => a.sessionId === entry.sessionId))
-      throw new Error(t('agents.sessionAlreadyRunning'))
+    if (this.sessionInUse(entry.sessionId)) throw new Error(t('agents.sessionAlreadyRunning'))
     // A session can only be continued in its own directory → recreate a cleaned-up worktree
     if (entry.worktree) await restoreWorktree(entry.worktree)
     const templateId = getState().templates.some((t) => t.id === entry.templateId)
@@ -593,6 +660,92 @@ export class AgentManager {
     })
     if (!fork) updateState((s) => (s.archive = s.archive.filter((x) => x.id !== id)))
     return agent
+  }
+
+  /**
+   * Sessions of the project that still exist on disk (newest first): those that ran in the
+   * agent folder or in one of the project's known worktrees – also sessions DevHub never knew
+   * (started in a terminal of its own).
+   */
+  async localSessions(projectId: string): Promise<LocalSession[]> {
+    const project = getState().projects.find((p) => p.id === projectId)
+    if (!project) throw new Error(t('agents.projectNotFound'))
+    const worktrees = this.knownWorktrees(project)
+    // Only the directory an agent would be started in: --resume finds a session only there
+    const cwds = [project.agentPath, ...worktrees.map((wt) => agentDirIn(wt, project.agentPath))]
+    const running = this.list()
+    const { agents, archive } = getState()
+    return (await listLocalSessions(cwds)).map((s) => {
+      // Saved but not (yet) running agents count too (e.g. before the restore at app start)
+      const agent =
+        running.find((a) => a.sessionId === s.sessionId) ??
+        agents.find((a) => a.sessionId === s.sessionId)
+      const archived = archive.find((x) => x.sessionId === s.sessionId)
+      return {
+        ...s,
+        branch: this.worktreeOf(worktrees, s.cwd)?.branch,
+        agentId: agent?.id,
+        name: agent?.name ?? archived?.name,
+        endedAt: archived?.endedAt
+      }
+    })
+  }
+
+  /** Start an agent with a session from `localSessions`; `fork`: as a copy. */
+  async resumeSession(projectId: string, sessionId: string, fork = false): Promise<Agent> {
+    const session = (await this.localSessions(projectId)).find((s) => s.sessionId === sessionId)
+    if (!session) throw new Error(t('agents.transcriptGone'))
+    if (!fork && this.sessionInUse(sessionId)) throw new Error(t('agents.sessionAlreadyRunning'))
+    // Known from the history: name, model and template come back (and the entry disappears)
+    const archived = getState().archive.find((x) => x.sessionId === sessionId)
+    if (archived && !fork) return this.resumeArchived(archived.id)
+    const project = getState().projects.find((p) => p.id === projectId)!
+    // A session can only be continued in its own directory → recreate a cleaned-up worktree
+    const worktree = this.worktreeOf(this.knownWorktrees(project), session.cwd)
+    if (worktree) {
+      await restoreWorktree(worktree)
+      // The agent starts in worktreeCwd – claude must find the session there
+      const cwd = worktreeCwd(worktree, project.agentPath)
+      if (resolvePath(cwd).toLowerCase() !== resolvePath(session.cwd).toLowerCase())
+        throw new Error(t('agents.sessionDirMismatch', { path: session.cwd }))
+    }
+    const templateId = getState().templates.some((x) => x.id === archived?.templateId)
+      ? archived?.templateId
+      : undefined
+    return this.start(projectId, undefined, archived?.model, templateId, {
+      name: archived?.name,
+      sessionId: fork ? undefined : sessionId,
+      forkFrom: fork ? sessionId : undefined,
+      worktree,
+      noWorktree: true
+    })
+  }
+
+  /** Is the session used by a running or saved agent (one that is restored at app start)? */
+  private sessionInUse(sessionId: string): boolean {
+    return (
+      this.list().some((a) => a.sessionId === sessionId) ||
+      getState().agents.some((a) => a.sessionId === sessionId)
+    )
+  }
+
+  /** Worktrees of the project known from running/saved agents and the history */
+  private knownWorktrees(project: Project): AgentWorktree[] {
+    const { agents, archive } = getState()
+    const all = [...agents, ...archive]
+      .filter((x) => x.projectId === project.id && x.worktree)
+      .map((x) => x.worktree!)
+    return all.filter(
+      (wt, i) => all.findIndex((x) => x.path.toLowerCase() === wt.path.toLowerCase()) === i
+    )
+  }
+
+  /** The worktree a session directory lies in */
+  private worktreeOf(worktrees: AgentWorktree[], cwd: string): AgentWorktree | undefined {
+    return worktrees.find((wt) => {
+      const rel = relative(resolvePath(wt.path), resolvePath(cwd))
+      return !rel.startsWith('..') && !isAbsolute(rel)
+    })
   }
 
   /** Stop via the UI: workers only with the whole team, the orchestrator stops the team. */
@@ -821,6 +974,7 @@ export class AgentManager {
       pending: [],
       snippets: [],
       edits: [],
+      editsSince: 0,
       reported: false,
       cwd,
       asking: false,
@@ -992,6 +1146,7 @@ export class AgentManager {
     }
     const r = this.running.get(agentId)
     if (!r) return
+    if (ev.hook_event_name === 'SessionStart') this.trackSession(r, ev.session_id)
     // The session is loaded → typed input arrives (held-back messages/jobs follow below)
     if (ev.hook_event_name === 'SessionStart' && !r.ready) {
       r.ready = true
@@ -1003,6 +1158,8 @@ export class AgentManager {
     // Bookkeeping for all agents: turn, open question, activity, changed files
     switch (ev.hook_event_name) {
       case 'UserPromptSubmit':
+        // New instruction: the file previews of the previous ones close
+        this.clearEdits(r, Date.now())
         r.turnDone = false
         r.finished = false
         r.editedThisTurn = false
@@ -1370,14 +1527,92 @@ export class AgentManager {
     return Object.fromEntries([...this.running].map(([id, r]) => [id, r.edits]))
   }
 
+  /** Close the file previews: only changes from `since` on are shown again */
+  private clearEdits(r: RunningAgent, since: number): void {
+    r.editsSince = since
+    const kept = r.edits.filter((e) => e.at >= since)
+    if (kept.length === r.edits.length) return
+    r.edits = kept
+    this.events.onEdits(r.agent.id, r.edits)
+  }
+
   private addEdits(agentId: string, added: EditedFile[]): void {
     const r = this.running.get(agentId)
+    // The transcript also repeats changes from before the current instruction
+    added = added.filter((e) => r && e.at >= r.editsSince)
     if (!r || !added.length) return
     const merged = mergeEdits(r.edits, added)
     // The transcript repeats what the hook already reported → only emit on a real change
     if (merged.length === r.edits.length && merged.every((e, i) => e === r.edits[i])) return
     r.edits = merged
     this.events.onEdits(agentId, r.edits)
+  }
+
+  /**
+   * claude switches to a new session on `/clear` (and on `/resume` inside the TUI); its
+   * SessionStart hook names the new id. Remember it so that a restart resumes the current
+   * conversation instead of the old one; the old session goes into the history.
+   */
+  private trackSession(r: RunningAgent, sessionId: unknown): void {
+    const a = r.agent
+    if (typeof sessionId !== 'string' || !UUID_RE.test(sessionId)) return
+    // A fork may still report its source session before writing under its own id
+    if (sessionId === a.sessionId || sessionId === a.forkFrom) return
+    if (process.env.DEVHUB_DEBUG) {
+      console.log('[DevHub] Session', a.id.slice(0, 8), a.sessionId, '→', sessionId)
+    }
+    // Rare: `/resume` picked a session another agent is running → both would resume it later
+    const other = this.list().find((x) => x.id !== a.id && x.sessionId === sessionId)
+    if (other) {
+      console.warn(`[DevHub] ${a.name} now uses the same session as ${other.name} (${sessionId})`)
+    }
+    if (!a.engineId && !a.teamId && sessionExists(a.sessionId)) {
+      this.archiveSession(a, a.sessionId, r.cwd, r.title, randomUUID())
+    }
+    a.sessionId = sessionId
+    a.forkFrom = undefined
+    a.usage = undefined
+    r.title = undefined
+    updateState((s) => {
+      const saved = s.agents.find((x) => x.id === a.id)
+      if (saved) {
+        saved.sessionId = sessionId
+        saved.forkFrom = undefined
+      }
+      // `/resume` of a session from the history: it is running again
+      s.archive = s.archive.filter((x) => x.sessionId !== sessionId)
+    })
+    this.emitChanged()
+  }
+
+  /** Put a session into the history (newest first, one entry per session). */
+  private archiveSession(
+    agent: Agent,
+    sessionId: string,
+    cwd: string,
+    title: string | undefined,
+    id = agent.id
+  ): void {
+    const entry: ArchivedSession = {
+      id,
+      projectId: agent.projectId,
+      name: agent.name,
+      sessionId,
+      cwd,
+      createdAt: agent.createdAt,
+      endedAt: Date.now(),
+      title,
+      model: agent.model,
+      templateId: agent.templateId,
+      worktree: agent.worktree,
+      usage: agent.usage
+    }
+    updateState((s) => {
+      s.archive = [entry, ...s.archive.filter((x) => x.sessionId !== sessionId)].slice(
+        0,
+        MAX_ARCHIVE
+      )
+    })
   }
 
   private useTranscript(agentId: string, path: string): void {
@@ -1393,9 +1628,11 @@ export class AgentManager {
     running.usageReadAt = Date.now()
     reader
       .read()
-      .then(({ snippets, edits, usage, lastText, firstPrompt }) => {
+      .then(({ snippets, edits, usage, lastText, firstPrompt, promptAt }) => {
         const r = this.running.get(agentId)
         if (!r || r.transcript !== reader) return
+        // After a restore: only the changes since the last instruction
+        if (promptAt && promptAt > r.editsSince) this.clearEdits(r, promptAt)
         r.title ??= firstPrompt
         if (usage || lastText !== undefined) {
           if (usage) {
@@ -1448,6 +1685,12 @@ export class AgentManager {
         return 'Shown to the user in the DevHub side panel.'
       }
       case 'show_diff': {
+        if (!getState().settings.reviewOnShowDiff) {
+          return (
+            'The user has turned off the automatic review window. If it helps, mention briefly that ' +
+            'they can review your changes in DevHub (right-click on the project or agent → "Review changes").'
+          )
+        }
         const file = text('file_path')
         this.events.onShowDiff(agentId, file ? resolvePath(r.cwd, file) : undefined)
         return 'The review window with your changes was opened for the user.'
@@ -1851,26 +2094,7 @@ export class AgentManager {
     const agent = r?.agent
     // Team members cannot be meaningfully continued without their team
     if (r && agent && !agent.engineId && !agent.teamId && sessionExists(agent.sessionId)) {
-      const entry: ArchivedSession = {
-        id: agent.id,
-        projectId: agent.projectId,
-        name: agent.name,
-        sessionId: agent.sessionId,
-        cwd: r.cwd,
-        createdAt: agent.createdAt,
-        endedAt: Date.now(),
-        title: r.title,
-        model: agent.model,
-        templateId: agent.templateId,
-        worktree: agent.worktree,
-        usage: agent.usage
-      }
-      updateState((s) => {
-        s.archive = [entry, ...s.archive.filter((x) => x.sessionId !== entry.sessionId)].slice(
-          0,
-          MAX_ARCHIVE
-        )
-      })
+      this.archiveSession(agent, agent.sessionId, r.cwd, r.title)
     }
     // Release this agent's running or queued tasks again
     const taskIds = [
@@ -1919,10 +2143,11 @@ export class AgentManager {
   }
 
   /**
-   * Name unique across all agents (for voice control):
-   * without a template "Agent N" (lowest free number), with a template "Developer", then "Developer 2" …
+   * Name unique across all agents (for voice control): with a template "Developer", then
+   * "Developer 2" … (with a project agent name "Backend Developer", see `inProject`); otherwise
+   * numbered (lowest free number) – "Agent N" or, if the project has its own agent name, "Backend N".
    */
-  private nextName(base?: string): string {
+  private nextName(base?: string, numbered?: string): string {
     const names = new Set(getState().agents.map((a) => a.name.toLowerCase()))
     if (base) {
       if (!names.has(base.toLowerCase())) return base
@@ -1930,9 +2155,10 @@ export class AgentManager {
       while (names.has(`${base} ${n}`.toLowerCase())) n++
       return `${base} ${n}`
     }
+    const prefix = numbered || DEFAULT_AGENT_NAME
     let n = 1
-    while (names.has(`agent ${n}`)) n++
-    return `Agent ${n}`
+    while (names.has(`${prefix} ${n}`.toLowerCase())) n++
+    return `${prefix} ${n}`
   }
 
   private emitChanged(): void {
@@ -2124,12 +2350,20 @@ const ANSI =
   // eslint-disable-next-line no-control-regex
   /\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[()][A-Z0-9]|\x1b[=>]/g
 
+/**
+ * Directory an agent of the project works in inside the worktree (as `worktreeCwd`); for a
+ * removed worktree computed without checking the disk (it is recreated on resume).
+ */
+function agentDirIn(wt: AgentWorktree, agentPath: string): string {
+  if (existsSync(wt.path)) return worktreeCwd(wt, agentPath)
+  const rel = relative(wt.repo, resolvePath(agentPath))
+  return rel && !rel.startsWith('..') && !isAbsolute(rel) ? join(wt.path, rel) : wt.path
+}
+
+/** Session ids are UUIDs (also checked before they end up in a file path or the command line) */
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
 /** Does a transcript already exist for the session? Only then is --resume possible. */
 function sessionExists(sessionId: string): boolean {
-  const base = join(process.env.CLAUDE_CONFIG_DIR || join(homedir(), '.claude'), 'projects')
-  try {
-    return readdirSync(base).some((dir) => existsSync(join(base, dir, `${sessionId}.jsonl`)))
-  } catch {
-    return false
-  }
+  return !!findSessionFile(sessionId)
 }

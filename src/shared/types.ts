@@ -20,6 +20,9 @@ export interface Project {
   folderPath?: string
   /** Program (path to the .exe) for the folder; empty = global setting */
   folderApp?: string
+  /** Base of the numbered names of new agents ("Backend" → "Backend 1", "Backend 2" …) instead
+   *  of "Agent"; unique across all projects */
+  agentName?: string
   /** Extra start flags for this project's agents (extend/override the global ones) */
   agentArgs?: string
   /** Every new agent works in its own Git worktree (own branch) instead of the agent folder */
@@ -228,6 +231,33 @@ export interface ArchivedSession {
   templateId?: string
   worktree?: AgentWorktree
   usage?: AgentUsage
+}
+
+/** Session of a project that still exists on disk ("Resume session …") */
+export interface LocalSession {
+  sessionId: string
+  /** Working directory of the session (agent folder or a worktree) */
+  cwd: string
+  /** Name set with `/rename`, otherwise claude's generated title */
+  title?: string
+  /** The first instruction (shortened) */
+  firstPrompt?: string
+  /** The latest instruction (shortened) */
+  lastPrompt?: string
+  /** Session of a former team member: resumed without its team (the team tools no longer work) */
+  team?: boolean
+  /** Last change of the transcript */
+  updatedAt: number
+  /** Size of the transcript in bytes */
+  size: number
+  /** Branch, if the session ran in one of the project's worktrees */
+  branch?: string
+  /** Agent that is currently running this session */
+  agentId?: string
+  /** Name of the running agent or of the history entry */
+  name?: string
+  /** In the history: when its agent ended */
+  endedAt?: number
 }
 
 /** Match of the full-text search across the transcripts */
@@ -477,6 +507,10 @@ export interface Settings {
   voiceFixedLanguage: string | null
   /** File preview: show files edited by the active agent as tabs on the right */
   showEditedFiles: boolean
+  /** Open the review window when an agent shows its changes (MCP `show_diff`) */
+  reviewOnShowDiff: boolean
+  /** App start: resume the agents that were running at the last quit (otherwise → history) */
+  autoResume: boolean
   /** Windows notification + taskbar flashing when an agent is waiting and DevHub is in the background */
   notifyOnWaiting: boolean
   /** Decide permission requests in the inbox instead of in the agent's terminal */
@@ -619,6 +653,10 @@ export interface DevHubApi {
     /** Resume the session as an agent (fork = as a copy, the original stays in the history) */
     resume: (id: string, fork?: boolean) => Promise<Agent>
     search: (query: string) => Promise<SessionMatch[]>
+    /** Sessions of the project still on disk (agent folder + known worktrees), newest first */
+    localSessions: (projectId: string) => Promise<LocalSession[]>
+    /** Start an agent with one of these sessions (`claude --resume`); fork = as a copy */
+    resumeSession: (projectId: string, sessionId: string, fork?: boolean) => Promise<Agent>
   }
   git: {
     targets: (projectId: string) => Promise<ReviewInfo>

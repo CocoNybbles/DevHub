@@ -41,6 +41,7 @@ function ProjectDialog({
   const [folderPath, setFolderPath] = useState(project?.folderPath ?? '')
   const [folderApp, setFolderApp] = useState(project?.folderApp ?? '')
   const folderDefault = vscodeInstalled ? 'VS Code' : t('project.windowsExplorer')
+  const [agentName, setAgentName] = useState(project?.agentName ?? '')
   const [agentArgs, setAgentArgs] = useState(project?.agentArgs ?? '')
   const argsError = validateAgentArgs(agentArgs)
   const [useWorktrees, setUseWorktrees] = useState(project?.useWorktrees ?? false)
@@ -85,6 +86,7 @@ function ProjectDialog({
         projectFileApp: (projectFile.trim() && projectFileApp.trim()) || undefined,
         folderPath: folderPath.trim() || undefined,
         folderApp: (folderPath.trim() && folderApp.trim()) || undefined,
+        agentName: agentName.trim() || undefined,
         agentArgs: agentArgs.trim() || undefined,
         useWorktrees,
         checks,
@@ -135,6 +137,23 @@ function ProjectDialog({
             onChange={(e) => setName(e.target.value)}
             placeholder={agentPath ? folderName(agentPath) : t('project.namePlaceholder')}
             autoFocus
+          />
+        </label>
+
+        <label>
+          <span>
+            {t('project.agentNameLabel')} <em>{t('project.optionalTag')}</em>
+          </span>
+          <small className="muted">
+            {agentName.trim()
+              ? t('project.agentNameHint', { name: agentName.trim() })
+              : t('project.agentNameHintEmpty')}
+          </small>
+          <input
+            value={agentName}
+            onChange={(e) => setAgentName(e.target.value)}
+            placeholder={t('project.agentNamePlaceholder')}
+            maxLength={40}
           />
         </label>
 

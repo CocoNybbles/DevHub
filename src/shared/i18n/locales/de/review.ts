@@ -3,6 +3,9 @@ import type en from '../en/review'
 /** German texts: namespace `review` */
 const de: typeof en = {
   title: 'Änderungen prüfen · {project}',
+  dontShowAgain: 'Nicht wieder anzeigen',
+  dontShowAgainHelp:
+    'Agents öffnen dieses Fenster nicht mehr von selbst. Wieder einschalten unter Einstellungen → Eingang und Benachrichtigungen; Rechtsklick → „Änderungen prüfen“ geht immer.',
   kindModified: 'geändert',
   kindAdded: 'hinzugefügt',
   kindDeleted: 'gelöscht',

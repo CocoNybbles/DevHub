@@ -21,6 +21,7 @@ import InboxPanel, { FileConflict } from './components/InboxPanel'
 import ReviewDialog from './components/ReviewDialog'
 import TaskBoardDialog from './components/TaskBoardDialog'
 import HistoryDialog from './components/HistoryDialog'
+import ResumeSessionDialog from './components/ResumeSessionDialog'
 import RunDialog from './components/RunDialog'
 import ReportDialog from './components/ReportDialog'
 import QueueDialog from './components/QueueDialog'
@@ -105,6 +106,8 @@ function Workspace(): React.JSX.Element {
     voiceLanguage: null,
     voiceFixedLanguage: null,
     showEditedFiles: true,
+    autoResume: true,
+    reviewOnShowDiff: true,
     notifyOnWaiting: true,
     permissionInbox: false,
     voiceReadback: false,
@@ -132,9 +135,13 @@ function Workspace(): React.JSX.Element {
     projectId: string
     agentId?: string
     filePath?: string
+    /** Opened by the agent (`show_diff`), not by the user → "Don't show again" */
+    auto?: boolean
   } | null>(null)
   const [tasksFor, setTasksFor] = useState<string | null>(null)
   const [historyOpen, setHistoryOpen] = useState(false)
+  /** "Resume session …" for this project */
+  const [resumeFor, setResumeFor] = useState<string | null>(null)
   const [reportOpen, setReportOpen] = useState(false)
   const [runFor, setRunFor] = useState<string | null>(null)
   const [queueFor, setQueueFor] = useState<string | null>(null)
@@ -219,7 +226,7 @@ function Workspace(): React.JSX.Element {
     // Agent asks for a review of its changes (MCP `show_diff`)
     const offShowDiff = window.api.code.onShowDiff((agentId, filePath) => {
       const agent = agentsRef.current.find((a) => a.id === agentId)
-      if (agent) setReview({ projectId: agent.projectId, agentId, filePath })
+      if (agent) setReview({ projectId: agent.projectId, agentId, filePath, auto: true })
     })
     // Windows notification clicked → show this agent
     const offFocusRequest = window.api.agents.onFocusRequest((agentId) => {
@@ -393,6 +400,8 @@ function Workspace(): React.JSX.Element {
 
   /** Tabs on the right closed by the user (until newer content arrives) */
   const [closedTabs, setClosedTabs] = useState<ClosedTabs>({})
+  /** Snippets closed one by one (ids; for as long as the app runs) */
+  const [closedSnippets, setClosedSnippets] = useState<ReadonlySet<string>>(() => new Set())
 
   /** Code view: focus of the active agent, otherwise the most recent focus in the selected project. */
   const shownFocus = useMemo(() => {
@@ -414,10 +423,12 @@ function Workspace(): React.JSX.Element {
 
   /** Snippets of the active agent (right, "Snippets" tab) – empty while the tab is closed */
   const activeSnippets = useMemo(() => {
-    const list = activeAgentId ? (snippetsByAgent[activeAgentId] ?? []) : []
+    const list = (activeAgentId ? (snippetsByAgent[activeAgentId] ?? []) : []).filter(
+      (s) => !closedSnippets.has(s.id)
+    )
     if (!activeAgentId || !list.length) return list
     return isTabClosed(closedTabs, snippetsTabKey(activeAgentId), list[0].at) ? [] : list
-  }, [activeAgentId, snippetsByAgent, closedTabs])
+  }, [activeAgentId, snippetsByAgent, closedTabs, closedSnippets])
   /** Files edited by the active agent (right, one tab each), excluding closed ones */
   const activeEdits = useMemo(
     () =>
@@ -912,6 +923,7 @@ function Workspace(): React.JSX.Element {
             else setToast(t('workspace.createProjectFirst'))
           }}
           onOpenHistory={() => setHistoryOpen(true)}
+          onResumeSession={setResumeFor}
           onOpenReport={() => setReportOpen(true)}
           onOpenRun={setRunFor}
           onReview={(projectId, agentId) => setReview({ projectId, agentId })}
@@ -1009,6 +1021,7 @@ function Workspace(): React.JSX.Element {
             vscodeInstalled={vscodeInstalled}
             snippetsKey={snippetsTabKey(activeAgentId ?? '')}
             onCloseTab={(key, at) => setClosedTabs((c) => ({ ...c, [key]: at }))}
+            onCloseSnippet={(id) => setClosedSnippets((s) => new Set(s).add(id))}
             plan={activePlan}
             planKey={planKey}
             activityAgent={agents.find((a) => a.id === activeAgentId && !a.engineId)}
@@ -1023,6 +1036,13 @@ function Workspace(): React.JSX.Element {
           agents={agents}
           agentId={review.agentId}
           filePath={review.filePath}
+          dontShowAgain={review.auto ? !settings.reviewOnShowDiff : undefined}
+          onDontShowAgain={(hide) =>
+            window.api.settings
+              .update({ reviewOnShowDiff: !hide })
+              .then(applySettings)
+              .catch(showError)
+          }
           onClose={() => setReview(null)}
         />
       )}
@@ -1047,6 +1067,13 @@ function Workspace(): React.JSX.Element {
           settings={settings}
           onShowAgent={showAgent}
           onClose={() => setHistoryOpen(false)}
+        />
+      )}
+      {resumeFor && projects.some((p) => p.id === resumeFor) && (
+        <ResumeSessionDialog
+          project={projects.find((p) => p.id === resumeFor)!}
+          onShowAgent={showAgent}
+          onClose={() => setResumeFor(null)}
         />
       )}
       {reportOpen && <ReportDialog projects={projects} onClose={() => setReportOpen(false)} />}

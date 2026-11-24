@@ -277,6 +277,27 @@ async function reviewTarget(projectId: string, targetId: string): Promise<Resolv
   return found
 }
 
+/**
+ * Project agent name ("Backend" → "Backend 1", "Backend 2" …): must not end with a number,
+ * not be the default name, and be unique across projects and templates – otherwise two
+ * projects would number the same names.
+ */
+function agentNameError(name: string, projectId?: string): string | null {
+  if (name.length > 40) return t('main.agentNameTooLong')
+  if (/(^|\s)\d+$/.test(name)) return t('main.agentNameEndsWithNumber')
+  if (['agent', 'orchestrator'].includes(name.toLowerCase())) return t('main.agentNameReservedBase')
+  const lower = name.toLowerCase()
+  const other = getState().projects.find(
+    (p) => p.id !== projectId && p.agentName?.toLowerCase() === lower
+  )
+  if (other) return t('main.agentNameTaken', { name: other.agentName!, project: other.name })
+  if (getState().templates.some((x) => x.name.toLowerCase() === lower))
+    return t('main.agentNameIsTemplate', { name })
+  if (getState().engines.some((x) => x.name.toLowerCase() === lower))
+    return t('main.agentNameIsEngine', { name })
+  return null
+}
+
 // ------------------------------------------------------------ Web preview
 
 /** Preview window per project */
@@ -495,6 +516,11 @@ function registerIpc(): void {
       throw new Error(t('main.previewUrlInvalid'))
     if (input.useWorktrees && !(await repoRoot(input.agentPath)))
       throw new Error(t('main.worktreesNoRepo'))
+    const agentName = input.agentName?.trim().replace(/\s+/g, ' ') || undefined
+    if (agentName) {
+      const error = agentNameError(agentName, input.id)
+      if (error) throw new Error(error)
+    }
 
     const saved: Project = {
       id: input.id ?? randomUUID(),
@@ -504,6 +530,7 @@ function registerIpc(): void {
       projectFileApp: input.projectFileApp?.trim() || undefined,
       folderPath: input.folderPath || undefined,
       folderApp: input.folderApp?.trim() || undefined,
+      agentName,
       agentArgs: input.agentArgs?.trim() || undefined,
       useWorktrees: input.useWorktrees || undefined,
       checks: input.checks?.trim() || undefined,
@@ -645,6 +672,13 @@ function registerIpc(): void {
     // "Agent 3" or similar collides with the automatically assigned names
     if (/^agent \d+$/i.test(name)) throw new Error(t('main.agentNameReserved'))
     if (/ \d+$/.test(name)) throw new Error(t('main.templateNameEndsWithNumber'))
+    const usedBy = getState().projects.find(
+      (p) => p.agentName?.toLowerCase() === name.toLowerCase()
+    )
+    if (usedBy)
+      throw new Error(
+        t('main.nameIsProjectAgentName', { name: usedBy.agentName!, project: usedBy.name })
+      )
     const others = getState().templates.filter((t) => t.id !== input.id)
     if (others.some((t) => t.name.toLowerCase() === name.toLowerCase()))
       throw new Error(t('main.templateExists', { name }))
@@ -762,6 +796,12 @@ function registerIpc(): void {
   ipcMain.handle('history:remove', (_, id: string) => agents.removeArchived(id))
   ipcMain.handle('history:resume', (_, id: string, fork?: boolean) =>
     agents.resumeArchived(id, fork === true)
+  )
+  ipcMain.handle('history:localSessions', (_, projectId: string) => agents.localSessions(projectId))
+  ipcMain.handle(
+    'history:resumeSession',
+    (_, projectId: string, sessionId: string, fork?: boolean) =>
+      agents.resumeSession(projectId, String(sessionId), fork === true)
   )
   ipcMain.handle('history:search', (_, query: string) =>
     searchSessions(
@@ -896,6 +936,13 @@ function registerIpc(): void {
     const taken = [...getState().engines.filter((e) => e.id !== input.id), ...getState().templates]
     if (taken.some((e) => e.name.toLowerCase() === name.toLowerCase()))
       throw new Error(t('main.engineNameTaken', { name }))
+    const usedBy = getState().projects.find(
+      (p) => p.agentName?.toLowerCase() === name.toLowerCase()
+    )
+    if (usedBy)
+      throw new Error(
+        t('main.nameIsProjectAgentName', { name: usedBy.agentName!, project: usedBy.name })
+      )
     const saved: Engine = { id: input.id ?? randomUUID(), name, command }
     updateState((s) => {
       const i = s.engines.findIndex((e) => e.id === saved.id)

@@ -767,6 +767,17 @@ input.rename {
 .snippet-copy.done {
   background: var(--working);
 }
+.snippet-close {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px;
+  color: var(--muted);
+  background: none;
+  border: none;
+}
+.snippet-close:hover {
+  color: var(--text);
+}
 .snippet-code {
   margin: 0;
   padding: 8px 10px;
@@ -836,6 +847,11 @@ input.rename {
   gap: 8px;
   padding: 12px 18px;
   border-top: 1px solid var(--border);
+}
+/* Option on the left of the footer buttons (e.g. "Don't show again") */
+.modal-footer-option {
+  margin-right: auto;
+  align-self: center;
 }
 .form {
   display: flex;

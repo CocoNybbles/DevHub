@@ -3,20 +3,32 @@ import type { CodeSnippet } from '../../../shared/types'
 import { languageForFence, monaco } from '../lib/monaco'
 import { getLocale } from '../../../shared/i18n'
 import { useT } from '../lib/i18n'
-import { CheckIcon, CopyIcon } from './Icons'
+import { CheckIcon, CloseIcon, CopyIcon } from './Icons'
 
-/** Code blocks from the agent's replies, newest first, each with a copy button. */
-function SnippetList({ snippets }: { snippets: CodeSnippet[] }): React.JSX.Element {
+interface Props {
+  snippets: CodeSnippet[]
+  /** Close a single snippet */
+  onClose: (id: string) => void
+}
+
+/** Code blocks from the agent's replies, newest first, each with a copy and a close button. */
+function SnippetList({ snippets, onClose }: Props): React.JSX.Element {
   return (
     <div className="snippets">
       {snippets.map((s) => (
-        <SnippetCard key={s.id} snippet={s} />
+        <SnippetCard key={s.id} snippet={s} onClose={() => onClose(s.id)} />
       ))}
     </div>
   )
 }
 
-function SnippetCard({ snippet }: { snippet: CodeSnippet }): React.JSX.Element {
+function SnippetCard({
+  snippet,
+  onClose
+}: {
+  snippet: CodeSnippet
+  onClose: () => void
+}): React.JSX.Element {
   const t = useT()
   const [html, setHtml] = useState<string | null>(null)
   const [copied, setCopied] = useState(false)
@@ -63,6 +75,9 @@ function SnippetCard({ snippet }: { snippet: CodeSnippet }): React.JSX.Element {
         >
           {copied ? <CheckIcon /> : <CopyIcon />}
           {copied ? t('common.copied') : t('common.copy')}
+        </button>
+        <button className="snippet-close" title={t('code.closeSnippet')} onClick={onClose}>
+          <CloseIcon />
         </button>
       </div>
       {html ? (

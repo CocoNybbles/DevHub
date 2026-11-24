@@ -291,6 +291,15 @@ function SettingsDialog(props: Props): React.JSX.Element {
           </label>
         </div>
         {argsError ? <p className="error small">{argsError}</p> : <AgentArgsHelp scope="global" />}
+        <label className="checkbox">
+          <input
+            type="checkbox"
+            checked={settings.autoResume}
+            onChange={(e) => update({ autoResume: e.target.checked })}
+          />
+          {t('settings.autoResume')}
+        </label>
+        <small className="muted">{t('settings.autoResumeHelp')}</small>
       </section>
 
       <section className="settings-section">
@@ -445,6 +454,14 @@ function SettingsDialog(props: Props): React.JSX.Element {
           {t('settings.permissionInbox')}
         </label>
         <small className="muted">{t('settings.permissionInboxHelp')}</small>
+        <label className="checkbox">
+          <input
+            type="checkbox"
+            checked={settings.reviewOnShowDiff}
+            onChange={(e) => update({ reviewOnShowDiff: e.target.checked })}
+          />
+          {t('settings.reviewOnShowDiff')}
+        </label>
         <label className="checkbox">
           <input
             type="checkbox"

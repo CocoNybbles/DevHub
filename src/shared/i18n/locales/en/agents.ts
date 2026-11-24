@@ -22,6 +22,8 @@ const en = {
   archiveEntryNotFound: 'Entry not found',
   transcriptGone: 'The transcript of this session no longer exists',
   sessionAlreadyRunning: 'This session is already running',
+  sessionDirMismatch:
+    'The session ran in {path}, but an agent of this project would start in another folder there – claude would not find it',
   workerStopDenied: '{name} belongs to a team – stop the team or ask the orchestrator',
   workerRenameDenied: 'Team members cannot be renamed',
   workerNoOrchestrator: '{name} has no running orchestrator',

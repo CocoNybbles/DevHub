@@ -16,6 +16,9 @@ const de: typeof en = {
     'Ergänzen die globalen Flags aus den Einstellungen; gleichnamige Flags ersetzen die globalen.',
   argsHelpExamples: 'Beispiele:',
   argsHelpApplies: 'Gilt ab dem nächsten Agent-Start.',
+  autoResume: 'Agents der letzten Sitzung beim Start von DevHub fortsetzen',
+  autoResumeHelp:
+    'Ausgeschaltet landen ihre Unterhaltungen im Verlauf und können dort fortgesetzt werden. Team-Mitglieder, andere Engines und nie gestartete Kopien werden beendet; Warteschlangen verfallen (Einträge einer Aufgabe gehen zurück aufs Board).',
 
   // Predefined agents
   templatesTitle: 'Vordefinierte Agents',
@@ -51,6 +54,7 @@ const de: typeof en = {
   permissionInbox: 'Freigaben im Eingang entscheiden (statt im Terminal des Agents)',
   permissionInboxHelp:
     'Mit „Immer“ entsteht eine Regel fürs Projekt (Projekt bearbeiten → Freigabe-Regeln). Regeln gelten auch ohne diese Einstellung.',
+  reviewOnShowDiff: '„Änderungen prüfen“ öffnen, wenn ein Agent seine Änderungen vorstellt',
   voiceReadback: 'Fertige Agents: Kurzfassung der Antwort vorlesen',
   voiceReadbackHelp:
     'Claude (Haiku) fasst die Antwort in ein bis zwei Sätzen zusammen; vorgelesen wird mit der Windows-Sprachausgabe.',

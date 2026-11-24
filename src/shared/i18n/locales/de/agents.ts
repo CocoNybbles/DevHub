@@ -24,6 +24,8 @@ const de: typeof en = {
   archiveEntryNotFound: 'Eintrag nicht gefunden',
   transcriptGone: 'Das Transkript dieser Sitzung gibt es nicht mehr',
   sessionAlreadyRunning: 'Diese Sitzung läuft bereits',
+  sessionDirMismatch:
+    'Die Sitzung lief in {path}, ein Agent dieses Projekts würde dort aber in einem anderen Ordner starten – claude fände sie nicht',
   workerStopDenied: '{name} gehört zu einem Team – beende das Team oder bitte den Orchestrator',
   workerRenameDenied: 'Teammitglieder können nicht umbenannt werden',
   workerNoOrchestrator: '{name} hat keinen laufenden Orchestrator',

@@ -8,6 +8,7 @@ const en = {
 
   // Start menu
   startAgent: 'Start agent',
+  resumeSession: 'Resume session …',
   startNamed: 'Start {name}',
   startNamedWithModel: 'Start {name} ({model})',
   startTeam: 'Start team {name} ({members})',
