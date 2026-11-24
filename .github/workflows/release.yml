@@ -1,20 +1,19 @@
 # Release after merging a PR labelled "release": build the Windows ZIP and publish it as a
 # GitHub release (logic in scripts/release.mjs, manually: npm run release).
 #
-# pull_request_target instead of pull_request: for PRs from forks the token would be read-only.
-# Safe because the job only runs after the merge and builds the merge commit on main –
-# i.e. only code that has already been approved. Never put PR content into run: lines
-# (only via env), otherwise title/description could inject code.
+# Triggered by the push to main (not pull_request_target, which GitHub restricts on public
+# repos): the merge has already happened, so only approved code on main is built. The job
+# "check" looks up the PR of the pushed commit and its label (scripts/release-pr.mjs). Never
+# put PR content into run: lines (only via env), otherwise title/description could inject code.
 name: Release
 
 on:
-  pull_request_target:
-    types: [closed]
+  push:
     branches: [main]
 
 permissions:
   contents: write
-  pull-requests: read # release notes: PRs merged since the last release
+  pull-requests: read # PR of the commit, release notes: PRs merged since the last release
 
 # Never two releases at once (same version number)
 concurrency:
@@ -22,13 +21,29 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  check:
+    runs-on: ubuntu-latest
+    outputs:
+      pr: ${{ steps.pr.outputs.pr }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: scripts
+
+      - id: pr
+        run: node scripts/release-pr.mjs
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          RELEASE_SHA: ${{ github.sha }}
+
   release:
-    if: github.event.pull_request.merged == true && contains(github.event.pull_request.labels.*.name, 'release')
+    needs: check
+    if: needs.check.outputs.pr != ''
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.pull_request.merge_commit_sha }}
+          ref: ${{ github.sha }}
 
       - uses: actions/setup-node@v4
         with:
@@ -44,5 +59,5 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.RELEASE_TOKEN || github.token }}
           # Reading PRs: the PAT only has Contents permission
           GITHUB_READ_TOKEN: ${{ github.token }}
-          RELEASE_SHA: ${{ github.event.pull_request.merge_commit_sha }}
-          RELEASE_PR: ${{ github.event.pull_request.number }}
+          RELEASE_SHA: ${{ github.sha }}
+          RELEASE_PR: ${{ needs.check.outputs.pr }}
