@@ -21,6 +21,7 @@ import InboxPanel, { FileConflict } from './components/InboxPanel'
 import ReviewDialog from './components/ReviewDialog'
 import TaskBoardDialog from './components/TaskBoardDialog'
 import HistoryDialog from './components/HistoryDialog'
+import ResumeSessionDialog from './components/ResumeSessionDialog'
 import RunDialog from './components/RunDialog'
 import ReportDialog from './components/ReportDialog'
 import QueueDialog from './components/QueueDialog'
@@ -136,6 +137,8 @@ function Workspace(): React.JSX.Element {
   } | null>(null)
   const [tasksFor, setTasksFor] = useState<string | null>(null)
   const [historyOpen, setHistoryOpen] = useState(false)
+  /** "Resume session …" for this project */
+  const [resumeFor, setResumeFor] = useState<string | null>(null)
   const [reportOpen, setReportOpen] = useState(false)
   const [runFor, setRunFor] = useState<string | null>(null)
   const [queueFor, setQueueFor] = useState<string | null>(null)
@@ -913,6 +916,7 @@ function Workspace(): React.JSX.Element {
             else setToast(t('workspace.createProjectFirst'))
           }}
           onOpenHistory={() => setHistoryOpen(true)}
+          onResumeSession={setResumeFor}
           onOpenReport={() => setReportOpen(true)}
           onOpenRun={setRunFor}
           onReview={(projectId, agentId) => setReview({ projectId, agentId })}
@@ -1048,6 +1052,13 @@ function Workspace(): React.JSX.Element {
           settings={settings}
           onShowAgent={showAgent}
           onClose={() => setHistoryOpen(false)}
+        />
+      )}
+      {resumeFor && projects.some((p) => p.id === resumeFor) && (
+        <ResumeSessionDialog
+          project={projects.find((p) => p.id === resumeFor)!}
+          onShowAgent={showAgent}
+          onClose={() => setResumeFor(null)}
         />
       )}
       {reportOpen && <ReportDialog projects={projects} onClose={() => setReportOpen(false)} />}

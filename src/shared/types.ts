@@ -230,6 +230,33 @@ export interface ArchivedSession {
   usage?: AgentUsage
 }
 
+/** Session of a project that still exists on disk ("Resume session …") */
+export interface LocalSession {
+  sessionId: string
+  /** Working directory of the session (agent folder or a worktree) */
+  cwd: string
+  /** Name set with `/rename`, otherwise claude's generated title */
+  title?: string
+  /** The first instruction (shortened) */
+  firstPrompt?: string
+  /** The latest instruction (shortened) */
+  lastPrompt?: string
+  /** Session of a former team member: resumed without its team (the team tools no longer work) */
+  team?: boolean
+  /** Last change of the transcript */
+  updatedAt: number
+  /** Size of the transcript in bytes */
+  size: number
+  /** Branch, if the session ran in one of the project's worktrees */
+  branch?: string
+  /** Agent that is currently running this session */
+  agentId?: string
+  /** Name of the running agent or of the history entry */
+  name?: string
+  /** In the history: when its agent ended */
+  endedAt?: number
+}
+
 /** Match of the full-text search across the transcripts */
 export interface SessionMatch {
   sessionId: string
@@ -621,6 +648,10 @@ export interface DevHubApi {
     /** Resume the session as an agent (fork = as a copy, the original stays in the history) */
     resume: (id: string, fork?: boolean) => Promise<Agent>
     search: (query: string) => Promise<SessionMatch[]>
+    /** Sessions of the project still on disk (agent folder + known worktrees), newest first */
+    localSessions: (projectId: string) => Promise<LocalSession[]>
+    /** Start an agent with one of these sessions (`claude --resume`); fork = as a copy */
+    resumeSession: (projectId: string, sessionId: string, fork?: boolean) => Promise<Agent>
   }
   git: {
     targets: (projectId: string) => Promise<ReviewInfo>

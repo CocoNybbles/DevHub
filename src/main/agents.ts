@@ -1,7 +1,7 @@
 import * as pty from 'node-pty'
 import { randomUUID } from 'crypto'
 import { existsSync, readFileSync, rmSync, writeFileSync } from 'fs'
-import { isAbsolute, join, resolve as resolvePath } from 'path'
+import { isAbsolute, join, relative, resolve as resolvePath } from 'path'
 import { exec } from 'child_process'
 import type {
   ActivityEntry,
@@ -13,6 +13,7 @@ import type {
   CodePlan,
   CodeSnippet,
   EditedFile,
+  LocalSession,
   PermissionAnswer,
   PermissionInfo,
   Project,
@@ -30,7 +31,7 @@ import {
   readSessionSummary,
   TranscriptReader
 } from './snippets'
-import { findSessionFile } from './history'
+import { findSessionFile, listLocalSessions } from './history'
 import {
   AgentBridge,
   AnswerPermissionArgs,
@@ -619,8 +620,7 @@ export class AgentManager {
     const entry = getState().archive.find((x) => x.id === id)
     if (!entry) throw new Error(t('agents.archiveEntryNotFound'))
     if (!sessionExists(entry.sessionId)) throw new Error(t('agents.transcriptGone'))
-    if (this.list().some((a) => a.sessionId === entry.sessionId))
-      throw new Error(t('agents.sessionAlreadyRunning'))
+    if (this.sessionInUse(entry.sessionId)) throw new Error(t('agents.sessionAlreadyRunning'))
     // A session can only be continued in its own directory → recreate a cleaned-up worktree
     if (entry.worktree) await restoreWorktree(entry.worktree)
     const templateId = getState().templates.some((t) => t.id === entry.templateId)
@@ -635,6 +635,92 @@ export class AgentManager {
     })
     if (!fork) updateState((s) => (s.archive = s.archive.filter((x) => x.id !== id)))
     return agent
+  }
+
+  /**
+   * Sessions of the project that still exist on disk (newest first): those that ran in the
+   * agent folder or in one of the project's known worktrees – also sessions DevHub never knew
+   * (started in a terminal of its own).
+   */
+  async localSessions(projectId: string): Promise<LocalSession[]> {
+    const project = getState().projects.find((p) => p.id === projectId)
+    if (!project) throw new Error(t('agents.projectNotFound'))
+    const worktrees = this.knownWorktrees(project)
+    // Only the directory an agent would be started in: --resume finds a session only there
+    const cwds = [project.agentPath, ...worktrees.map((wt) => agentDirIn(wt, project.agentPath))]
+    const running = this.list()
+    const { agents, archive } = getState()
+    return (await listLocalSessions(cwds)).map((s) => {
+      // Saved but not (yet) running agents count too (e.g. before the restore at app start)
+      const agent =
+        running.find((a) => a.sessionId === s.sessionId) ??
+        agents.find((a) => a.sessionId === s.sessionId)
+      const archived = archive.find((x) => x.sessionId === s.sessionId)
+      return {
+        ...s,
+        branch: this.worktreeOf(worktrees, s.cwd)?.branch,
+        agentId: agent?.id,
+        name: agent?.name ?? archived?.name,
+        endedAt: archived?.endedAt
+      }
+    })
+  }
+
+  /** Start an agent with a session from `localSessions`; `fork`: as a copy. */
+  async resumeSession(projectId: string, sessionId: string, fork = false): Promise<Agent> {
+    const session = (await this.localSessions(projectId)).find((s) => s.sessionId === sessionId)
+    if (!session) throw new Error(t('agents.transcriptGone'))
+    if (!fork && this.sessionInUse(sessionId)) throw new Error(t('agents.sessionAlreadyRunning'))
+    // Known from the history: name, model and template come back (and the entry disappears)
+    const archived = getState().archive.find((x) => x.sessionId === sessionId)
+    if (archived && !fork) return this.resumeArchived(archived.id)
+    const project = getState().projects.find((p) => p.id === projectId)!
+    // A session can only be continued in its own directory → recreate a cleaned-up worktree
+    const worktree = this.worktreeOf(this.knownWorktrees(project), session.cwd)
+    if (worktree) {
+      await restoreWorktree(worktree)
+      // The agent starts in worktreeCwd – claude must find the session there
+      const cwd = worktreeCwd(worktree, project.agentPath)
+      if (resolvePath(cwd).toLowerCase() !== resolvePath(session.cwd).toLowerCase())
+        throw new Error(t('agents.sessionDirMismatch', { path: session.cwd }))
+    }
+    const templateId = getState().templates.some((x) => x.id === archived?.templateId)
+      ? archived?.templateId
+      : undefined
+    return this.start(projectId, undefined, archived?.model, templateId, {
+      name: archived?.name,
+      sessionId: fork ? undefined : sessionId,
+      forkFrom: fork ? sessionId : undefined,
+      worktree,
+      noWorktree: true
+    })
+  }
+
+  /** Is the session used by a running or saved agent (one that is restored at app start)? */
+  private sessionInUse(sessionId: string): boolean {
+    return (
+      this.list().some((a) => a.sessionId === sessionId) ||
+      getState().agents.some((a) => a.sessionId === sessionId)
+    )
+  }
+
+  /** Worktrees of the project known from running/saved agents and the history */
+  private knownWorktrees(project: Project): AgentWorktree[] {
+    const { agents, archive } = getState()
+    const all = [...agents, ...archive]
+      .filter((x) => x.projectId === project.id && x.worktree)
+      .map((x) => x.worktree!)
+    return all.filter(
+      (wt, i) => all.findIndex((x) => x.path.toLowerCase() === wt.path.toLowerCase()) === i
+    )
+  }
+
+  /** The worktree a session directory lies in */
+  private worktreeOf(worktrees: AgentWorktree[], cwd: string): AgentWorktree | undefined {
+    return worktrees.find((wt) => {
+      const rel = relative(resolvePath(wt.path), resolvePath(cwd))
+      return !rel.startsWith('..') && !isAbsolute(rel)
+    })
   }
 
   /** Stop via the UI: workers only with the whole team, the orchestrator stops the team. */
@@ -2214,6 +2300,16 @@ function lastLines(output: string, count = 6): string {
 const ANSI =
   // eslint-disable-next-line no-control-regex
   /\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[()][A-Z0-9]|\x1b[=>]/g
+
+/**
+ * Directory an agent of the project works in inside the worktree (as `worktreeCwd`); for a
+ * removed worktree computed without checking the disk (it is recreated on resume).
+ */
+function agentDirIn(wt: AgentWorktree, agentPath: string): string {
+  if (existsSync(wt.path)) return worktreeCwd(wt, agentPath)
+  const rel = relative(wt.repo, resolvePath(agentPath))
+  return rel && !rel.startsWith('..') && !isAbsolute(rel) ? join(wt.path, rel) : wt.path
+}
 
 /** Session ids are UUIDs (also checked before they end up in a file path or the command line) */
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i

@@ -10,6 +10,7 @@ const de: typeof en = {
 
   // Start menu
   startAgent: 'Agent starten',
+  resumeSession: 'Sitzung fortsetzen …',
   startNamed: '{name} starten',
   startNamedWithModel: '{name} starten ({model})',
   startTeam: 'Team {name} starten ({members})',

@@ -549,3 +549,11 @@ textarea.mono {
 .remote-url code {
   overflow-wrap: anywhere;
 }
+.history-heading {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.session-recent {
+  color: var(--attention-text);
+}

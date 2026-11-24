@@ -763,6 +763,12 @@ function registerIpc(): void {
   ipcMain.handle('history:resume', (_, id: string, fork?: boolean) =>
     agents.resumeArchived(id, fork === true)
   )
+  ipcMain.handle('history:localSessions', (_, projectId: string) => agents.localSessions(projectId))
+  ipcMain.handle(
+    'history:resumeSession',
+    (_, projectId: string, sessionId: string, fork?: boolean) =>
+      agents.resumeSession(projectId, String(sessionId), fork === true)
+  )
   ipcMain.handle('history:search', (_, query: string) =>
     searchSessions(
       [

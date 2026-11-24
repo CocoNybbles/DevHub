@@ -84,7 +84,10 @@ const api: DevHubApi = {
     list: () => invoke('history:list'),
     remove: (id) => invoke('history:remove', id),
     resume: (id, fork) => invoke('history:resume', id, fork),
-    search: (query) => invoke('history:search', query)
+    search: (query) => invoke('history:search', query),
+    localSessions: (projectId) => invoke('history:localSessions', projectId),
+    resumeSession: (projectId, sessionId, fork) =>
+      invoke('history:resumeSession', projectId, sessionId, fork)
   },
   git: {
     targets: (projectId) => invoke('git:targets', projectId),
