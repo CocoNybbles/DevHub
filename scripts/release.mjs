@@ -14,6 +14,7 @@
 // 3. Create the GitHub release; this creates tag vX.Y.Z on exactly the built commit
 //    (no commit on main needed – main is protected)
 // 4. Upload the ZIP; if that fails, release and tag are removed again
+//    (network errors and 5xx answers of the GitHub API are retried up to 3 times)
 //
 // GitHub login: manually the one stored with Git (Git Credential Manager), in the workflow
 // GITHUB_TOKEN. Never printed.
@@ -96,11 +97,29 @@ const headers = {
   'X-GitHub-Api-Version': '2022-11-28',
   'User-Agent': 'devhub-release-script'
 }
+// Network errors (e.g. ECONNABORTED on the runner) and 5xx answers are retried; other answers
+// are returned as they are. Only for idempotent requests – POST /releases is guarded separately.
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+const retrying = async (label, request, attempts = 4) => {
+  for (let i = 1; ; i++) {
+    try {
+      const res = await request()
+      if (res.status < 500 || i >= attempts) return res
+      console.warn(`${label}: ${res.status}, retrying (${i}/${attempts - 1})`)
+    } catch (err) {
+      if (i >= attempts) throw err
+      console.warn(`${label}: ${err.cause?.code ?? err.message}, retrying (${i}/${attempts - 1})`)
+    }
+    await sleep(5000 * i)
+  }
+}
 const api = (path, init = {}) =>
-  fetch(`https://api.github.com/repos/${repo}${path}`, {
-    ...init,
-    headers: { ...headers, ...init.headers }
-  })
+  retrying(`${init.method ?? 'GET'} ${path}`, () =>
+    fetch(`https://api.github.com/repos/${repo}${path}`, {
+      ...init,
+      headers: { ...headers, ...init.headers }
+    })
+  )
 if ((await api(`/releases/tags/${tag}`)).ok) fail(`Release ${tag} already exists in ${repo}`)
 
 // --- Release notes: every PR merged into main since the last release, with its full description.
@@ -110,7 +129,9 @@ const readHeaders = process.env.GITHUB_READ_TOKEN
   ? { ...headers, Authorization: `Bearer ${process.env.GITHUB_READ_TOKEN}` }
   : headers
 const read = async (path) => {
-  const r = await fetch(`https://api.github.com/repos/${repo}${path}`, { headers: readHeaders })
+  const r = await retrying(`GET ${path}`, () =>
+    fetch(`https://api.github.com/repos/${repo}${path}`, { headers: readHeaders })
+  )
   if (!r.ok) fail(`GitHub ${path}: ${r.status} ${await r.text()}`)
   return r.json()
 }
@@ -179,40 +200,74 @@ if (!built) fail('Build failed')
 if (!existsSync(zip)) fail(`${zip} was not built`)
 
 // --- Publish (creates the tag on `sha`)
-const res = await api('/releases', {
-  method: 'POST',
-  body: JSON.stringify({
-    tag_name: tag,
-    target_commitish: sha,
-    name: `DevHub ${version}`,
-    body: notes,
-    make_latest: 'true'
-  })
-})
-const release = await res.json()
-if (!res.ok) fail(`Creating the release failed: ${res.status} ${JSON.stringify(release)}`)
+// Not blindly retried: if the connection drops after GitHub created the release, a second POST
+// would fail with "already_exists" – so look the release up before every further attempt.
+let release
+for (let i = 1; !release; i++) {
+  if (i > 1) {
+    await sleep(5000 * i)
+    const existing = await api(`/releases/tags/${tag}`)
+    if (existing.ok) {
+      release = await existing.json()
+      break
+    }
+  }
+  try {
+    const res = await fetch(`https://api.github.com/repos/${repo}/releases`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        tag_name: tag,
+        target_commitish: sha,
+        name: `DevHub ${version}`,
+        body: notes,
+        make_latest: 'true'
+      })
+    })
+    const body = await res.json()
+    if (res.ok) release = body
+    else if (res.status < 500 || i >= 4)
+      fail(`Creating the release failed: ${res.status} ${JSON.stringify(body)}`)
+  } catch (err) {
+    if (i >= 4) fail(`Creating the release failed: ${err.cause?.code ?? err.message}`)
+    console.warn(`POST /releases: ${err.cause?.code ?? err.message}, retrying`)
+  }
+}
 console.log(`\nRelease created: ${release.html_url}`)
 
-const up = await fetch(
-  `${release.upload_url.replace(/\{.*\}$/, '')}?name=${encodeURIComponent(basename(zip))}`,
-  {
-    method: 'POST',
-    headers: {
-      ...headers,
-      'Content-Type': 'application/zip',
-      'Content-Length': String(statSync(zip).size)
-    },
-    body: readFileSync(zip)
-  }
-)
-const asset = await up.json()
-if (!up.ok) {
+const name = basename(zip)
+const data = readFileSync(zip)
+let asset, error
+try {
+  const up = await retrying(`Upload ${name}`, async () => {
+    // A dropped upload can leave a broken asset with the same name behind – remove it first
+    const assets = await api(`/releases/${release.id}/assets`)
+    if (assets.ok) {
+      for (const a of await assets.json()) {
+        if (a.name === name) await api(`/releases/assets/${a.id}`, { method: 'DELETE' })
+      }
+    }
+    return fetch(`${release.upload_url.replace(/\{.*\}$/, '')}?name=${encodeURIComponent(name)}`, {
+      method: 'POST',
+      headers: {
+        ...headers,
+        'Content-Type': 'application/zip',
+        'Content-Length': String(statSync(zip).size)
+      },
+      body: data
+    })
+  })
+  const body = await up.json()
+  if (up.ok) asset = body
+  else error = `${up.status} ${JSON.stringify(body)}`
+} catch (err) {
+  error = err.cause?.code ?? err.message
+}
+if (!asset) {
   // Don't leave a half-finished release behind – a rerun would otherwise fail with "already exists"
   await api(`/releases/${release.id}`, { method: 'DELETE' })
   await api(`/git/refs/tags/${tag}`, { method: 'DELETE' })
-  fail(
-    `Upload failed: ${up.status} ${JSON.stringify(asset)} – release and tag ${tag} removed again`
-  )
+  fail(`Upload failed: ${error} – release and tag ${tag} removed again`)
 }
 console.log(`Uploaded: ${asset.browser_download_url}`)
 console.log(`\n✔ DevHub ${version} published`)
