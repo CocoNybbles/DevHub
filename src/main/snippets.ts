@@ -1,4 +1,6 @@
+import { createReadStream } from 'fs'
 import { open } from 'fs/promises'
+import { createInterface } from 'readline'
 import type { AgentUsage, CodeSnippet, EditedFile, LineRange, TokenTotals } from '../shared/types'
 
 /** Keep at most this many snippets per agent (the newest) */
@@ -180,6 +182,28 @@ export class UsageTracker {
     }
     return changed
   }
+}
+
+/**
+ * Only the first instruction and the usage of a transcript (for history entries): streamed line
+ * by line, without snippets/edited files – large transcripts are never held in memory as a whole.
+ */
+export async function readSessionSummary(
+  path: string
+): Promise<{ firstPrompt?: string; usage?: AgentUsage }> {
+  const tracker = new UsageTracker()
+  const lines = createInterface({ input: createReadStream(path, 'utf8'), crlfDelay: Infinity })
+  let batch: string[] = []
+  let counted = false
+  for await (const line of lines) {
+    batch.push(line)
+    if (batch.length >= 500) {
+      counted = tracker.add(batch).usage || counted
+      batch = []
+    }
+  }
+  counted = tracker.add(batch).usage || counted
+  return { firstPrompt: tracker.firstPrompt, usage: counted ? tracker.usage : undefined }
 }
 
 /** Keep at most this many edited files per agent (the most recently changed) */

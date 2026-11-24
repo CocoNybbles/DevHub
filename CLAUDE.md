@@ -45,7 +45,8 @@ Local Windows desktop app for managing projects and the AI coding agents (Claude
 
 **Sessions**
 
-- Agents running when the app is closed are restored with their session on the next start
+- Agents running when the app is closed are restored with their **current** session on the next start (setting `settings.autoResume`, on by default, Settings → "Agent start"). Off → `archiveSaved`: their sessions go into the history in list order (title/usage via `readSessionSummary` in `snippets.ts`: streamed, all transcripts in parallel); team members, other engines, never-started forks and queued instructions without a task are dropped (mentioned in the help text)
+- `/clear` (and `/resume` inside the TUI) switches claude to a new session id: `trackSession` takes it from the `SessionStart` hook (`session_id`, checked with real claude 2.1: `source: "clear"` = new id, `--resume` keeps the id), persists it and moves the old session into the history (own random archive id)
 
 **Voice control**
 

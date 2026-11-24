@@ -477,6 +477,8 @@ export interface Settings {
   voiceFixedLanguage: string | null
   /** File preview: show files edited by the active agent as tabs on the right */
   showEditedFiles: boolean
+  /** App start: resume the agents that were running at the last quit (otherwise → history) */
+  autoResume: boolean
   /** Windows notification + taskbar flashing when an agent is waiting and DevHub is in the background */
   notifyOnWaiting: boolean
   /** Decide permission requests in the inbox instead of in the agent's terminal */

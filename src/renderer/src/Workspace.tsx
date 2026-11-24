@@ -105,6 +105,7 @@ function Workspace(): React.JSX.Element {
     voiceLanguage: null,
     voiceFixedLanguage: null,
     showEditedFiles: true,
+    autoResume: true,
     notifyOnWaiting: true,
     permissionInbox: false,
     voiceReadback: false,

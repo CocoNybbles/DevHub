@@ -16,6 +16,9 @@ const de: typeof en = {
     'Ergänzen die globalen Flags aus den Einstellungen; gleichnamige Flags ersetzen die globalen.',
   argsHelpExamples: 'Beispiele:',
   argsHelpApplies: 'Gilt ab dem nächsten Agent-Start.',
+  autoResume: 'Agents der letzten Sitzung beim Start von DevHub fortsetzen',
+  autoResumeHelp:
+    'Ausgeschaltet landen ihre Unterhaltungen im Verlauf und können dort fortgesetzt werden. Team-Mitglieder, andere Engines und nie gestartete Kopien werden beendet; Warteschlangen verfallen (Einträge einer Aufgabe gehen zurück aufs Board).',
 
   // Predefined agents
   templatesTitle: 'Vordefinierte Agents',

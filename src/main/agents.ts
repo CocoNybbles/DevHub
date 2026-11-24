@@ -1,7 +1,6 @@
 import * as pty from 'node-pty'
 import { randomUUID } from 'crypto'
-import { existsSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'fs'
-import { homedir } from 'os'
+import { existsSync, readFileSync, rmSync, writeFileSync } from 'fs'
 import { isAbsolute, join, resolve as resolvePath } from 'path'
 import { exec } from 'child_process'
 import type {
@@ -24,7 +23,14 @@ import type {
   UserNotice
 } from '../shared/types'
 import { isTeamWorker, teamLead } from '../shared/types'
-import { editFromToolResult, mergeEdits, mergeSnippets, TranscriptReader } from './snippets'
+import {
+  editFromToolResult,
+  mergeEdits,
+  mergeSnippets,
+  readSessionSummary,
+  TranscriptReader
+} from './snippets'
+import { findSessionFile } from './history'
 import {
   AgentBridge,
   AnswerPermissionArgs,
@@ -361,6 +367,7 @@ export class AgentManager {
   async restore(): Promise<void> {
     if (this.restored) return
     this.restored = true
+    if (!getState().settings.autoResume) return this.archiveSaved()
     const projects = new Set(getState().projects.map((p) => p.id))
     for (const saved of getState().agents) {
       if (this.running.has(saved.id)) continue
@@ -379,6 +386,41 @@ export class AgentManager {
         updateState((s) => (s.agents = s.agents.filter((a) => a.id !== saved.id)))
       }
     }
+    this.removeEmptyTeams()
+    this.emitChanged()
+  }
+
+  /**
+   * Automatic resume switched off: the agents of the last run are not started again. Their
+   * sessions go into the history (resumable from there); team members, other engines and forks
+   * that never started have no session of their own and simply end, as do queued instructions
+   * (those of a task go back to the board).
+   */
+  private async archiveSaved(): Promise<void> {
+    const { agents, projects } = getState()
+    const saved = [...agents]
+    // Only title + usage are needed; read all transcripts at the same time
+    const summaries = await Promise.all(
+      saved.map((a) => {
+        const project = projects.find((p) => p.id === a.projectId)
+        const file = project && !a.engineId && !a.teamId ? findSessionFile(a.sessionId) : null
+        if (!project || !file) return null
+        return readSessionSummary(file)
+          .catch(() => ({ firstPrompt: undefined, usage: undefined }))
+          .then((info) => ({ project, info }))
+      })
+    )
+    // Each entry goes to the top of the history → archive backwards, so the list order stays
+    for (let i = saved.length - 1; i >= 0; i--) {
+      const a = saved[i]
+      const s = summaries[i]
+      if (s) {
+        const cwd = a.worktree ? worktreeCwd(a.worktree, s.project.agentPath) : s.project.agentPath
+        const agent = { ...a, usage: s.info.usage } as Agent
+        this.archiveSession(agent, a.sessionId, cwd, s.info.firstPrompt)
+      }
+    }
+    for (const a of saved) this.forget(a.id)
     this.removeEmptyTeams()
     this.emitChanged()
   }
@@ -992,6 +1034,7 @@ export class AgentManager {
     }
     const r = this.running.get(agentId)
     if (!r) return
+    if (ev.hook_event_name === 'SessionStart') this.trackSession(r, ev.session_id)
     // The session is loaded → typed input arrives (held-back messages/jobs follow below)
     if (ev.hook_event_name === 'SessionStart' && !r.ready) {
       r.ready = true
@@ -1378,6 +1421,73 @@ export class AgentManager {
     if (merged.length === r.edits.length && merged.every((e, i) => e === r.edits[i])) return
     r.edits = merged
     this.events.onEdits(agentId, r.edits)
+  }
+
+  /**
+   * claude switches to a new session on `/clear` (and on `/resume` inside the TUI); its
+   * SessionStart hook names the new id. Remember it so that a restart resumes the current
+   * conversation instead of the old one; the old session goes into the history.
+   */
+  private trackSession(r: RunningAgent, sessionId: unknown): void {
+    const a = r.agent
+    if (typeof sessionId !== 'string' || !UUID_RE.test(sessionId)) return
+    // A fork may still report its source session before writing under its own id
+    if (sessionId === a.sessionId || sessionId === a.forkFrom) return
+    if (process.env.DEVHUB_DEBUG) {
+      console.log('[DevHub] Session', a.id.slice(0, 8), a.sessionId, '→', sessionId)
+    }
+    // Rare: `/resume` picked a session another agent is running → both would resume it later
+    const other = this.list().find((x) => x.id !== a.id && x.sessionId === sessionId)
+    if (other) {
+      console.warn(`[DevHub] ${a.name} now uses the same session as ${other.name} (${sessionId})`)
+    }
+    if (!a.engineId && !a.teamId && sessionExists(a.sessionId)) {
+      this.archiveSession(a, a.sessionId, r.cwd, r.title, randomUUID())
+    }
+    a.sessionId = sessionId
+    a.forkFrom = undefined
+    a.usage = undefined
+    r.title = undefined
+    updateState((s) => {
+      const saved = s.agents.find((x) => x.id === a.id)
+      if (saved) {
+        saved.sessionId = sessionId
+        saved.forkFrom = undefined
+      }
+      // `/resume` of a session from the history: it is running again
+      s.archive = s.archive.filter((x) => x.sessionId !== sessionId)
+    })
+    this.emitChanged()
+  }
+
+  /** Put a session into the history (newest first, one entry per session). */
+  private archiveSession(
+    agent: Agent,
+    sessionId: string,
+    cwd: string,
+    title: string | undefined,
+    id = agent.id
+  ): void {
+    const entry: ArchivedSession = {
+      id,
+      projectId: agent.projectId,
+      name: agent.name,
+      sessionId,
+      cwd,
+      createdAt: agent.createdAt,
+      endedAt: Date.now(),
+      title,
+      model: agent.model,
+      templateId: agent.templateId,
+      worktree: agent.worktree,
+      usage: agent.usage
+    }
+    updateState((s) => {
+      s.archive = [entry, ...s.archive.filter((x) => x.sessionId !== sessionId)].slice(
+        0,
+        MAX_ARCHIVE
+      )
+    })
   }
 
   private useTranscript(agentId: string, path: string): void {
@@ -1851,26 +1961,7 @@ export class AgentManager {
     const agent = r?.agent
     // Team members cannot be meaningfully continued without their team
     if (r && agent && !agent.engineId && !agent.teamId && sessionExists(agent.sessionId)) {
-      const entry: ArchivedSession = {
-        id: agent.id,
-        projectId: agent.projectId,
-        name: agent.name,
-        sessionId: agent.sessionId,
-        cwd: r.cwd,
-        createdAt: agent.createdAt,
-        endedAt: Date.now(),
-        title: r.title,
-        model: agent.model,
-        templateId: agent.templateId,
-        worktree: agent.worktree,
-        usage: agent.usage
-      }
-      updateState((s) => {
-        s.archive = [entry, ...s.archive.filter((x) => x.sessionId !== entry.sessionId)].slice(
-          0,
-          MAX_ARCHIVE
-        )
-      })
+      this.archiveSession(agent, agent.sessionId, r.cwd, r.title)
     }
     // Release this agent's running or queued tasks again
     const taskIds = [
@@ -2124,12 +2215,10 @@ const ANSI =
   // eslint-disable-next-line no-control-regex
   /\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[()][A-Z0-9]|\x1b[=>]/g
 
+/** Session ids are UUIDs (also checked before they end up in a file path or the command line) */
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
 /** Does a transcript already exist for the session? Only then is --resume possible. */
 function sessionExists(sessionId: string): boolean {
-  const base = join(process.env.CLAUDE_CONFIG_DIR || join(homedir(), '.claude'), 'projects')
-  try {
-    return readdirSync(base).some((dir) => existsSync(join(base, dir, `${sessionId}.jsonl`)))
-  } catch {
-    return false
-  }
+  return !!findSessionFile(sessionId)
 }
