@@ -77,6 +77,12 @@ export class RemoteServer {
     if (!token || !this.authorized(token)) return send(res, 404, 'text/plain', 'Not found')
     const path = rest.join('/')
 
+    // The page uses relative URLs (api/…) → it needs the trailing slash
+    if (req.method === 'GET' && !rest.length) {
+      res.writeHead(301, { Location: `/${token}/` })
+      res.end()
+      return
+    }
     if (req.method === 'GET' && path === '')
       return send(res, 200, 'text/html; charset=utf-8', page())
     if (req.method === 'GET' && path === 'api/state') return json(res, this.state())

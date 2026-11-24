@@ -49,6 +49,8 @@ export interface RunInfo {
   /** Exit code of the last run (undefined = never run yet) */
   exitCode?: number | null
   startedAt?: number
+  /** Working directory of the current/last run (agent folder or an agent's worktree) */
+  cwd?: string
 }
 
 export type ProjectInput = Omit<Project, 'id'> & { id?: string }

@@ -206,7 +206,15 @@ export async function changes(cwd: string, ref: string): Promise<GitFileChange[]
 export function insideWorkdir(cwd: string, path: string): string {
   const full = resolve(cwd, path)
   const rel = relative(resolve(cwd), full)
-  if (!rel || rel.startsWith('..') || resolve(cwd, rel) !== full || rel.split(sep)[0] === '.git')
+  // Windows paths are case-insensitive: `.GIT/hooks/…` is the real .git folder
+  const top = rel.split(sep)[0].toLowerCase()
+  if (
+    !rel ||
+    rel.startsWith('..') ||
+    resolve(cwd, rel) !== full ||
+    top === '.git' ||
+    top === DEVHUB_DIR
+  )
     throw new Error(t('git.invalidPath', { path }))
   return full
 }

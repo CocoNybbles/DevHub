@@ -18,6 +18,7 @@ import type {
   PermissionInfo,
   Project,
   Task,
+  TaskStatus,
   Team,
   TeamMember,
   UserNotice
@@ -113,6 +114,13 @@ interface RunningAgent {
   quietTimer?: ReturnType<typeof setTimeout>
   /** When the transcript was last read for the usage display */
   usageReadAt: number
+  /**
+   * The UI accepts typed input (claude: `SessionStart` arrived, other engine: first pause in the
+   * output). Until then queue jobs and held-back messages wait.
+   */
+  ready: boolean
+  /** Other engine: when the last queue job was typed in (it gives no "done" signal) */
+  queueSentAt: number
 }
 
 /** Open permission request (claude waits for the hook response): decided by the orchestrator or the user */
@@ -134,6 +142,10 @@ const MAX_ACTIVITY = 60
 const MAX_ARCHIVE = 200
 /** Other engines: this long without output = waiting */
 const QUIET_MS = 2500
+/** Other engine: minimum gap between two queue jobs (it gives no "done" signal) */
+const ENGINE_QUEUE_GAP_MS = 10_000
+/** Until then at the latest, an agent counts as ready for typed input even without a signal */
+const READY_FALLBACK_MS = 30_000
 
 /** Name of the automatically started orchestrator ("Orchestrator", "Orchestrator 2" …) */
 const ORCHESTRATOR_NAME = 'Orchestrator'
@@ -179,7 +191,9 @@ export interface AgentEvents {
   runTool: (
     project: Project,
     tool: 'run_list' | 'run_output' | 'run_start' | 'run_stop',
-    args: Record<string, unknown>
+    args: Record<string, unknown>,
+    /** The calling agent's working directory (its worktree, if it has one) */
+    cwd: string
   ) => string
 }
 
@@ -447,6 +461,8 @@ export class AgentManager {
       } catch (e) {
         failures.push(`${agent.name}: ${e instanceof Error ? e.message : String(e)}`)
         updateState((s) => (s.agents = s.agents.filter((a) => a.id !== agent.id)))
+        // Do not leave an empty worktree + branch behind
+        if (agent.worktree) void removeWorktreeIfUnused(agent.worktree).catch(noop)
         // Without an orchestrator the team cannot be controlled → abort entirely
         if (agent === orchestrator) {
           const ids = new Set(agents.map((a) => a.id))
@@ -707,7 +723,12 @@ export class AgentManager {
     if (!existsSync(project.agentPath))
       throw new Error(t('agents.folderMissing', { path: project.agentPath }))
 
-    // Worktree was removed by hand → continue working in the agent folder
+    // Worktree was removed (by hand or `git worktree prune`): a session can only be resumed in
+    // its own directory → recreate it; only if that fails, continue in the agent folder
+    if (agent.worktree && !existsSync(agent.worktree.path))
+      await restoreWorktree(agent.worktree).catch((e) =>
+        console.error('[DevHub] Restore worktree:', e)
+      )
     if (agent.worktree && !existsSync(agent.worktree.path)) {
       agent.worktree = undefined
       updateState((s) => {
@@ -810,8 +831,12 @@ export class AgentManager {
       draftAt: 0,
       activityLog: [],
       contextWarned: false,
-      usageReadAt: 0
+      usageReadAt: 0,
+      ready: false,
+      queueSentAt: 0
     }
+    // Fallback if the ready signal never comes (e.g. hooks blocked): do not hold forever
+    setTimeout(() => (r.ready = true), READY_FALLBACK_MS).unref()
     this.running.set(agent.id, r)
 
     proc.onExit(({ exitCode }) => {
@@ -854,6 +879,7 @@ export class AgentManager {
       this.setStatus(agent.id, 'working')
       clearTimeout(r.quietTimer)
       r.quietTimer = setTimeout(() => {
+        r.ready = true
         this.setStatus(agent.id, 'idle', t('agents.statusEngineQuiet'))
         // Type in the task as soon as the engine's UI is up
         if (!taskSent) {
@@ -966,6 +992,14 @@ export class AgentManager {
     }
     const r = this.running.get(agentId)
     if (!r) return
+    // The session is loaded → typed input arrives (held-back messages/jobs follow below)
+    if (ev.hook_event_name === 'SessionStart' && !r.ready) {
+      r.ready = true
+      setTimeout(() => {
+        this.flushPending(agentId)
+        this.sendNextQueued(agentId)
+      }, 300)
+    }
     // Bookkeeping for all agents: turn, open question, activity, changed files
     switch (ev.hook_event_name) {
       case 'UserPromptSubmit':
@@ -1144,8 +1178,13 @@ export class AgentManager {
   private sendNextQueued(id: string): void {
     const r = this.running.get(id)
     if (!r || !r.agent.queue?.length) return
-    // Other engines do not report "done" → type it in immediately
-    if (!r.agent.engineId && (!r.turnDone || this.mustHold(r))) return
+    if (this.mustHold(r)) return
+    if (r.agent.engineId) {
+      // Other engines do not report "done": wait until the output has been quiet for a while
+      // (status idle) and the previous job has had time to produce output
+      if (r.agent.status !== 'idle' || Date.now() - r.queueSentAt < ENGINE_QUEUE_GAP_MS) return
+      r.queueSentAt = Date.now()
+    } else if (!r.turnDone) return
     const [next, ...rest] = r.agent.queue
     r.agent.queue = rest
     r.agent.currentTaskId = next.taskId
@@ -1231,16 +1270,37 @@ export class AgentManager {
   }
 
   removeTask(id: string): void {
-    // Also remove it from queues
-    for (const r of this.running.values()) {
-      if (r.agent.queue?.some((q) => q.taskId === id)) {
-        r.agent.queue = r.agent.queue.filter((q) => q.taskId !== id)
-        this.saveAgent(r.agent)
-      }
-    }
+    this.detachTask(id)
     updateState((s) => (s.tasks = s.tasks.filter((t) => t.id !== id)))
     this.events.onTasksChanged(getState().tasks)
     this.emitChanged()
+  }
+
+  /** Set by the user on the board: open/done → no agent works on it any more (queue included). */
+  setTaskStatus(id: string, status: TaskStatus): void {
+    if (status !== 'running') this.detachTask(id)
+    this.updateTask(
+      id,
+      status === 'open' ? { status, agentId: undefined, agentName: undefined } : { status }
+    )
+    this.emitChanged()
+  }
+
+  /** Remove a task from all queues and from the agent currently working on it. */
+  private detachTask(id: string): void {
+    for (const r of this.running.values()) {
+      let changed = false
+      if (r.agent.queue?.some((q) => q.taskId === id)) {
+        r.agent.queue = r.agent.queue.filter((q) => q.taskId !== id)
+        changed = true
+      }
+      // Otherwise the end of the turn would mark it as done again
+      if (r.agent.currentTaskId === id) {
+        r.agent.currentTaskId = undefined
+        changed = true
+      }
+      if (changed) this.saveAgent(r.agent)
+    }
   }
 
   updateTask(id: string, patch: Partial<Task>): void {
@@ -1415,7 +1475,7 @@ export class AgentManager {
       case 'run_stop': {
         const project = getState().projects.find((p) => p.id === r.agent.projectId)
         if (!project) throw new Error('Project not found')
-        return this.events.runTool(project, name, args)
+        return this.events.runTool(project, name, args, r.cwd)
       }
     }
     if (name === 'show_code') return this.handleShowCode(agentId, args as unknown as ShowCodeArgs)
@@ -1580,6 +1640,7 @@ export class AgentManager {
 
   private mustHold(r: RunningAgent): boolean {
     return (
+      !r.ready ||
       r.agent.status === 'starting' ||
       !!r.agent.editing ||
       r.asking ||

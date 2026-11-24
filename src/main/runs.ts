@@ -44,13 +44,13 @@ export class RunManager {
     })
   }
 
-  start(project: Project, name: string): void {
+  /** `cwd`: working directory (default: the agent folder; an agent's worktree for its own runs) */
+  start(project: Project, name: string, cwd = project.agentPath): void {
     const cmd = (project.runCommands ?? []).find(
       (c) => c.name.trim().toLowerCase() === name.trim().toLowerCase()
     )
     if (!cmd) throw new Error(t('backend.commandNotConfigured', { name, project: project.name }))
-    if (!existsSync(project.agentPath))
-      throw new Error(t('backend.folderMissing', { path: project.agentPath }))
+    if (!existsSync(cwd)) throw new Error(t('backend.folderMissing', { path: cwd }))
     const key = this.key(project.id, cmd.name)
     if (this.runs.get(key)?.info.running) return
 
@@ -60,14 +60,15 @@ export class RunManager {
         name: cmd.name,
         command: cmd.command,
         running: true,
-        startedAt: Date.now()
+        startedAt: Date.now(),
+        cwd
       },
       output: ''
     }
     this.runs.set(key, run)
     // The user's command line → via the shell (one string, no argument list)
     const proc = spawn(cmd.command, {
-      cwd: project.agentPath,
+      cwd,
       shell: true,
       windowsHide: true,
       env: { ...process.env, FORCE_COLOR: '0', NO_COLOR: '1' }

@@ -104,9 +104,15 @@ const runs = new RunManager({
 function runTool(
   p: Project,
   tool: 'run_list' | 'run_output' | 'run_start' | 'run_stop',
-  args: Record<string, unknown>
+  args: Record<string, unknown>,
+  cwd: string
 ): string {
   const list = runs.list(p)
+  const sameDir = (dir?: string): boolean =>
+    !!dir && resolve(dir).toLowerCase() === resolve(cwd).toLowerCase()
+  /** Runs are shared per project: say when a run does not use the agent's own directory */
+  const where = (dir?: string): string =>
+    !dir || sameDir(dir) ? '' : ` [runs in ${dir}, not in your working directory]`
   if (tool === 'run_list') {
     if (!list.length)
       return 'No commands are configured for this project (the user can add them in the DevHub project settings).'
@@ -117,7 +123,7 @@ function runTool(
           : r.exitCode === undefined
             ? 'not started yet'
             : `exited with code ${r.exitCode ?? '?'}`
-        return `- ${r.name}: \`${r.command}\` – ${state}`
+        return `- ${r.name}: \`${r.command}\` – ${state}${r.exitCode !== undefined || r.running ? where(r.cwd) : ''}`
       })
       .join('\n')
   }
@@ -127,8 +133,15 @@ function runTool(
   const run = list.find((r) => r.name.trim().toLowerCase() === wanted)
   if (!run) throw new Error(`No command named "${String(args.name ?? '')}". Call run_list first.`)
   if (tool === 'run_start') {
-    runs.start(p, run.name)
-    return `Started "${run.name}". Read its output with run_output.`
+    if (run.running) {
+      return sameDir(run.cwd)
+        ? `"${run.name}" is already running. Read its output with run_output.`
+        : `"${run.name}" is already running in ${run.cwd}, not in your working directory. ` +
+            'Stop it with run_stop first if it needs to run on your changes.'
+    }
+    // In the agent's own directory → with a worktree, the command sees the agent's changes
+    runs.start(p, run.name, cwd)
+    return `Started "${run.name}" in your working directory. Read its output with run_output.`
   }
   if (tool === 'run_stop') {
     runs.stop(p.id, run.name)
@@ -137,7 +150,7 @@ function runTool(
   const count = Math.max(1, Math.min(400, Math.floor(Number(args.lines)) || 80))
   const lines = runs.output(p.id, run.name).split(/\r?\n/)
   const tail = lines.slice(-count).join('\n').trim()
-  return `${run.name} (${run.running ? 'running' : 'not running'}), last ${count} lines:\n${tail || '(no output yet)'}`
+  return `${run.name} (${run.running ? 'running' : 'not running'})${where(run.cwd)}, last ${count} lines:\n${tail || '(no output yet)'}`
 }
 
 /** Most recently reported waiting reason per agent (no duplicate notifications in quick succession) */
@@ -275,6 +288,16 @@ function previewUrl(p: Project): string {
   return url
 }
 
+/** http/https only – everything else is not handed to the Windows shell */
+function isWebUrl(url: string): boolean {
+  try {
+    const { protocol } = new URL(url)
+    return protocol === 'http:' || protocol === 'https:'
+  } catch {
+    return false
+  }
+}
+
 function openPreview(projectId: string): BrowserWindow {
   const p = project(projectId)
   const url = previewUrl(p)
@@ -294,9 +317,14 @@ function openPreview(projectId: string): BrowserWindow {
     // Foreign page: sandboxed, without preload/Node
     webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false }
   })
+  // Foreign page: only web links go to the browser – never file:, ms-…: or other protocol
+  // handlers that Windows would run without asking
   win.webContents.setWindowOpenHandler((details) => {
-    shell.openExternal(details.url)
+    if (isWebUrl(details.url)) void shell.openExternal(details.url).catch(() => {})
     return { action: 'deny' }
+  })
+  win.webContents.on('will-navigate', (e, target) => {
+    if (!isWebUrl(target)) e.preventDefault()
   })
   win.on('closed', () => previews.delete(projectId))
   previews.set(projectId, win)
@@ -363,8 +391,13 @@ function createWindow(): void {
   })
 
   mainWindow.webContents.setWindowOpenHandler((details) => {
-    shell.openExternal(details.url)
+    if (isWebUrl(details.url)) void shell.openExternal(details.url).catch(() => {})
     return { action: 'deny' }
+  })
+  // Preview windows must not keep the app (agents, runs, remote server) alive without a main window
+  mainWindow.on('closed', () => {
+    mainWindow = null
+    app.quit()
   })
 
   if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
@@ -717,10 +750,7 @@ function registerIpc(): void {
   ipcMain.handle('tasks:remove', (_, id: string) => agents.removeTask(id))
   ipcMain.handle('tasks:setStatus', (_, id: string, status: TaskStatus) => {
     if (!['open', 'running', 'done'].includes(status)) throw new Error(t('main.invalidStatus'))
-    agents.updateTask(
-      id,
-      status === 'open' ? { status, agentId: undefined, agentName: undefined } : { status }
-    )
+    agents.setTaskStatus(id, status)
   })
   ipcMain.handle('tasks:start', (_, id: string, templateId?: string) =>
     agents.startTask(id, templateId)
