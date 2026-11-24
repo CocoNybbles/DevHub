@@ -2,6 +2,7 @@ import { useState } from 'react'
 import type { AgentTemplate } from '../../../shared/types'
 import { isValidModelName } from '../../../shared/agentArgs'
 import { errorText } from '../lib/errors'
+import { useT } from '../lib/i18n'
 import DictationTextarea from './DictationTextarea'
 import Modal from './Modal'
 
@@ -17,6 +18,7 @@ const MODEL_SUGGESTIONS = ['fable', 'opus', 'sonnet', 'haiku']
 
 /** Create/edit a predefined agent: name, model, role/guidelines (dictation supported). */
 function AgentTemplateDialog({ template, onSaved, onClose }: Props): React.JSX.Element {
+  const t = useT()
   const [name, setName] = useState(template?.name ?? '')
   const [model, setModel] = useState(template?.model ?? '')
   const [instructions, setInstructions] = useState(template?.instructions ?? '')
@@ -24,7 +26,7 @@ function AgentTemplateDialog({ template, onSaved, onClose }: Props): React.JSX.E
   const [saving, setSaving] = useState(false)
 
   const modelError =
-    model.trim() && !isValidModelName(model.trim()) ? 'Ungültiger Modellname' : null
+    model.trim() && !isValidModelName(model.trim()) ? t('templates.invalidModelName') : null
 
   const save = async (): Promise<void> => {
     setSaving(true)
@@ -47,50 +49,54 @@ function AgentTemplateDialog({ template, onSaved, onClose }: Props): React.JSX.E
 
   return (
     <Modal
-      title={template ? `Vordefinierter Agent: ${template.name}` : 'Neuer vordefinierter Agent'}
+      title={
+        template
+          ? t('templates.agentTitleEdit', { name: template.name })
+          : t('templates.agentTitleNew')
+      }
       onClose={onClose}
       width={640}
       footer={
         <>
-          <button onClick={onClose}>Abbrechen</button>
+          <button onClick={onClose}>{t('common.cancel')}</button>
           <button
             className="primary"
             onClick={save}
             disabled={saving || !name.trim() || !!modelError}
           >
-            Speichern
+            {t('common.save')}
           </button>
         </>
       }
     >
       <div className="form">
         <label>
-          <span>Name</span>
+          <span>{t('common.name')}</span>
           <small className="muted">
-            So heißt der Agent beim Start (weitere: „{name.trim() || 'Name'} 2“ …) und so sprichst
-            du ihn per Sprache an, z. B. „Starte einen {name.trim() || 'Entwickler'} für DevHub“.
+            {t('templates.agentNameHelp', {
+              name: name.trim() || t('common.name'),
+              example: name.trim() || t('templates.agentNameExample')
+            })}
           </small>
           <input
             value={name}
             onChange={(e) => setName(e.target.value)}
-            placeholder="z. B. Entwickler, Reviewer, Tester"
+            placeholder={t('templates.agentNamePlaceholder')}
             autoFocus
           />
         </label>
 
         <label>
           <span>
-            Modell <em>(optional)</em>
+            {t('common.model')} <em>({t('common.optional')})</em>
           </span>
-          <small className="muted">
-            Leer = wie in den Start-Flags. Nennst du beim Sprachbefehl ein Modell, hat das Vorrang.
-          </small>
+          <small className="muted">{t('templates.modelHelp')}</small>
           <input
             className="mono"
             list="template-models"
             value={model}
             onChange={(e) => setModel(e.target.value)}
-            placeholder="z. B. opus, sonnet oder claude-opus-5-5"
+            placeholder={t('templates.modelPlaceholder')}
             spellCheck={false}
           />
           <datalist id="template-models">
@@ -103,19 +109,13 @@ function AgentTemplateDialog({ template, onSaved, onClose }: Props): React.JSX.E
 
         <label>
           <span>
-            Rolle und Richtlinien <em>(optional)</em>
+            {t('templates.roleLabel')} <em>({t('common.optional')})</em>
           </span>
-          <small className="muted">
-            Wird dem Agent bei jedem Start als Anweisung mitgegeben, z. B. wie er arbeiten, testen
-            und committen soll. Mit dem Mikrofon diktieren.
-          </small>
+          <small className="muted">{t('templates.roleHelp')}</small>
           <DictationTextarea
             value={instructions}
             onChange={setInstructions}
-            placeholder={
-              'z. B. Du bist ein erfahrener Entwickler. Schreibe zu jeder Änderung Tests, ' +
-              'halte dich an die Konventionen in CLAUDE.md und erkläre kurz, was du geändert hast.'
-            }
+            placeholder={t('templates.rolePlaceholder')}
           />
         </label>
 

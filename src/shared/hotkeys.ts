@@ -3,6 +3,7 @@
  * The main process uses the same format for `globalShortcut` and the renderer
  * for in-app detection – hence shared here.
  */
+import { t, type TranslationKey } from './i18n'
 
 export const DEFAULT_HOTKEYS = {
   /** In the app: voice instruction to the active agent */
@@ -76,28 +77,35 @@ function normalize(accelerator: string): string {
   return [...mods, key].join('+').toLowerCase()
 }
 
-const LABELS: Record<string, string> = {
-  Control: 'Strg',
-  Super: 'Win',
-  Space: 'Leertaste',
+/** Keys whose display name depends on the language */
+const LABEL_KEYS: Record<string, TranslationKey> = {
+  Control: 'shared.keyControl',
+  Super: 'shared.keySuper',
+  Space: 'shared.keySpace',
+  Delete: 'shared.keyDelete',
+  Insert: 'shared.keyInsert',
+  Home: 'shared.keyHome',
+  End: 'shared.keyEnd',
+  PageUp: 'shared.keyPageUp',
+  PageDown: 'shared.keyPageDown',
+  Enter: 'shared.keyEnter',
+  Backspace: 'shared.keyBackspace'
+}
+
+const SYMBOLS: Record<string, string> = {
   Up: '↑',
   Down: '↓',
   Left: '←',
-  Right: '→',
-  Delete: 'Entf',
-  Insert: 'Einfg',
-  Home: 'Pos1',
-  End: 'Ende',
-  PageUp: 'Bild↑',
-  PageDown: 'Bild↓',
-  Enter: 'Enter',
-  Backspace: 'Rück'
+  Right: '→'
 }
 
-/** Display form, e.g. "Strg+Shift+Leertaste". */
+/** Display form in the current language, e.g. "Ctrl+Shift+Space". */
 export function formatAccelerator(accelerator: string): string {
   return accelerator
     .split('+')
-    .map((p) => LABELS[p] ?? (p.startsWith('num') ? 'Num ' + p.slice(3) : p))
+    .map((p) => {
+      if (Object.hasOwn(LABEL_KEYS, p)) return t(LABEL_KEYS[p])
+      return SYMBOLS[p] ?? (p.startsWith('num') ? 'Num ' + p.slice(3) : p)
+    })
     .join('+')
 }

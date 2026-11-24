@@ -1,3 +1,5 @@
+import { useT } from '../lib/i18n'
+
 interface Props {
   value: string
   onChange: (value: string) => void
@@ -9,6 +11,7 @@ interface Props {
 
 /** Path to a program (.exe) with file picker; empty = default (see placeholder). */
 function ProgramInput({ value, onChange, onCommit, placeholder }: Props): React.JSX.Element {
+  const t = useT()
   const set = (v: string): void => {
     onChange(v)
     onCommit?.(v)
@@ -24,8 +27,8 @@ function ProgramInput({ value, onChange, onCommit, placeholder }: Props): React.
         spellCheck={false}
       />
       {value && (
-        <button title="Standard verwenden" onClick={() => set('')}>
-          Zurücksetzen
+        <button title={t('settings.programUseDefault')} onClick={() => set('')}>
+          {t('settings.programReset')}
         </button>
       )}
       <button
@@ -34,7 +37,7 @@ function ProgramInput({ value, onChange, onCommit, placeholder }: Props): React.
           if (p) set(p)
         }}
       >
-        Durchsuchen …
+        {t('common.browse')}
       </button>
     </div>
   )

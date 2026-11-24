@@ -10,18 +10,30 @@ import {
   Notification,
   clipboard
 } from 'electron'
-import { basename, dirname, join } from 'path'
-import { randomUUID } from 'crypto'
+import { basename, dirname, join, resolve } from 'path'
+import { randomBytes, randomUUID } from 'crypto'
 import { existsSync, readFileSync, statSync, writeFileSync } from 'fs'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import type {
+  Agent,
   AgentTemplate,
   AgentTemplateInput,
+  AgentWorktree,
+  Engine,
+  EngineInput,
+  PermissionAnswer,
   Project,
   ProjectInput,
+  PromptTemplate,
+  PromptTemplateInput,
+  ReviewInfo,
+  ReviewTarget,
+  RunCommand,
   ScannedProject,
   Selection,
   Settings,
+  StartOptions,
+  TaskStatus,
   TeamTemplate,
   TeamTemplateInput,
   WhisperModelId
@@ -29,6 +41,24 @@ import type {
 import { checkClaudeAuth, startClaudeLogin } from './claudeAuth'
 import { AgentManager } from './agents'
 import { applyOrder, getState, updateState } from './store'
+import { RunManager } from './runs'
+import { RemoteServer } from './remote'
+import { dailyReport, spokenSummary } from './reports'
+import { searchSessions } from './history'
+import {
+  changes as gitChanges,
+  commit as gitCommit,
+  discardFile,
+  fileDiff,
+  listWorktrees,
+  mergeWorktree,
+  removeWorktree,
+  repoRoot,
+  reviewRef,
+  worktreesDir,
+  saveFile
+} from './git'
+import { validateRule } from '../shared/permissions'
 import {
   findProjects,
   findSolution,
@@ -40,8 +70,12 @@ import {
 import { deleteModel, downloadVoice, transcribe, voiceStatus } from './voice'
 import { runVoiceCommand } from './voiceCommands'
 import { isValidModelName, validateAgentArgs } from '../shared/agentArgs'
+import { applyLanguageSetting, isLanguage, t } from '../shared/i18n'
 
 let mainWindow: BrowserWindow | null = null
+
+// Interface language for all texts created in main (status texts, errors, notifications)
+applyLanguageSetting(getState().settings.language)
 
 // Single instance only: two would restore the same agents (sessions) and write to the same
 // data folder. A second launch brings the existing window to the front instead.
@@ -61,7 +95,108 @@ function send(channel: string, ...args: unknown[]): void {
   if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(channel, ...args)
 }
 
+const runs = new RunManager({
+  onChanged: (projectId) => send('runs:changed', projectId),
+  onOutput: (projectId, name, chunk) => send('runs:output', projectId, name, chunk)
+})
+
+/** MCP tools `run_*`: agents see and control the project commands of the Run window. */
+function runTool(
+  p: Project,
+  tool: 'run_list' | 'run_output' | 'run_start' | 'run_stop',
+  args: Record<string, unknown>,
+  cwd: string
+): string {
+  const list = runs.list(p)
+  const sameDir = (dir?: string): boolean =>
+    !!dir && resolve(dir).toLowerCase() === resolve(cwd).toLowerCase()
+  /** Runs are shared per project: say when a run does not use the agent's own directory */
+  const where = (dir?: string): string =>
+    !dir || sameDir(dir) ? '' : ` [runs in ${dir}, not in your working directory]`
+  if (tool === 'run_list') {
+    if (!list.length)
+      return 'No commands are configured for this project (the user can add them in the DevHub project settings).'
+    return list
+      .map((r) => {
+        const state = r.running
+          ? 'running'
+          : r.exitCode === undefined
+            ? 'not started yet'
+            : `exited with code ${r.exitCode ?? '?'}`
+        return `- ${r.name}: \`${r.command}\` – ${state}${r.exitCode !== undefined || r.running ? where(r.cwd) : ''}`
+      })
+      .join('\n')
+  }
+  const wanted = String(args.name ?? '')
+    .trim()
+    .toLowerCase()
+  const run = list.find((r) => r.name.trim().toLowerCase() === wanted)
+  if (!run) throw new Error(`No command named "${String(args.name ?? '')}". Call run_list first.`)
+  if (tool === 'run_start') {
+    if (run.running) {
+      return sameDir(run.cwd)
+        ? `"${run.name}" is already running. Read its output with run_output.`
+        : `"${run.name}" is already running in ${run.cwd}, not in your working directory. ` +
+            'Stop it with run_stop first if it needs to run on your changes.'
+    }
+    // In the agent's own directory → with a worktree, the command sees the agent's changes
+    runs.start(p, run.name, cwd)
+    return `Started "${run.name}" in your working directory. Read its output with run_output.`
+  }
+  if (tool === 'run_stop') {
+    runs.stop(p.id, run.name)
+    return `Stopping "${run.name}".`
+  }
+  const count = Math.max(1, Math.min(400, Math.floor(Number(args.lines)) || 80))
+  const lines = runs.output(p.id, run.name).split(/\r?\n/)
+  const tail = lines.slice(-count).join('\n').trim()
+  return `${run.name} (${run.running ? 'running' : 'not running'})${where(run.cwd)}, last ${count} lines:\n${tail || '(no output yet)'}`
+}
+
+/** Most recently reported waiting reason per agent (no duplicate notifications in quick succession) */
+const lastAttention = new Map<string, { message: string; at: number }>()
+
+/** Agent is waiting for the user and DevHub is in the background → Windows notification + flashing. */
+function notifyAttention(agent: Agent, message: string): void {
+  if (!getState().settings.notifyOnWaiting) return
+  if (!mainWindow || mainWindow.isDestroyed() || mainWindow.isFocused()) return
+  const last = lastAttention.get(agent.id)
+  if (last && last.message === message && Date.now() - last.at < 5000) return
+  lastAttention.set(agent.id, { message, at: Date.now() })
+  mainWindow.flashFrame(true)
+  if (!Notification.isSupported()) return
+  const projectName = getState().projects.find((p) => p.id === agent.projectId)?.name
+  const n = new Notification({
+    title: projectName ? `${agent.name} · ${projectName}` : agent.name,
+    body: message.slice(0, 240)
+  })
+  n.on('click', () => {
+    if (!mainWindow || mainWindow.isDestroyed()) return
+    if (mainWindow.isMinimized()) mainWindow.restore()
+    mainWindow.show()
+    mainWindow.focus()
+    send('agents:focusRequest', agent.id)
+  })
+  n.show()
+}
+
 const agents = new AgentManager({
+  onPermissions: (list) => send('inbox:permissions', list),
+  onNotice: (notice) => send('inbox:notice', notice),
+  onAttention: notifyAttention,
+  onTurnFinished: (agent) => {
+    if (!getState().settings.voiceReadback || !agent.lastMessage) return
+    spokenSummary(agent.name, agent.lastMessage)
+      .then((text) => text && send('voice:speak', text))
+      .catch((e) => console.error('[DevHub] Readback:', e))
+  },
+  onPlan: (plan) => send('code:plan', plan),
+  onShowDiff: (id, filePath) => {
+    send('code:showDiff', id, filePath)
+    if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.isFocused()) mainWindow.show()
+  },
+  onTasksChanged: (tasks) => send('tasks:changed', tasks),
+  runTool,
   onData: (id, data) => send('agents:data', id, data),
   onChanged: (list, teams) => send('agents:changed', list, teams),
   onCodeFocus: (focus) => send('code:focus', focus),
@@ -76,7 +211,128 @@ const agents = new AgentManager({
   onEditorAppend: (id, text) => send('editor:append', id, text)
 })
 
-/** File extensions shown as image previews in the editor tab */
+const remote = new RemoteServer(agents)
+
+// ------------------------------------------------------------ Review changes (Git)
+
+interface ResolvedTarget {
+  target: ReviewTarget
+  /** Only for worktrees */
+  worktree?: AgentWorktree
+}
+
+/** A project's reviewable working directories: main folder + worktrees of its agents. */
+async function reviewTargets(
+  projectId: string
+): Promise<{ info: ReviewInfo; all: ResolvedTarget[] }> {
+  const p = project(projectId)
+  const repo = await repoRoot(p.agentPath)
+  if (!repo) return { info: { isRepo: false, targets: [] }, all: [] }
+  const same = (a: string, b: string): boolean =>
+    resolve(a).toLowerCase() === resolve(b).toLowerCase()
+  const running = agents.list().filter((a) => a.projectId === projectId)
+  const root = resolve(worktreesDir(repo)).toLowerCase()
+  const all: ResolvedTarget[] = []
+  for (const wt of await listWorktrees(repo)) {
+    if (same(wt.path, repo)) {
+      const inMain = running.find((a) => !a.worktree)
+      all.unshift({
+        target: {
+          id: 'main',
+          label: wt.branch
+            ? t('main.reviewMainFolderBranch', { branch: wt.branch })
+            : t('main.reviewMainFolder'),
+          cwd: repo,
+          isWorktree: false,
+          branch: wt.branch || undefined,
+          agentId: inMain?.id
+        }
+      })
+      continue
+    }
+    if (!wt.path.toLowerCase().startsWith(root) || !wt.branch) continue
+    const agent = running.find((a) => a.worktree && same(a.worktree.path, wt.path))
+    const archived = getState().archive.find((x) => x.worktree && same(x.worktree.path, wt.path))
+    const known = agent?.worktree ?? archived?.worktree
+    const base = known?.base ?? all[0]?.target.branch ?? 'HEAD'
+    all.push({
+      target: {
+        id: `wt:${wt.branch}`,
+        label: `${agent?.name ?? (archived ? t('main.reviewEndedAgent', { name: archived.name }) : basename(wt.path))} · ${wt.branch}`,
+        cwd: wt.path,
+        isWorktree: true,
+        branch: wt.branch,
+        base,
+        agentId: agent?.id
+      },
+      worktree: { path: wt.path, branch: wt.branch, base, repo }
+    })
+  }
+  return { info: { isRepo: true, targets: all.map((t) => t.target) }, all }
+}
+
+async function reviewTarget(projectId: string, targetId: string): Promise<ResolvedTarget> {
+  const found = (await reviewTargets(projectId)).all.find((t) => t.target.id === targetId)
+  if (!found) throw new Error(t('main.workdirNotFound'))
+  return found
+}
+
+// ------------------------------------------------------------ Web preview
+
+/** Preview window per project */
+const previews = new Map<string, BrowserWindow>()
+
+function previewUrl(p: Project): string {
+  const url = p.previewUrl?.trim()
+  if (!url) throw new Error(t('main.previewUrlMissing', { name: p.name }))
+  return url
+}
+
+/** http/https only – everything else is not handed to the Windows shell */
+function isWebUrl(url: string): boolean {
+  try {
+    const { protocol } = new URL(url)
+    return protocol === 'http:' || protocol === 'https:'
+  } catch {
+    return false
+  }
+}
+
+function openPreview(projectId: string): BrowserWindow {
+  const p = project(projectId)
+  const url = previewUrl(p)
+  let win = previews.get(projectId)
+  if (win && !win.isDestroyed()) {
+    win.show()
+    win.focus()
+    if (win.webContents.getURL() !== url) void win.loadURL(url).catch(() => {})
+    return win
+  }
+  win = new BrowserWindow({
+    width: 1100,
+    height: 800,
+    autoHideMenuBar: true,
+    title: t('main.previewTitle', { name: p.name }),
+    backgroundColor: '#ffffff',
+    // Foreign page: sandboxed, without preload/Node
+    webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false }
+  })
+  // Foreign page: only web links go to the browser – never file:, ms-…: or other protocol
+  // handlers that Windows would run without asking
+  win.webContents.setWindowOpenHandler((details) => {
+    if (isWebUrl(details.url)) void shell.openExternal(details.url).catch(() => {})
+    return { action: 'deny' }
+  })
+  win.webContents.on('will-navigate', (e, target) => {
+    if (!isWebUrl(target)) e.preventDefault()
+  })
+  win.on('closed', () => previews.delete(projectId))
+  previews.set(projectId, win)
+  void win.loadURL(url).catch(() => {})
+  return win
+}
+
+/** File extensions shown as an image preview in the editor tab */
 const IMAGE_TYPES: Record<string, string> = {
   png: 'image/png',
   jpg: 'image/jpeg',
@@ -103,6 +359,8 @@ function createWindow(): void {
   })
 
   mainWindow.on('ready-to-show', () => mainWindow?.show())
+  // Flashing in the taskbar (waiting agent) ends as soon as the window is in front again
+  mainWindow.on('focus', () => mainWindow?.flashFrame(false))
 
   // Dev aid: DEVHUB_SCREENSHOT=<file.png> saves an image of the window after DEVHUB_SCREENSHOT_DELAY ms (default 8000)
   const shot = process.env.DEVHUB_SCREENSHOT
@@ -129,12 +387,17 @@ function createWindow(): void {
   }
 
   mainWindow.webContents.on('render-process-gone', (_, details) => {
-    console.error('[DevHub] Renderer beendet:', details.reason, details.exitCode)
+    console.error('[DevHub] Renderer gone:', details.reason, details.exitCode)
   })
 
   mainWindow.webContents.setWindowOpenHandler((details) => {
-    shell.openExternal(details.url)
+    if (isWebUrl(details.url)) void shell.openExternal(details.url).catch(() => {})
     return { action: 'deny' }
+  })
+  // Preview windows must not keep the app (agents, runs, remote server) alive without a main window
+  mainWindow.on('closed', () => {
+    mainWindow = null
+    app.quit()
   })
 
   if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
@@ -179,7 +442,7 @@ function isSelection(v: unknown): v is NonNullable<Selection> {
 
 function project(id: string): Project {
   const p = getState().projects.find((x) => x.id === id)
-  if (!p) throw new Error('Projekt nicht gefunden')
+  if (!p) throw new Error(t('main.projectNotFound'))
   return p
 }
 
@@ -195,20 +458,45 @@ function registerIpc(): void {
   ipcMain.handle('projects:list', () => getState().projects)
   ipcMain.handle('projects:save', async (_, input: ProjectInput) => {
     const name = input.name?.trim()
-    if (!name) throw new Error('Name fehlt')
+    if (!name) throw new Error(t('main.nameMissing'))
     if (!input.agentPath || !existsSync(input.agentPath))
-      throw new Error('Agent-Pfad existiert nicht')
+      throw new Error(t('main.agentPathMissing'))
     if (input.projectFile && !existsSync(input.projectFile))
-      throw new Error('Projektdatei existiert nicht')
+      throw new Error(t('main.projectFileMissing'))
     if (input.folderPath && !existsSync(input.folderPath))
-      throw new Error('Ordner (Pfad 3) existiert nicht')
+      throw new Error(t('main.folderPathMissing'))
     const argsError = validateAgentArgs(input.agentArgs)
-    if (argsError) throw new Error(`Start-Flags: ${argsError}`)
+    if (argsError) throw new Error(t('main.startFlagsError', { error: argsError }))
     const programError =
       validateProgram(input.projectFileApp?.trim()) ?? validateProgram(input.folderApp?.trim())
     if (programError) throw new Error(programError)
 
-    const saved = {
+    const runCommands: RunCommand[] = (Array.isArray(input.runCommands) ? input.runCommands : [])
+      .map((c) => ({
+        name: String(c?.name ?? '').trim(),
+        command: String(c?.command ?? '').trim()
+      }))
+      .filter((c) => c.name || c.command)
+    for (const c of runCommands) {
+      if (!c.name || !c.command) throw new Error(t('main.commandsIncomplete'))
+      if (/[\r\n]/.test(c.command)) throw new Error(t('main.commandOneLineNamed', { name: c.name }))
+    }
+    if (new Set(runCommands.map((c) => c.name.toLowerCase())).size < runCommands.length)
+      throw new Error(t('main.commandNamesNotUnique'))
+    const permissionRules = [
+      ...new Set((input.permissionRules ?? []).map((r) => String(r).trim()).filter(Boolean))
+    ]
+    for (const rule of permissionRules) {
+      const ruleError = validateRule(rule)
+      if (ruleError) throw new Error(t('main.permissionRuleError', { rule, error: ruleError }))
+    }
+    const previewUrl = input.previewUrl?.trim() || undefined
+    if (previewUrl && !/^https?:\/\/\S+$/i.test(previewUrl))
+      throw new Error(t('main.previewUrlInvalid'))
+    if (input.useWorktrees && !(await repoRoot(input.agentPath)))
+      throw new Error(t('main.worktreesNoRepo'))
+
+    const saved: Project = {
       id: input.id ?? randomUUID(),
       name,
       agentPath: input.agentPath,
@@ -216,7 +504,12 @@ function registerIpc(): void {
       projectFileApp: input.projectFileApp?.trim() || undefined,
       folderPath: input.folderPath || undefined,
       folderApp: input.folderApp?.trim() || undefined,
-      agentArgs: input.agentArgs?.trim() || undefined
+      agentArgs: input.agentArgs?.trim() || undefined,
+      useWorktrees: input.useWorktrees || undefined,
+      checks: input.checks?.trim() || undefined,
+      runCommands: runCommands.length ? runCommands : undefined,
+      previewUrl,
+      permissionRules: permissionRules.length ? permissionRules : undefined
     }
     updateState((s) => {
       const i = s.projects.findIndex((p) => p.id === saved.id)
@@ -227,10 +520,14 @@ function registerIpc(): void {
   })
   ipcMain.handle('projects:remove', (_, id: string) => {
     for (const a of agents.list().filter((a) => a.projectId === id)) agents.stop(a.id)
+    for (const r of runs.list(project(id))) runs.stop(id, r.name)
     updateState((s) => {
       s.projects = s.projects.filter((p) => p.id !== id)
       s.agents = s.agents.filter((a) => a.projectId !== id)
+      s.tasks = s.tasks.filter((t) => t.projectId !== id)
+      s.archive = s.archive.filter((x) => x.projectId !== id)
     })
+    send('tasks:changed', getState().tasks)
   })
   ipcMain.handle('projects:reorder', (_, ids: string[]) => {
     updateState((s) => (s.projects = applyOrder(s.projects, ids)))
@@ -239,7 +536,8 @@ function registerIpc(): void {
   ipcMain.handle('projects:openProjectFile', async (_, id: string) => {
     const p = project(id)
     if (!p.projectFile) return
-    if (!existsSync(p.projectFile)) throw new Error(`Projektdatei nicht gefunden: ${p.projectFile}`)
+    if (!existsSync(p.projectFile))
+      throw new Error(t('main.projectFileNotFound', { path: p.projectFile }))
     // Program: project → global → Windows default program for the file extension
     const program = p.projectFileApp || getState().settings.projectFileApp
     if (program) return openWithProgram(program, p.projectFile)
@@ -251,8 +549,8 @@ function registerIpc(): void {
       properties: ['openFile'],
       defaultPath,
       filters: [
-        { name: 'Programme', extensions: ['exe', 'cmd', 'bat'] },
-        { name: 'Alle Dateien', extensions: ['*'] }
+        { name: t('main.filterPrograms'), extensions: ['exe', 'cmd', 'bat'] },
+        { name: t('main.filterAllFiles'), extensions: ['*'] }
       ]
     })
     return r.canceled ? null : r.filePaths[0]
@@ -260,7 +558,7 @@ function registerIpc(): void {
   ipcMain.handle('projects:openFolder', async (_, id: string) => {
     const p = project(id)
     if (!p.folderPath) return
-    if (!existsSync(p.folderPath)) throw new Error(`Ordner nicht gefunden: ${p.folderPath}`)
+    if (!existsSync(p.folderPath)) throw new Error(t('main.folderNotFound', { path: p.folderPath }))
     // Program: project → global → VS Code (if installed) → Windows Explorer
     const program = p.folderApp || getState().settings.folderApp
     if (program) return openWithProgram(program, p.folderPath)
@@ -285,7 +583,7 @@ function registerIpc(): void {
   ipcMain.handle('projects:pickFolders', async () => {
     const last = getState().lastPickDir
     const r = await dialog.showOpenDialog(mainWindow!, {
-      title: 'Ordner mit Projekten auswählen (Strg+Klick für mehrere)',
+      title: t('main.pickFoldersTitle'),
       properties: ['openDirectory', 'multiSelections'],
       defaultPath: last && existsSync(last) ? last : undefined
     })
@@ -320,7 +618,7 @@ function registerIpc(): void {
       defaultPath,
       filters: [
         {
-          name: 'Projektmappen & Projekte',
+          name: t('main.filterSolutions'),
           extensions: [
             'sln',
             'slnx',
@@ -333,7 +631,7 @@ function registerIpc(): void {
             'njsproj'
           ]
         },
-        { name: 'Alle Dateien', extensions: ['*'] }
+        { name: t('main.filterAllFiles'), extensions: ['*'] }
       ]
     })
     return r.canceled ? null : r.filePaths[0]
@@ -343,16 +641,15 @@ function registerIpc(): void {
   ipcMain.handle('templates:list', () => getState().templates)
   ipcMain.handle('templates:save', (_, input: AgentTemplateInput) => {
     const name = input.name?.trim().replace(/\s+/g, ' ')
-    if (!name) throw new Error('Name fehlt')
+    if (!name) throw new Error(t('main.nameMissing'))
     // "Agent 3" or similar collides with the automatically assigned names
-    if (/^agent \d+$/i.test(name)) throw new Error('„Agent N“ ist für normale Agents reserviert')
-    if (/ \d+$/.test(name))
-      throw new Error('Name darf nicht auf eine Zahl enden (wird für „Name 2“, „Name 3“ verwendet)')
+    if (/^agent \d+$/i.test(name)) throw new Error(t('main.agentNameReserved'))
+    if (/ \d+$/.test(name)) throw new Error(t('main.templateNameEndsWithNumber'))
     const others = getState().templates.filter((t) => t.id !== input.id)
     if (others.some((t) => t.name.toLowerCase() === name.toLowerCase()))
-      throw new Error(`Es gibt bereits eine Vorlage „${name}“`)
+      throw new Error(t('main.templateExists', { name }))
     const model = input.model?.trim() || undefined
-    if (model && !isValidModelName(model)) throw new Error(`Ungültiger Modellname: ${model}`)
+    if (model && !isValidModelName(model)) throw new Error(t('main.invalidModelName', { model }))
 
     const saved: AgentTemplate = {
       id: input.id ?? randomUUID(),
@@ -368,11 +665,15 @@ function registerIpc(): void {
     return saved
   })
   ipcMain.handle('templates:remove', (_, id: string) => {
-    const usedBy = getState().teamTemplates.filter((t) =>
-      t.members.some((m) => m.templateId === id)
+    const usedBy = getState().teamTemplates.filter((team) =>
+      team.members.some((m) => m.templateId === id)
     )
     if (usedBy.length)
-      throw new Error(`Wird in Team ${usedBy.map((t) => `„${t.name}“`).join(', ')} verwendet`)
+      throw new Error(
+        t('main.templateUsedInTeams', {
+          teams: usedBy.map((team) => t('main.quoted', { name: team.name })).join(', ')
+        })
+      )
     // Running agents keep their name but start without a template from then on
     updateState((s) => (s.templates = s.templates.filter((t) => t.id !== id)))
   })
@@ -381,20 +682,19 @@ function registerIpc(): void {
   ipcMain.handle('teamTemplates:list', () => getState().teamTemplates)
   ipcMain.handle('teamTemplates:save', (_, input: TeamTemplateInput) => {
     const name = input.name?.trim().replace(/\s+/g, ' ')
-    if (!name) throw new Error('Name fehlt')
-    if (/^team \d+$/i.test(name)) throw new Error('„Team N“ ist für temporäre Teams reserviert')
-    if (/ \d+$/.test(name))
-      throw new Error('Name darf nicht auf eine Zahl enden (wird für „Name 2“ verwendet)')
+    if (!name) throw new Error(t('main.nameMissing'))
+    if (/^team \d+$/i.test(name)) throw new Error(t('main.teamNameReserved'))
+    if (/ \d+$/.test(name)) throw new Error(t('main.teamNameEndsWithNumber'))
     const others = getState().teamTemplates.filter((t) => t.id !== input.id)
     if (others.some((t) => t.name.toLowerCase() === name.toLowerCase()))
-      throw new Error(`Es gibt bereits ein Team „${name}“`)
+      throw new Error(t('main.teamExists', { name }))
     const templates = getState().templates
     const members = (input.members ?? []).map((m) => ({
       templateId:
         m.templateId && templates.some((t) => t.id === m.templateId) ? m.templateId : undefined
     }))
-    if (members.length < 2) throw new Error('Ein Team braucht mindestens zwei Mitglieder')
-    if (members.length > 8) throw new Error('Höchstens 8 Mitglieder')
+    if (members.length < 2) throw new Error(t('main.teamTooFewMembers'))
+    if (members.length > 8) throw new Error(t('main.teamTooManyMembers'))
 
     const saved: TeamTemplate = {
       id: input.id ?? randomUUID(),
@@ -422,9 +722,198 @@ function registerIpc(): void {
   // --- Agents ---
   ipcMain.handle('agents:list', () => agents.list())
   ipcMain.handle('agents:restore', () => agents.restore())
-  ipcMain.handle('agents:start', (_, projectId: string, task?: string, templateId?: string) =>
-    agents.start(projectId, task, undefined, templateId)
+  ipcMain.handle('agents:start', (_, projectId: string, options?: StartOptions) =>
+    agents.start(projectId, options?.task, undefined, options?.templateId, {
+      engineId: options?.engineId
+    })
   )
+  ipcMain.handle('agents:fork', (_, id: string) => agents.fork(id))
+  ipcMain.handle('agents:enqueue', (_, id: string, text: string) =>
+    agents.enqueue(id, String(text ?? ''))
+  )
+  ipcMain.handle('agents:dequeue', (_, id: string, queueId: string) => agents.dequeue(id, queueId))
+  ipcMain.handle('agents:activityLog', (_, id: string) => agents.activityLog(id))
+
+  // --- Inbox: approvals ---
+  ipcMain.handle('inbox:permissions', () => agents.userPermissions())
+  ipcMain.handle('inbox:answer', (_, id: number, answer: PermissionAnswer, message?: string) => {
+    if (!['allow', 'deny', 'always', 'terminal'].includes(answer))
+      throw new Error(t('main.invalidAnswer'))
+    agents.answerUserPermission(Number(id), answer, message)
+  })
+
+  // --- Tasks ---
+  ipcMain.handle('tasks:list', () => agents.tasks())
+  ipcMain.handle('tasks:save', (_, input: { id?: string; projectId: string; text: string }) =>
+    agents.saveTask(input)
+  )
+  ipcMain.handle('tasks:remove', (_, id: string) => agents.removeTask(id))
+  ipcMain.handle('tasks:setStatus', (_, id: string, status: TaskStatus) => {
+    if (!['open', 'running', 'done'].includes(status)) throw new Error(t('main.invalidStatus'))
+    agents.setTaskStatus(id, status)
+  })
+  ipcMain.handle('tasks:start', (_, id: string, templateId?: string) =>
+    agents.startTask(id, templateId)
+  )
+  ipcMain.handle('tasks:assign', (_, id: string, agentId: string) => agents.assignTask(id, agentId))
+
+  // --- History ---
+  ipcMain.handle('history:list', () => agents.archive())
+  ipcMain.handle('history:remove', (_, id: string) => agents.removeArchived(id))
+  ipcMain.handle('history:resume', (_, id: string, fork?: boolean) =>
+    agents.resumeArchived(id, fork === true)
+  )
+  ipcMain.handle('history:search', (_, query: string) =>
+    searchSessions(
+      [
+        ...agents
+          .list()
+          .filter((a) => !a.engineId)
+          .map((a) => ({
+            sessionId: a.sessionId,
+            name: a.name,
+            projectId: a.projectId,
+            agentId: a.id
+          })),
+        ...agents.archive().map((x) => ({
+          sessionId: x.sessionId,
+          name: x.name,
+          projectId: x.projectId,
+          archivedId: x.id
+        }))
+      ],
+      String(query ?? '')
+    )
+  )
+
+  // --- Review changes (Git) ---
+  ipcMain.handle('git:targets', async (_, projectId: string): Promise<ReviewInfo> => {
+    try {
+      return (await reviewTargets(projectId)).info
+    } catch (e) {
+      return { isRepo: false, targets: [], error: e instanceof Error ? e.message : String(e) }
+    }
+  })
+  ipcMain.handle('git:changes', async (_, projectId: string, targetId: string) => {
+    const { target } = await reviewTarget(projectId, targetId)
+    return gitChanges(target.cwd, await reviewRef(target.cwd, target.base))
+  })
+  ipcMain.handle('git:diff', async (_, projectId: string, targetId: string, path: string) => {
+    const { target } = await reviewTarget(projectId, targetId)
+    return fileDiff(target.cwd, await reviewRef(target.cwd, target.base), String(path))
+  })
+  ipcMain.handle(
+    'git:saveFile',
+    async (_, projectId: string, targetId: string, path: string, content: string) => {
+      const { target } = await reviewTarget(projectId, targetId)
+      saveFile(target.cwd, String(path), String(content))
+    }
+  )
+  ipcMain.handle('git:discard', async (_, projectId: string, targetId: string, path: string) => {
+    const { target } = await reviewTarget(projectId, targetId)
+    await discardFile(target.cwd, await reviewRef(target.cwd, target.base), String(path))
+  })
+  ipcMain.handle(
+    'git:commit',
+    async (_, projectId: string, targetId: string, message: string, paths?: string[]) => {
+      const { target } = await reviewTarget(projectId, targetId)
+      return gitCommit(target.cwd, String(message ?? ''), Array.isArray(paths) ? paths : [])
+    }
+  )
+  ipcMain.handle('git:merge', async (_, projectId: string, targetId: string) => {
+    const { worktree } = await reviewTarget(projectId, targetId)
+    if (!worktree) throw new Error(t('main.mergeOnlyWorktrees'))
+    return mergeWorktree(worktree)
+  })
+  ipcMain.handle(
+    'git:removeWorktree',
+    async (_, projectId: string, targetId: string, force?: boolean) => {
+      const { target, worktree } = await reviewTarget(projectId, targetId)
+      if (!worktree) throw new Error(t('main.mainFolderNotRemovable'))
+      if (target.agentId) throw new Error(t('main.worktreeAgentRunning'))
+      await removeWorktree(worktree, force === true)
+    }
+  )
+
+  // --- Run: project commands + web preview ---
+  ipcMain.handle('runs:list', (_, projectId: string) => runs.list(project(projectId)))
+  ipcMain.handle('runs:start', (_, projectId: string, name: string) =>
+    runs.start(project(projectId), String(name))
+  )
+  ipcMain.handle('runs:stop', (_, projectId: string, name: string) =>
+    runs.stop(projectId, String(name))
+  )
+  ipcMain.handle('runs:output', (_, projectId: string, name: string) =>
+    runs.output(projectId, String(name))
+  )
+  ipcMain.handle('preview:open', (_, projectId: string) => {
+    openPreview(projectId)
+  })
+  // Save an image of the preview and insert it as an attachment into the agent's prompt (without submitting)
+  ipcMain.handle('preview:screenshot', async (_, projectId: string, agentId: string) => {
+    const win = openPreview(projectId)
+    if (win.webContents.isLoading())
+      await new Promise<void>((done) => win.webContents.once('did-stop-loading', () => done()))
+    await new Promise((done) => setTimeout(done, 400))
+    const image = await win.webContents.capturePage()
+    const file = agents.saveEditorImage(agentId, 'png', image.toPNG().buffer as ArrayBuffer)
+    agents.write(agentId, `@"${file}" `)
+    return file
+  })
+
+  // --- Prompt library ---
+  ipcMain.handle('prompts:list', () => getState().prompts)
+  ipcMain.handle('prompts:save', (_, input: PromptTemplateInput) => {
+    const name = input.name?.trim().replace(/\s+/g, ' ')
+    const text = input.text?.trim()
+    if (!name) throw new Error(t('main.nameMissing'))
+    if (!text) throw new Error(t('main.textMissing'))
+    const others = getState().prompts.filter((p) => p.id !== input.id)
+    if (others.some((p) => p.name.toLowerCase() === name.toLowerCase()))
+      throw new Error(t('main.promptExists', { name }))
+    const saved: PromptTemplate = { id: input.id ?? randomUUID(), name, text }
+    updateState((s) => {
+      const i = s.prompts.findIndex((p) => p.id === saved.id)
+      if (i >= 0) s.prompts[i] = saved
+      else s.prompts.push(saved)
+    })
+    return saved
+  })
+  ipcMain.handle('prompts:remove', (_, id: string) =>
+    updateState((s) => (s.prompts = s.prompts.filter((p) => p.id !== id)))
+  )
+
+  // --- Further engines ---
+  ipcMain.handle('engines:list', () => getState().engines)
+  ipcMain.handle('engines:save', (_, input: EngineInput) => {
+    const name = input.name?.trim().replace(/\s+/g, ' ')
+    const command = input.command?.trim()
+    if (!name) throw new Error(t('main.nameMissing'))
+    if (/^agent \d+$/i.test(name)) throw new Error(t('main.agentNameReserved'))
+    if (/ \d+$/.test(name)) throw new Error(t('main.nameEndsWithNumber'))
+    if (!command) throw new Error(t('main.commandMissing'))
+    if (/[\r\n]/.test(command)) throw new Error(t('main.commandOneLine'))
+    const taken = [...getState().engines.filter((e) => e.id !== input.id), ...getState().templates]
+    if (taken.some((e) => e.name.toLowerCase() === name.toLowerCase()))
+      throw new Error(t('main.engineNameTaken', { name }))
+    const saved: Engine = { id: input.id ?? randomUUID(), name, command }
+    updateState((s) => {
+      const i = s.engines.findIndex((e) => e.id === saved.id)
+      if (i >= 0) s.engines[i] = saved
+      else s.engines.push(saved)
+    })
+    return saved
+  })
+  ipcMain.handle('engines:remove', (_, id: string) => {
+    if (agents.list().some((a) => a.engineId === id)) throw new Error(t('main.engineInUse'))
+    updateState((s) => (s.engines = s.engines.filter((e) => e.id !== id)))
+  })
+
+  // --- Reports, remote access ---
+  ipcMain.handle('reports:daily', (_, projectId?: string) =>
+    dailyReport(agents, projectId || undefined)
+  )
+  ipcMain.handle('remote:info', () => remote.info())
   ipcMain.handle('agents:stop', (_, id: string) => agents.stop(id))
   ipcMain.handle('agents:rename', (_, id: string, name: string) => agents.rename(id, name))
   ipcMain.handle('agents:reorder', (_, ids: string[]) => agents.reorder(ids))
@@ -442,7 +931,7 @@ function registerIpc(): void {
   // --- Code view ---
   ipcMain.handle('code:readFile', (_, path: string) => {
     try {
-      if (statSync(path).size > 5_000_000) return { ok: false, error: 'Datei ist zu groß (> 5 MB)' }
+      if (statSync(path).size > 5_000_000) return { ok: false, error: t('main.fileTooLarge') }
       return { ok: true, content: readFileSync(path, 'utf8') }
     } catch (e) {
       return { ok: false, error: String(e) }
@@ -468,11 +957,11 @@ function registerIpc(): void {
   )
   ipcMain.handle('editor:pickFiles', async () => {
     const r = await dialog.showOpenDialog(mainWindow!, {
-      title: 'Bilder oder Dateien anhängen',
+      title: t('main.pickFilesTitle'),
       properties: ['openFile', 'multiSelections'],
       filters: [
-        { name: 'Bilder', extensions: Object.keys(IMAGE_TYPES) },
-        { name: 'Alle Dateien', extensions: ['*'] }
+        { name: t('main.filterImages'), extensions: Object.keys(IMAGE_TYPES) },
+        { name: t('main.filterAllFiles'), extensions: ['*'] }
       ]
     })
     return r.canceled ? [] : r.filePaths
@@ -502,9 +991,13 @@ function registerIpc(): void {
         result.kind === 'sent'
           ? `→ ${result.agentName}: ${result.message}`
           : result.kind === 'started'
-            ? `${result.agentName} gestartet (${result.projectName})`
+            ? t('main.voiceAgentStarted', { agent: result.agentName, project: result.projectName })
             : result.kind === 'teamStarted'
-              ? `Team ${result.teamName} gestartet (${result.projectName}): ${result.agentNames.join(', ')}`
+              ? t('main.voiceTeamStarted', {
+                  team: result.teamName,
+                  project: result.projectName,
+                  agents: result.agentNames.join(', ')
+                })
               : result.message
       new Notification({ title: 'DevHub', body }).show()
     }
@@ -526,9 +1019,10 @@ function registerIpc(): void {
     const current = getState().settings
     const next = { ...current, ...patch }
     if (patch.voiceRememberLanguage === false) next.voiceLanguage = null // turning off = forget
+    if (next.language !== 'system' && !isLanguage(next.language)) next.language = 'system'
     if (patch.agentArgs !== undefined) {
       const argsError = validateAgentArgs(patch.agentArgs)
-      if (argsError) throw new Error(`Start-Flags: ${argsError}`)
+      if (argsError) throw new Error(t('main.startFlagsError', { error: argsError }))
       next.agentArgs = patch.agentArgs.trim()
     }
     if (patch.projectFileApp !== undefined) {
@@ -547,19 +1041,34 @@ function registerIpc(): void {
       patch.hotkeyEditor !== undefined
     ) {
       const keys = [next.hotkeyAgentVoice, next.hotkeyGlobalVoice, next.hotkeyEditor]
-      if (keys.some((k) => !k)) throw new Error('Kürzel fehlt')
+      if (keys.some((k) => !k)) throw new Error(t('main.hotkeyMissing'))
       if (new Set(keys.map((k) => k.toLowerCase())).size < keys.length)
-        throw new Error('Dieses Kürzel ist schon für eine andere Aktion vergeben')
+        throw new Error(t('main.hotkeyDuplicate'))
     }
     if (next.hotkeyGlobalVoice !== current.hotkeyGlobalVoice) {
       if (!registerGlobalHotkey(next.hotkeyGlobalVoice)) {
         registerGlobalHotkey(current.hotkeyGlobalVoice)
-        throw new Error(
-          `Das Kürzel ${next.hotkeyGlobalVoice} ist ungültig oder von einer anderen Anwendung belegt`
-        )
+        throw new Error(t('main.hotkeyUnavailable', { hotkey: next.hotkeyGlobalVoice }))
       }
     }
+    const number = (v: unknown, min: number, max: number, label: string): number => {
+      const n = Number(v)
+      if (!Number.isFinite(n) || n < min || n > max)
+        throw new Error(t('main.numberOutOfRange', { label, min, max }))
+      return n
+    }
+    next.contextWarnTokens = Math.round(
+      number(next.contextWarnTokens, 0, 5_000_000, t('main.labelContextWarning'))
+    )
+    next.priceInput = number(next.priceInput, 0, 10_000, t('main.labelPriceInput'))
+    next.priceOutput = number(next.priceOutput, 0, 10_000, t('main.labelPriceOutput'))
+    next.remotePort = Math.round(number(next.remotePort, 1024, 65535, t('main.labelPort')))
+    // The secret part of the address is created when first switched on; clearing it = regenerate (old links expire)
+    if (next.remoteEnabled && !next.remoteToken)
+      next.remoteToken = randomBytes(18).toString('base64url')
     updateState((s) => (s.settings = next))
+    applyLanguageSetting(next.language)
+    remote.apply(next)
     return getState().settings
   })
   ipcMain.handle('settings:suspendGlobalHotkey', (_, suspend: boolean) => {
@@ -583,15 +1092,21 @@ app.whenReady().then(async () => {
   await agents.init()
   registerIpc()
   createWindow()
+  remote.apply(getState().settings)
 
   // System-wide hotkey for global voice commands (configurable)
   const hotkey = getState().settings.hotkeyGlobalVoice
   if (!registerGlobalHotkey(hotkey)) {
-    console.warn(`[DevHub] Globaler Hotkey ${hotkey} ist ungültig oder bereits belegt.`)
+    console.warn(`[DevHub] Global hotkey ${hotkey} is invalid or already taken.`)
   }
 })
 
-// Stop agents but keep them saved → restored on next start
-app.on('before-quit', () => agents.shutdown())
+// Stop the agents but keep them saved → restore on the next start
+app.on('before-quit', () => {
+  agents.shutdown()
+  runs.stopAll()
+  remote.stop()
+  for (const win of previews.values()) if (!win.isDestroyed()) win.destroy()
+})
 app.on('will-quit', () => globalShortcut.unregisterAll())
 app.on('window-all-closed', () => app.quit())

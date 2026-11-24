@@ -2,6 +2,7 @@ import { useState } from 'react'
 import type { Project, ScannedProject } from '../../../shared/types'
 import { validateAgentArgs } from '../../../shared/agentArgs'
 import { errorText } from '../lib/errors'
+import { useT } from '../lib/i18n'
 import AgentArgsHelp from './AgentArgsHelp'
 import Modal from './Modal'
 
@@ -21,6 +22,7 @@ interface Row extends ScannedProject {
  * project file is looked up automatically for each. Start flags apply to all of them.
  */
 function ImportProjectsDialog({ onClose, onImported }: Props): React.JSX.Element {
+  const t = useT()
   const [rows, setRows] = useState<Row[]>([])
   const [roots, setRoots] = useState<string[]>([])
   const [agentArgs, setAgentArgs] = useState('')
@@ -44,7 +46,7 @@ function ImportProjectsDialog({ onClose, onImported }: Props): React.JSX.Element
           .map((f) => ({ ...f, checked: !f.registered }))
         return [...prev, ...added]
       })
-      if (!found.length) setError('In den gewählten Ordnern wurden keine Projekte gefunden.')
+      if (!found.length) setError(t('project.importNoneFound'))
     } catch (e) {
       setError(errorText(e))
     } finally {
@@ -86,7 +88,7 @@ function ImportProjectsDialog({ onClose, onImported }: Props): React.JSX.Element
       setRows((rs) =>
         rs.map((r) => (ok.has(r.path) ? { ...r, registered: true, checked: false } : r))
       )
-      setError(`Nicht hinzugefügt:\n${failed.join('\n')}`)
+      setError(t('project.importNotAdded', { list: failed.join('\n') }))
       if (saved.length) onImported(saved)
       return
     }
@@ -96,18 +98,18 @@ function ImportProjectsDialog({ onClose, onImported }: Props): React.JSX.Element
 
   return (
     <Modal
-      title="Projekte importieren"
+      title={t('project.importTitle')}
       onClose={onClose}
       width={760}
       footer={
         <>
-          <button onClick={onClose}>Abbrechen</button>
+          <button onClick={onClose}>{t('common.cancel')}</button>
           <button
             className="primary"
             onClick={save}
             disabled={busy !== null || chosen.length === 0 || !!argsError}
           >
-            {chosen.length === 1 ? '1 Projekt hinzufügen' : `${chosen.length} Projekte hinzufügen`}
+            {t('project.importAdd', { count: chosen.length })}
           </button>
         </>
       }
@@ -115,16 +117,12 @@ function ImportProjectsDialog({ onClose, onImported }: Props): React.JSX.Element
       <div className="form">
         <div className="import-pick">
           <button onClick={pick} disabled={busy !== null}>
-            {rows.length ? 'Weitere Ordner auswählen …' : 'Ordner auswählen …'}
+            {rows.length ? t('project.importPickMoreFolders') : t('project.importPickFolders')}
           </button>
-          <small className="muted">
-            Ein Ordner mit mehreren Projekten (z. B. „C:\Dev“) oder einzelne Projektordner – mit
-            Strg+Klick mehrere. Gesucht wird nach Git, .sln, .csproj, package.json, pyproject.toml
-            u. a., auch in Unterordnern; die Projektdatei (.sln) wird automatisch gesucht.
-          </small>
+          <small className="muted">{t('project.importPickHint')}</small>
         </div>
 
-        {busy === 'scan' && <p className="muted">Durchsuche Ordner …</p>}
+        {busy === 'scan' && <p className="muted">{t('project.importScanning')}</p>}
 
         {rows.length > 0 && (
           <div className="import-list">
@@ -139,7 +137,9 @@ function ImportProjectsDialog({ onClose, onImported }: Props): React.JSX.Element
                   )
                 }
               />
-              {rows.length} gefunden in {roots.length === 1 ? roots[0] : `${roots.length} Ordnern`}
+              {roots.length === 1
+                ? t('project.importFoundInFolder', { count: rows.length, folder: roots[0] })
+                : t('project.importFoundInFolders', { count: rows.length, folders: roots.length })}
             </label>
             {rows.map((r) => (
               <div key={r.path} className={`import-row ${r.registered ? 'registered' : ''}`}>
@@ -154,7 +154,7 @@ function ImportProjectsDialog({ onClose, onImported }: Props): React.JSX.Element
                   value={r.name}
                   disabled={r.registered}
                   onChange={(e) => update(r.path, { name: e.target.value })}
-                  title="Name des Projekts"
+                  title={t('project.importNameTooltip')}
                 />
                 <span className="import-info">
                   <span className="import-path" title={r.path}>
@@ -163,10 +163,12 @@ function ImportProjectsDialog({ onClose, onImported }: Props): React.JSX.Element
                   <small className="muted">
                     <span className="team-tag">{r.marker}</span>{' '}
                     {r.registered
-                      ? 'bereits registriert'
+                      ? t('project.importAlreadyRegistered')
                       : r.projectFile
-                        ? `Projektdatei: ${r.projectFile.split(/[\\/]/).pop()}`
-                        : 'keine Projektdatei gefunden'}
+                        ? t('project.importProjectFile', {
+                            file: r.projectFile.split(/[\\/]/).pop() ?? ''
+                          })
+                        : t('project.importNoProjectFile')}
                   </small>
                 </span>
               </div>
@@ -176,13 +178,13 @@ function ImportProjectsDialog({ onClose, onImported }: Props): React.JSX.Element
 
         <label>
           <span>
-            Start-Flags für alle <em>(optional)</em>
+            {t('project.importStartFlagsLabel')} <em>{t('project.optionalTag')}</em>
           </span>
           <input
             className="mono"
             value={agentArgs}
             onChange={(e) => setAgentArgs(e.target.value)}
-            placeholder="z. B. --permission-mode plan"
+            placeholder={t('project.startFlagsPlaceholder')}
             spellCheck={false}
           />
           {argsError ? (
