@@ -24,6 +24,14 @@ const de: typeof en = {
   nameMissing: 'Name fehlt',
   nameEndsWithNumber: 'Name darf nicht auf eine Zahl enden',
   agentNameReserved: '„Agent N“ ist für normale Agents reserviert',
+  agentNameTooLong: 'Der Agent-Name darf höchstens 40 Zeichen haben',
+  agentNameEndsWithNumber:
+    'Der Agent-Name darf nicht auf eine Zahl enden (die Agents werden durchnummeriert: „Name 1“, „Name 2“)',
+  agentNameReservedBase: '„Agent“ und „Orchestrator“ verwendet DevHub bereits selbst',
+  agentNameTaken: 'Projekt „{project}“ benennt seine Agents bereits „{name}“',
+  agentNameIsTemplate: 'Ein vordefinierter Agent heißt bereits „{name}“',
+  agentNameIsEngine: 'Eine Engine heißt bereits „{name}“',
+  nameIsProjectAgentName: 'Projekt „{project}“ benennt seine Agents bereits „{name}“',
 
   // index.ts – review (Git)
   reviewMainFolder: 'Hauptordner',

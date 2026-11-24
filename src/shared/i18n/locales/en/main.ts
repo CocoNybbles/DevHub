@@ -22,6 +22,14 @@ const en = {
   nameMissing: 'Name is missing',
   nameEndsWithNumber: 'The name must not end with a number',
   agentNameReserved: '“Agent N” is reserved for regular agents',
+  agentNameTooLong: 'The agent name may have at most 40 characters',
+  agentNameEndsWithNumber:
+    'The agent name must not end with a number (the agents are numbered: “Name 1”, “Name 2”)',
+  agentNameReservedBase: '“Agent” and “Orchestrator” are already used by DevHub itself',
+  agentNameTaken: 'Project “{project}” already names its agents “{name}”',
+  agentNameIsTemplate: 'A predefined agent is already called “{name}”',
+  agentNameIsEngine: 'An engine is already called “{name}”',
+  nameIsProjectAgentName: 'Project “{project}” already names its agents “{name}”',
 
   // index.ts – review (Git)
   reviewMainFolder: 'Main folder',

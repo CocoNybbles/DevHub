@@ -29,6 +29,12 @@ const de: typeof en = {
   folderAppHintDefault:
     'Programm für den Ordner, z. B. Cursor oder ein anderer Editor. Leer = {program}.',
   windowsExplorer: 'Windows-Explorer',
+  agentNameLabel: 'Agent-Name',
+  agentNameHint:
+    'Neue Agents dieses Projekts heißen „{name} 1“, „{name} 2“ … statt „Agent 1“. Muss über alle Projekte eindeutig sein.',
+  agentNameHintEmpty:
+    'Statt „Agent 1“, „Agent 2“ …, z. B. „Backend“ → „Backend 1“, „Backend 2“. Muss über alle Projekte eindeutig sein.',
+  agentNamePlaceholder: 'Agent',
   startFlagsLabel: 'Start-Flags',
   startFlagsPlaceholder: 'z. B. --permission-mode plan',
   useWorktrees: 'Jeder Agent arbeitet in einem eigenen Git-Worktree (eigener Branch)',

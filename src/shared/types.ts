@@ -20,6 +20,9 @@ export interface Project {
   folderPath?: string
   /** Program (path to the .exe) for the folder; empty = global setting */
   folderApp?: string
+  /** Base of the numbered names of new agents ("Backend" → "Backend 1", "Backend 2" …) instead
+   *  of "Agent"; unique across all projects */
+  agentName?: string
   /** Extra start flags for this project's agents (extend/override the global ones) */
   agentArgs?: string
   /** Every new agent works in its own Git worktree (own branch) instead of the agent folder */

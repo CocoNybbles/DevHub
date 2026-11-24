@@ -26,6 +26,12 @@ const en = {
     'Program for the folder, e.g. Cursor or another editor. Empty = program from the settings.',
   folderAppHintDefault: 'Program for the folder, e.g. Cursor or another editor. Empty = {program}.',
   windowsExplorer: 'Windows Explorer',
+  agentNameLabel: 'Agent name',
+  agentNameHint:
+    'New agents of this project are called “{name} 1”, “{name} 2” … instead of “Agent 1”. Must be unique across all projects.',
+  agentNameHintEmpty:
+    'Instead of “Agent 1”, “Agent 2” …, e.g. “Backend” → “Backend 1”, “Backend 2”. Must be unique across all projects.',
+  agentNamePlaceholder: 'Agent',
   startFlagsLabel: 'Start flags',
   startFlagsPlaceholder: 'e.g. --permission-mode plan',
   useWorktrees: 'Each agent works in its own Git worktree (own branch)',

@@ -158,6 +158,23 @@ const READY_FALLBACK_MS = 30_000
 
 /** Name of the automatically started orchestrator ("Orchestrator", "Orchestrator 2" …) */
 const ORCHESTRATOR_NAME = 'Orchestrator'
+/** Base of the numbered names when the project has no agent name of its own */
+const DEFAULT_AGENT_NAME = 'Agent'
+
+/**
+ * Looks automatically numbered ("Agent 3", "Backend 2", "Entwickler 2")? Any name ending in
+ * " <number>" counts – templates, engines and project agent names cannot end with a number. A
+ * name the user gave via rename ("Ticket 4711") matches too; `start` therefore only renumbers
+ * such a name when it is taken.
+ */
+function isNumberedName(name: string): boolean {
+  return /^.+ \d+$/.test(name)
+}
+
+/** Template/engine/orchestrator name, prefixed with the project's agent name ("MyProj Reviewer") */
+function inProject(project: Project, name: string | undefined): string | undefined {
+  return name && project.agentName ? `${project.agentName} ${name}` : name
+}
 
 export interface StartTeamOptions {
   /** Team template – or a free member list (temporary team) */
@@ -469,7 +486,7 @@ export class AgentManager {
     const orchestrator: Agent = {
       id: randomUUID(),
       projectId,
-      name: this.nextName(ORCHESTRATOR_NAME),
+      name: this.nextName(inProject(project, ORCHESTRATOR_NAME)),
       sessionId: randomUUID(),
       status: 'starting',
       createdAt: base,
@@ -484,7 +501,7 @@ export class AgentManager {
       const agent: Agent = {
         id: randomUUID(),
         projectId,
-        name: this.nextName(template?.name),
+        name: this.nextName(inProject(project, template?.name), project.agentName),
         sessionId: randomUUID(),
         status: 'starting',
         createdAt: base + 1 + i,
@@ -554,13 +571,19 @@ export class AgentManager {
       ? getState().engines.find((e) => e.id === extra.engineId)
       : undefined
     if (extra.engineId && !engine) throw new Error(t('agents.engineNotFound'))
-    // Don't use "Agent 3" from the history as the base (would yield "Agent 3 2")
-    const wanted = extra.name && !/^agent \d+$/i.test(extra.name.trim()) ? extra.name.trim() : ''
+    // A name from the history is kept while it is free; a taken numbered one ("Agent 3") is
+    // renumbered with the current scheme instead of becoming "Agent 3 2"
+    const old = extra.name?.trim() ?? ''
+    const taken = getState().agents.some((a) => a.name.toLowerCase() === old.toLowerCase())
+    const wanted = old && !(taken && isNumberedName(old)) ? old : ''
 
     const agent: Agent = {
       id: randomUUID(),
       projectId,
-      name: this.nextName(wanted || template?.name || engine?.name),
+      name: this.nextName(
+        wanted || inProject(project, template?.name || engine?.name),
+        project.agentName
+      ),
       sessionId: extra.sessionId ?? randomUUID(),
       status: 'starting',
       createdAt: Date.now(),
@@ -2120,10 +2143,11 @@ export class AgentManager {
   }
 
   /**
-   * Name unique across all agents (for voice control):
-   * without a template "Agent N" (lowest free number), with a template "Developer", then "Developer 2" …
+   * Name unique across all agents (for voice control): with a template "Developer", then
+   * "Developer 2" … (with a project agent name "Backend Developer", see `inProject`); otherwise
+   * numbered (lowest free number) – "Agent N" or, if the project has its own agent name, "Backend N".
    */
-  private nextName(base?: string): string {
+  private nextName(base?: string, numbered?: string): string {
     const names = new Set(getState().agents.map((a) => a.name.toLowerCase()))
     if (base) {
       if (!names.has(base.toLowerCase())) return base
@@ -2131,9 +2155,10 @@ export class AgentManager {
       while (names.has(`${base} ${n}`.toLowerCase())) n++
       return `${base} ${n}`
     }
+    const prefix = numbered || DEFAULT_AGENT_NAME
     let n = 1
-    while (names.has(`agent ${n}`)) n++
-    return `Agent ${n}`
+    while (names.has(`${prefix} ${n}`.toLowerCase())) n++
+    return `${prefix} ${n}`
   }
 
   private emitChanged(): void {
