@@ -52,6 +52,7 @@ const en = {
   permissionInbox: 'Decide permission requests in the inbox (instead of in the agent’s terminal)',
   permissionInboxHelp:
     '“Always” creates a rule for the project (Edit project → Permission rules). Rules apply even without this setting.',
+  reviewOnShowDiff: 'Open “Review changes” when an agent presents its changes',
   voiceReadback: 'Finished agents: read a summary of the answer aloud',
   voiceReadbackHelp:
     'Claude (Haiku) summarizes the answer in one or two sentences; it is read aloud with the Windows speech output.',

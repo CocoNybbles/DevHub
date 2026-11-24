@@ -837,6 +837,11 @@ input.rename {
   padding: 12px 18px;
   border-top: 1px solid var(--border);
 }
+/* Option on the left of the footer buttons (e.g. "Don't show again") */
+.modal-footer-option {
+  margin-right: auto;
+  align-self: center;
+}
 .form {
   display: flex;
   flex-direction: column;

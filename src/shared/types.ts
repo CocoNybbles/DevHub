@@ -504,6 +504,8 @@ export interface Settings {
   voiceFixedLanguage: string | null
   /** File preview: show files edited by the active agent as tabs on the right */
   showEditedFiles: boolean
+  /** Open the review window when an agent shows its changes (MCP `show_diff`) */
+  reviewOnShowDiff: boolean
   /** App start: resume the agents that were running at the last quit (otherwise → history) */
   autoResume: boolean
   /** Windows notification + taskbar flashing when an agent is waiting and DevHub is in the background */

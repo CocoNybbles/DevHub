@@ -54,6 +54,7 @@ const de: typeof en = {
   permissionInbox: 'Freigaben im Eingang entscheiden (statt im Terminal des Agents)',
   permissionInboxHelp:
     'Mit „Immer“ entsteht eine Regel fürs Projekt (Projekt bearbeiten → Freigabe-Regeln). Regeln gelten auch ohne diese Einstellung.',
+  reviewOnShowDiff: '„Änderungen prüfen“ öffnen, wenn ein Agent seine Änderungen vorstellt',
   voiceReadback: 'Fertige Agents: Kurzfassung der Antwort vorlesen',
   voiceReadbackHelp:
     'Claude (Haiku) fasst die Antwort in ein bis zwei Sätzen zusammen; vorgelesen wird mit der Windows-Sprachausgabe.',

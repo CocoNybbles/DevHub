@@ -73,6 +73,7 @@ const DEFAULT_STATE: PersistedState = {
     voiceFixedLanguage: null,
     showEditedFiles: true,
     autoResume: true,
+    reviewOnShowDiff: true,
     notifyOnWaiting: true,
     permissionInbox: false,
     voiceReadback: false,

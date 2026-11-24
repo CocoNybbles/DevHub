@@ -1644,6 +1644,12 @@ export class AgentManager {
         return 'Shown to the user in the DevHub side panel.'
       }
       case 'show_diff': {
+        if (!getState().settings.reviewOnShowDiff) {
+          return (
+            'The user has turned off the automatic review window. If it helps, mention briefly that ' +
+            'they can review your changes in DevHub (right-click on the project or agent → "Review changes").'
+          )
+        }
         const file = text('file_path')
         this.events.onShowDiff(agentId, file ? resolvePath(r.cwd, file) : undefined)
         return 'The review window with your changes was opened for the user.'

@@ -13,6 +13,9 @@ interface Props {
   agentId?: string
   /** Preselect this file (absolute path, e.g. from `show_diff`) */
   filePath?: string
+  /** Opened by an agent: state of the "Don't show again" checkbox (undefined = no checkbox) */
+  dontShowAgain?: boolean
+  onDontShowAgain: (hide: boolean) => void
   onClose: () => void
 }
 
@@ -41,7 +44,15 @@ const KIND_TITLE: Record<GitFileChange['kind'], TranslationKey> = {
  * file list, side-by-side diff (right side editable, arrows in the margin revert individual
  * changes), discard, commit, merge the worktree, comments to the agent.
  */
-function ReviewDialog({ project, agents, agentId, filePath, onClose }: Props): React.JSX.Element {
+function ReviewDialog({
+  project,
+  agents,
+  agentId,
+  filePath,
+  dontShowAgain,
+  onDontShowAgain,
+  onClose
+}: Props): React.JSX.Element {
   const t = useT()
   const [info, setInfo] = useState<ReviewInfo | null>(null)
   const [targetId, setTargetId] = useState<string | null>(null)
@@ -260,7 +271,21 @@ function ReviewDialog({ project, agents, agentId, filePath, onClose }: Props): R
       title={t('review.title', { project: project.name })}
       onClose={onClose}
       width={width}
-      footer={<button onClick={onClose}>{t('common.close')}</button>}
+      footer={
+        <>
+          {dontShowAgain !== undefined && (
+            <label className="checkbox modal-footer-option" title={t('review.dontShowAgainHelp')}>
+              <input
+                type="checkbox"
+                checked={dontShowAgain}
+                onChange={(e) => onDontShowAgain(e.target.checked)}
+              />
+              {t('review.dontShowAgain')}
+            </label>
+          )}
+          <button onClick={onClose}>{t('common.close')}</button>
+        </>
+      }
     >
       {info && !info.isRepo ? (
         <p className="muted">{info.error ?? t('review.noRepo')}</p>

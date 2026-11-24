@@ -107,6 +107,7 @@ function Workspace(): React.JSX.Element {
     voiceFixedLanguage: null,
     showEditedFiles: true,
     autoResume: true,
+    reviewOnShowDiff: true,
     notifyOnWaiting: true,
     permissionInbox: false,
     voiceReadback: false,
@@ -134,6 +135,8 @@ function Workspace(): React.JSX.Element {
     projectId: string
     agentId?: string
     filePath?: string
+    /** Opened by the agent (`show_diff`), not by the user → "Don't show again" */
+    auto?: boolean
   } | null>(null)
   const [tasksFor, setTasksFor] = useState<string | null>(null)
   const [historyOpen, setHistoryOpen] = useState(false)
@@ -223,7 +226,7 @@ function Workspace(): React.JSX.Element {
     // Agent asks for a review of its changes (MCP `show_diff`)
     const offShowDiff = window.api.code.onShowDiff((agentId, filePath) => {
       const agent = agentsRef.current.find((a) => a.id === agentId)
-      if (agent) setReview({ projectId: agent.projectId, agentId, filePath })
+      if (agent) setReview({ projectId: agent.projectId, agentId, filePath, auto: true })
     })
     // Windows notification clicked → show this agent
     const offFocusRequest = window.api.agents.onFocusRequest((agentId) => {
@@ -1028,6 +1031,13 @@ function Workspace(): React.JSX.Element {
           agents={agents}
           agentId={review.agentId}
           filePath={review.filePath}
+          dontShowAgain={review.auto ? !settings.reviewOnShowDiff : undefined}
+          onDontShowAgain={(hide) =>
+            window.api.settings
+              .update({ reviewOnShowDiff: !hide })
+              .then(applySettings)
+              .catch(showError)
+          }
           onClose={() => setReview(null)}
         />
       )}

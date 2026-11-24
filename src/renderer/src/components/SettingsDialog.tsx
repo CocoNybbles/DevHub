@@ -457,6 +457,14 @@ function SettingsDialog(props: Props): React.JSX.Element {
         <label className="checkbox">
           <input
             type="checkbox"
+            checked={settings.reviewOnShowDiff}
+            onChange={(e) => update({ reviewOnShowDiff: e.target.checked })}
+          />
+          {t('settings.reviewOnShowDiff')}
+        </label>
+        <label className="checkbox">
+          <input
+            type="checkbox"
             checked={settings.voiceReadback}
             onChange={(e) => update({ voiceReadback: e.target.checked })}
           />

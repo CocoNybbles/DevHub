@@ -1,6 +1,9 @@
 /** English texts (reference): namespace `review` – review changes (diff, commit, worktrees) */
 const en = {
   title: 'Review changes · {project}',
+  dontShowAgain: 'Don’t show again',
+  dontShowAgainHelp:
+    'Agents no longer open this window by themselves. Can be switched back on in Settings → Inbox and notifications; right-click → “Review changes” always works.',
   kindModified: 'modified',
   kindAdded: 'added',
   kindDeleted: 'deleted',
