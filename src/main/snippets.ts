@@ -71,6 +71,8 @@ export interface TranscriptNews {
   lastText?: string
   /** The user's first instruction (title of the session) */
   firstPrompt?: string
+  /** Time of the newest instruction in the lines read (ms) – earlier file changes are old */
+  promptAt?: number
 }
 
 const NOTHING: TranscriptNews = { snippets: [], edits: [] }
@@ -256,6 +258,29 @@ export function editFromToolResult(
   }
 }
 
+/**
+ * Time of the newest instruction of the user (or a message typed in by DevHub) in transcript
+ * lines; tool results, command wrappers, interruptions and subagents don't count.
+ */
+export function lastPromptAt(lines: string[]): number | undefined {
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const line = lines[i]
+    if (!line.includes('"user"') || line.includes('"tool_result"')) continue
+    let entry: UsageLine
+    try {
+      entry = JSON.parse(line)
+    } catch {
+      continue
+    }
+    if (entry.type !== 'user' || entry.isMeta || entry.isSidechain || !entry.timestamp) continue
+    const text = textOf(entry.message?.content).trim()
+    if (!text || text.startsWith('<') || text.startsWith('[Request interrupted')) continue
+    const at = Date.parse(entry.timestamp)
+    if (at) return at
+  }
+  return undefined
+}
+
 /** File changes from JSONL lines of the transcript (tool results in `user` entries). */
 export function editsFromLines(agentId: string, lines: string[]): EditedFile[] {
   const out: EditedFile[] = []
@@ -342,7 +367,8 @@ export class TranscriptReader {
         edits: editsFromLines(this.agentId, lines),
         usage: changed.usage ? structuredClone(this.tracker.usage) : undefined,
         lastText: changed.lastText ? this.tracker.lastText : undefined,
-        firstPrompt: this.tracker.firstPrompt
+        firstPrompt: this.tracker.firstPrompt,
+        promptAt: lastPromptAt(lines)
       }
     } finally {
       await file.close()

@@ -767,6 +767,17 @@ input.rename {
 .snippet-copy.done {
   background: var(--working);
 }
+.snippet-close {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px;
+  color: var(--muted);
+  background: none;
+  border: none;
+}
+.snippet-close:hover {
+  color: var(--text);
+}
 .snippet-code {
   margin: 0;
   padding: 8px 10px;

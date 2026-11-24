@@ -89,8 +89,10 @@ interface RunningAgent {
   transcript?: TranscriptReader
   /** Code blocks from the responses, newest first */
   snippets: CodeSnippet[]
-  /** Files edited by the agent (order = first edit) */
+  /** Files edited by the agent since the current instruction (order = first edit) */
   edits: EditedFile[]
+  /** Start of the current instruction: older file changes are no longer shown */
+  editsSince: number
   /** Worker: has reported to the orchestrator since the last prompt */
   reported: boolean
   /** Working directory (agent folder or worktree) */
@@ -949,6 +951,7 @@ export class AgentManager {
       pending: [],
       snippets: [],
       edits: [],
+      editsSince: 0,
       reported: false,
       cwd,
       asking: false,
@@ -1132,6 +1135,8 @@ export class AgentManager {
     // Bookkeeping for all agents: turn, open question, activity, changed files
     switch (ev.hook_event_name) {
       case 'UserPromptSubmit':
+        // New instruction: the file previews of the previous ones close
+        this.clearEdits(r, Date.now())
         r.turnDone = false
         r.finished = false
         r.editedThisTurn = false
@@ -1499,8 +1504,19 @@ export class AgentManager {
     return Object.fromEntries([...this.running].map(([id, r]) => [id, r.edits]))
   }
 
+  /** Close the file previews: only changes from `since` on are shown again */
+  private clearEdits(r: RunningAgent, since: number): void {
+    r.editsSince = since
+    const kept = r.edits.filter((e) => e.at >= since)
+    if (kept.length === r.edits.length) return
+    r.edits = kept
+    this.events.onEdits(r.agent.id, r.edits)
+  }
+
   private addEdits(agentId: string, added: EditedFile[]): void {
     const r = this.running.get(agentId)
+    // The transcript also repeats changes from before the current instruction
+    added = added.filter((e) => r && e.at >= r.editsSince)
     if (!r || !added.length) return
     const merged = mergeEdits(r.edits, added)
     // The transcript repeats what the hook already reported → only emit on a real change
@@ -1589,9 +1605,11 @@ export class AgentManager {
     running.usageReadAt = Date.now()
     reader
       .read()
-      .then(({ snippets, edits, usage, lastText, firstPrompt }) => {
+      .then(({ snippets, edits, usage, lastText, firstPrompt, promptAt }) => {
         const r = this.running.get(agentId)
         if (!r || r.transcript !== reader) return
+        // After a restore: only the changes since the last instruction
+        if (promptAt && promptAt > r.editsSince) this.clearEdits(r, promptAt)
         r.title ??= firstPrompt
         if (usage || lastText !== undefined) {
           if (usage) {

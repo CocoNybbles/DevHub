@@ -27,7 +27,8 @@ const de: typeof en = {
   plainText: 'Text',
   lineCount_one: '{count} Zeile',
   lineCount_other: '{count} Zeilen',
-  copyTooltip: 'In die Zwischenablage kopieren'
+  copyTooltip: 'In die Zwischenablage kopieren',
+  closeSnippet: 'Dieses Snippet schließen'
 }
 
 export default de

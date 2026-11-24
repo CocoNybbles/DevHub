@@ -400,6 +400,8 @@ function Workspace(): React.JSX.Element {
 
   /** Tabs on the right closed by the user (until newer content arrives) */
   const [closedTabs, setClosedTabs] = useState<ClosedTabs>({})
+  /** Snippets closed one by one (ids; for as long as the app runs) */
+  const [closedSnippets, setClosedSnippets] = useState<ReadonlySet<string>>(() => new Set())
 
   /** Code view: focus of the active agent, otherwise the most recent focus in the selected project. */
   const shownFocus = useMemo(() => {
@@ -421,10 +423,12 @@ function Workspace(): React.JSX.Element {
 
   /** Snippets of the active agent (right, "Snippets" tab) – empty while the tab is closed */
   const activeSnippets = useMemo(() => {
-    const list = activeAgentId ? (snippetsByAgent[activeAgentId] ?? []) : []
+    const list = (activeAgentId ? (snippetsByAgent[activeAgentId] ?? []) : []).filter(
+      (s) => !closedSnippets.has(s.id)
+    )
     if (!activeAgentId || !list.length) return list
     return isTabClosed(closedTabs, snippetsTabKey(activeAgentId), list[0].at) ? [] : list
-  }, [activeAgentId, snippetsByAgent, closedTabs])
+  }, [activeAgentId, snippetsByAgent, closedTabs, closedSnippets])
   /** Files edited by the active agent (right, one tab each), excluding closed ones */
   const activeEdits = useMemo(
     () =>
@@ -1017,6 +1021,7 @@ function Workspace(): React.JSX.Element {
             vscodeInstalled={vscodeInstalled}
             snippetsKey={snippetsTabKey(activeAgentId ?? '')}
             onCloseTab={(key, at) => setClosedTabs((c) => ({ ...c, [key]: at }))}
+            onCloseSnippet={(id) => setClosedSnippets((s) => new Set(s).add(id))}
             plan={activePlan}
             planKey={planKey}
             activityAgent={agents.find((a) => a.id === activeAgentId && !a.engineId)}

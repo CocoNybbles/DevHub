@@ -30,6 +30,8 @@ interface Props {
   vscodeInstalled: boolean
   /** Close a tab (key from lib/codeTabs, version); reappears with newer content */
   onCloseTab: (key: string, at: number) => void
+  /** Close a single snippet (the tab disappears with the last one) */
+  onCloseSnippet: (id: string) => void
   /** Key of the snippets tab (per agent) */
   snippetsKey: string
   /** Plan shown by the agent (MCP `show_plan`), null = none or closed */
@@ -125,6 +127,7 @@ function CodePane({
   editsAgentName,
   vscodeInstalled,
   onCloseTab,
+  onCloseSnippet,
   snippetsKey,
   plan,
   planKey,
@@ -359,7 +362,7 @@ function CodePane({
         </div>
       )}
       {tab === ACTIVITY && activityAgent && <ActivityList agent={activityAgent} />}
-      {tab === SNIPPETS && <SnippetList snippets={snippets} />}
+      {tab === SNIPPETS && <SnippetList snippets={snippets} onClose={onCloseSnippet} />}
     </aside>
   )
 }

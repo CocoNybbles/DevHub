@@ -25,7 +25,8 @@ const en = {
   plainText: 'Text',
   lineCount_one: '{count} line',
   lineCount_other: '{count} lines',
-  copyTooltip: 'Copy to clipboard'
+  copyTooltip: 'Copy to clipboard',
+  closeSnippet: 'Close this snippet'
 }
 
 export default en
